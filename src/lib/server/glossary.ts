@@ -22,7 +22,7 @@ function extractSystem(src: Language, tgt: Language): string {
 		tgt.script === 'latin' && src.romanization
 			? ` Romanize personal names with ${src.romanization} (no tone marks).`
 			: '';
-	return `You build a translation glossary from a passage of a ${src.name} web/light novel.
+	return `You build a translation glossary from a passage of a ${src.name} web/light novel, so a later translation stays perfectly consistent in its names and terms.
 
 Return ONLY a JSON object of exactly this shape — no markdown, no comments, no extra text:
 {"terms":[{"source":"<${src.name} copied verbatim from the passage>","target":"<natural ${tgt.name}>","gender":"neuter|masculine|feminine","context":"<short ${tgt.name} note>"}]}
@@ -33,14 +33,14 @@ Capture the recurring PROPER NOUNS and setting-specific TERMS that must stay con
 - Organizations: sects, clans, factions, orders, guilds, families.
 - Powers: cultivation/martial techniques, arts, skills, spells, bloodlines, classes.
 - Items: artifacts, weapons, pills, treasures, manuals.
-- World terms: ranks/realms, named creatures, unique concepts.
+- World terms: ranks/realms, named creatures, named units of measure, unique concepts.
 
 Hard rules:
-- "source" MUST be copied EXACTLY as it appears in the passage — identical characters, no added or removed spaces or punctuation — so it can be found again by exact string match. Prefer the bare name over a name + title combination.
-- "target" must be natural, idiomatic ${tgt.name} that reads smoothly INSIDE a sentence, the way a professional novelist-translator would write it — never a stiff word-for-word gloss. Use Title Case for proper nouns where ${tgt.name} uses casing.${roman} Translate meaningful terms by sense and keep them concise.
+- "source" MUST be copied EXACTLY as it appears in the passage — identical characters, no added or removed spaces or punctuation — so it can be found again by exact string match. Capture the bare recurring form: prefer the standalone name over a name + title combination, and the dictionary/base form of a term over an inflected one, so the entry matches every later occurrence. Do not normalize, merge variants, or invent a form that is not literally in the text.
+- "target" must be natural, idiomatic ${tgt.name} that reads smoothly INSIDE a sentence, the way a professional novelist-translator would write it — never a stiff word-for-word gloss. Render proper NAMES as names; render meaningful descriptive terms (techniques, realms, ranks, honorifics) by SENSE into an evocative, concise rendering; convey four-character idioms by meaning, not character by character. Use Title Case for proper nouns where ${tgt.name} uses casing.${roman} Keep a consistent naming style across related terms that share a component (a sect and its founder, a technique family).
 - "gender": set "masculine" or "feminine" ONLY when the passage itself makes that person's gender explicit — through gendered pronouns used for them, or gendered honorifics / titles / role or kinship words referring to them (e.g. emperor, king, prince, young master, lord, father, brother, son, husband → masculine; empress, queen, princess, concubine, young miss, lady, mother, sister, daughter, wife → feminine). Do NOT infer gender from the characters, surname, or spelling of the name itself, and do NOT guess from vibes or stereotypes. If the passage gives no explicit gendered reference for that exact person, use "neuter". When in any doubt, use "neuter" — a wrong masculine/feminine tag forces wrong pronouns throughout the translation, so only commit to a gender when the textual evidence is unambiguous. (Non-persons — places, items, organizations, techniques — are ALWAYS "neuter".)
-- "context": a SHORT ${tgt.name} note (a phrase, ≤ 12 words) that helps a translator render this term correctly later — who a character is and their relationships/role, what kind of thing a term is, its tone/register, or a disambiguation from similar terms. Be concrete and specific to THIS book. Omit only when the term is wholly self-explanatory; prefer to fill it in for names and distinctive terms.
-- Skip common words, generic vocabulary, pronouns, numbers, and anything that is not a name or distinctive term. Favor quality and consistency over sheer count.
+- "context": a SHORT ${tgt.name} note (a phrase, ≤ 12 words) that helps a translator render this term correctly later — who a character is and their relationships/role, what kind of thing a term is, its tone/register, or a disambiguation from a similar term. Be concrete and specific to THIS book. Omit only when the term is wholly self-explanatory; prefer to fill it in for names and distinctive terms.
+- Skip common words, generic vocabulary, pronouns, numbers, and anything that is not a name or distinctive term. Favor quality and consistency over sheer count — a small set of correct, reusable entries beats a long noisy list.
 - CONSISTENCY: if an "ESTABLISHED GLOSSARY" message is provided, treat those translations as FIXED. Reuse the exact ${tgt.name} for any of those terms that appear, and translate any NEW related term to match that wording and style (shared name components, naming conventions) so the book stays consistent. Never contradict an established translation.`;
 }
 
