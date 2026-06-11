@@ -17,6 +17,9 @@ export const handle: Handle = async ({ event, resolve }) => {
 	const htmlClass = isDark ? 'h-full dark' : 'h-full';
 	const htmlStyle = `background-color:${bg};color-scheme:${isDark ? 'dark' : 'light'}`;
 	return resolve(event, {
-		transformPageChunk: ({ html }) => html.replace('%THEME_CLASS%', htmlClass).replace('%THEME_STYLE%', htmlStyle),
+		// ALSO SEED THE MOBILE BROWSER-CHROME COLOR (theme-color META) FROM THE SAME THEME SO THE ADDRESS /
+		// STATUS BAR MATCHES THE PAGE ON FIRST PAINT — THE CLIENT KEEPS IT IN SYNC ON THEME CHANGE.
+		transformPageChunk: ({ html }) =>
+			html.replace('%THEME_CLASS%', htmlClass).replace('%THEME_STYLE%', htmlStyle).replace('%THEME_COLOR%', bg),
 	});
 };

@@ -104,6 +104,9 @@ export function applyThemeClass(theme: Theme): void {
 	root.classList.toggle('dark', isDark);
 	root.style.colorScheme = isDark ? 'dark' : 'light';
 	root.style.backgroundColor = THEME_BG[theme];
+	// KEEP THE MOBILE BROWSER CHROME (ADDRESS / STATUS BAR) IN SYNC WITH THE ACTIVE THEME — THE SSR HOOK
+	// SEEDS THIS META ON FIRST PAINT; THIS UPDATES IT WHENEVER THE READER SWITCHES THEMES.
+	document.querySelector('meta[name="theme-color"]')?.setAttribute('content', THEME_BG[theme]);
 }
 
 export function resetSettings() {
