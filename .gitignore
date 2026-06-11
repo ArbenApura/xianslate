@@ -1,0 +1,19 @@
+node_modules/
+/build
+/.svelte-kit
+/package
+.env
+.env.*
+!.env.example
+vite.config.ts.timestamp-*
+
+# LOCAL SQLITE DATABASE
+*.db
+*.db-shm
+*.db-wal
+
+# DEV / TEST ARTIFACTS
+*.log
+*.log.err
+sse-test.txt
+sse-cache.txt

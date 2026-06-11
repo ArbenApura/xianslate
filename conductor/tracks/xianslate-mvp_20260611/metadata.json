@@ -1,0 +1,16 @@
+{
+	"id": "xianslate-mvp_20260611",
+	"title": "Xianslate MVP — Fetch, Glossary, Translate & Reader",
+	"type": "feature",
+	"status": "complete",
+	"created": "2026-06-11T00:00:00Z",
+	"updated": "2026-06-11T03:00:00Z",
+	"phases": {
+		"total": 6,
+		"completed": 6
+	},
+	"tasks": {
+		"total": 28,
+		"completed": 28
+	}
+}

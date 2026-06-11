@@ -1,0 +1,53 @@
+{
+	"status": "complete",
+	"project_type": "greenfield",
+	"current_section": "styleguides",
+	"current_question": 2,
+	"completed_sections": ["product", "guidelines", "tech_stack", "workflow", "styleguides"],
+	"answers": {
+		"product": {
+			"name": "Xianslate",
+			"description": "A local web app that fetches Chinese web novels, builds a per-book/global glossary, and translates them to English with DeepSeek.",
+			"problem": "Machine-translated CN novels suffer inconsistent names/terms across chapters and poor reading UX; readers want consistent, glossary-pinned translations in a great reader.",
+			"users": "English-speaking readers of Chinese web novels, plus Chinese-language learners who use bilingual side-by-side view and glossaries to study.",
+			"goals": [
+				"Glossary-consistent, high-quality translations",
+				"Minimal cost via caching + relevant-term injection",
+				"A blazing-fast, fully customizable, mobile-responsive reader"
+			]
+		},
+		"guidelines": {
+			"voice_tone": "Concise and direct",
+			"design_principles": ["Performance first", "Exceptional reading UX", "Reliable, consistent translations"]
+		},
+		"tech_stack": {
+			"languages": ["TypeScript"],
+			"frontend": "SvelteKit (Svelte 4) + TailwindCSS + Vite",
+			"backend": "SvelteKit server endpoints (Node, @sveltejs/adapter-node)",
+			"database": "SQLite + Drizzle ORM (DB layer kept swappable for future Postgres)",
+			"infra": "Local / self-hosted via adapter-node now; future plan to scale online"
+		},
+		"workflow": {
+			"tdd": "Flexible — tests recommended for complex logic (parser, matcher, CSV import, glossary precedence)",
+			"commits": "Conventional Commits",
+			"code_review": "Required for non-trivial changes",
+			"verification": "Only at track completion"
+		},
+		"styleguides": {
+			"languages": ["TypeScript/JavaScript (+ Svelte)"],
+			"conventions": "Generate fresh Prettier + ESLint configs as source of truth"
+		}
+	},
+	"files_created": [
+		"conductor/setup_state.json",
+		"conductor/index.md",
+		"conductor/product.md",
+		"conductor/product-guidelines.md",
+		"conductor/tech-stack.md",
+		"conductor/workflow.md",
+		"conductor/tracks.md",
+		"conductor/code_styleguides/typescript.md"
+	],
+	"started_at": "2026-06-11T00:00:00Z",
+	"last_updated": "2026-06-11T00:00:00Z"
+}

@@ -1,0 +1,34 @@
+import { error, json } from '@sveltejs/kit';
+import { parseGlossaryCsv } from '$lib/server/glossary-csv';
+import { mergeGlossary } from '$lib/server/glossary';
+import { getBook } from '$lib/server/books';
+import { decodeTextBytes } from '$lib/server/charset';
+import { assertMaxSize, MB } from '$lib/server/uploads';
+import type { RequestHandler } from './$types';
+
+export const POST: RequestHandler = async ({ request }) => {
+	const form = await request.formData().catch(() => null);
+	const file = form?.get('file');
+	const scope = String(form?.get('scope') ?? 'global');
+	const bookId = form?.get('bookId') ? String(form.get('bookId')) : null;
+	if (!(file instanceof File)) throw error(400, 'Upload a .csv file in the "file" field.');
+	assertMaxSize(file, 10 * MB);
+	if (scope !== 'global' && scope !== 'book') throw error(400, 'scope must be "global" or "book".');
+	if (scope === 'book' && !bookId) throw error(400, 'bookId is required for book scope.');
+	// VALIDATE THE TARGET BOOK EXISTS — OTHERWISE BOOK-SCOPE ROWS EITHER ORPHAN OR HIT AN FK 500.
+	if (scope === 'book' && bookId && !(await getBook(bookId))) throw error(404, 'Target book not found.');
+
+	// PARSE (CLIENT ERROR → 400) IS SEPARATED FROM THE DB MERGE (SERVER ERROR → 500) SO A DB FAILURE ISN'T
+	// MISREPORTED AS A BAD UPLOAD AND ITS INTERNAL MESSAGE ISN'T LEAKED TO THE CLIENT.
+	let terms;
+	try {
+		const text = decodeTextBytes(new Uint8Array(await file.arrayBuffer()));
+		terms = parseGlossaryCsv(text);
+	} catch (e) {
+		throw error(400, e instanceof Error ? e.message : 'Failed to parse glossary CSV.');
+	}
+	if (terms.length === 0) throw error(400, 'No valid rows found (need raw,translation columns).');
+
+	const result = await mergeGlossary(scope, bookId, terms);
+	return json({ ...result, parsed: terms.length });
+};
