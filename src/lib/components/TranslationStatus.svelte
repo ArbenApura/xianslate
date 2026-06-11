@@ -23,9 +23,11 @@
 	import Zap from 'lucide-svelte/icons/zap';
 
 	// -- REQUIRED PROPS -- //
+
 	export let phase: Phase;
 
 	// -- OPTIONAL PROPS -- //
+
 	export let matched = 0;
 	export let variant: 'card' | 'chip' = 'card';
 	// SHOW THE AUTO-EXTRACT STEP, AND HOW MANY NEW TERMS IT SAVED (null = NOT DONE YET)
@@ -33,10 +35,12 @@
 	export let extracted: number | null = null;
 
 	// -- TYPES -- //
+
 	type StepState = 'pending' | 'active' | 'done';
 	type Step = { key: string; icon: typeof Check; label: string; state: StepState };
 
 	// -- CONSTANTS -- //
+
 	// MONOTONIC PIPELINE RANK — USED TO DERIVE EACH STEP'S pending/active/done STATE
 	const RANK: Record<Phase, number> = {
 		idle: 0,
@@ -48,6 +52,7 @@
 		done: 5,
 		error: 5,
 	};
+
 	const DOT = {
 		pending: 'border-black/15 text-black/30 dark:border-white/15 dark:text-white/30',
 		active: 'border-sky-500 text-sky-500',
@@ -55,6 +60,7 @@
 	} as const;
 
 	// -- REACTIVE STATES -- //
+
 	$: r = RANK[phase] ?? 0;
 
 	$: extractStep = {
@@ -93,8 +99,8 @@
 	$: steps = (showExtract ? [extractStep, matchStep, translateStep] : [matchStep, translateStep]) satisfies Step[];
 </script>
 
+<!-- CHIP VARIANT: COMPACT LIVE INDICATOR (USED WHILE TEXT IS ALREADY STREAMING IN) -->
 {#if variant === 'chip'}
-	<!-- COMPACT LIVE INDICATOR (USED WHILE TEXT IS ALREADY STREAMING IN) -->
 	<span
 		class={cn(
 			'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium',
@@ -103,22 +109,24 @@
 				: 'border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-300',
 		)}
 	>
+		<!-- CACHE HIT STATE -->
 		{#if phase === 'cached'}
 			<Zap size={13} /> From cache · free
+		<!-- ACTIVE TRANSLATION STATE -->
 		{:else}
 			<span class="inline-block h-1.5 w-1.5 animate-ping rounded-full bg-sky-500"></span>
 			Translating{#if matched > 0}<span class="opacity-70"> · {matched} terms</span>{/if}
 		{/if}
 	</span>
+<!-- CACHE HIT CARD: INSTANT CACHE HIT — ALREADY TRANSLATED, NO DEEPSEEK CALL -->
 {:else if phase === 'cached'}
-	<!-- INSTANT CACHE HIT — ALREADY TRANSLATED, NO DEEPSEEK CALL -->
 	<div
 		class="flex items-center gap-2 rounded-xl border border-emerald-500/20 bg-emerald-500/[0.06] px-4 py-3 text-sm text-emerald-700 dark:text-emerald-300"
 	>
 		<Zap size={16} /> Already translated — loaded instantly, no cost.
 	</div>
+<!-- STEP CARD: PIPELINE PROGRESS (USED BEFORE ANY TEXT HAS ARRIVED) -->
 {:else}
-	<!-- STEP CARD (USED BEFORE ANY TEXT HAS ARRIVED) -->
 	<div class="rounded-xl border border-black/[0.06] bg-current/[0.02] p-4 dark:border-white/[0.05]">
 		<ul class="space-y-3">
 			{#each steps as step (step.key)}
@@ -129,10 +137,13 @@
 							DOT[step.state],
 						)}
 					>
+						<!-- ACTIVE STEP: SPINNING LOADER -->
 						{#if step.state === 'active'}
 							<Loader2 size={14} class="animate-spin" />
+						<!-- DONE STEP: CHECKMARK -->
 						{:else if step.state === 'done'}
 							<Check size={14} />
+						<!-- PENDING STEP: STEP ICON -->
 						{:else}
 							<svelte:component this={step.icon} size={14} />
 						{/if}

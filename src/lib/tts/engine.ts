@@ -1,19 +1,27 @@
 // TTS ENGINE
-// A singleton controller around the Web Speech API. It speaks ONE SENTENCE PER UTTERANCE and advances
-// in onend — this is what makes the highlight track precisely (boundary char offsets stay short and
-// reliable) and sidesteps Chrome's ~15s silent cutoff on long utterances.
+// A SINGLETON CONTROLLER AROUND THE Web Speech API. IT SPEAKS ONE SENTENCE PER UTTERANCE AND ADVANCES
+// IN onend — THIS IS WHAT MAKES THE HIGHLIGHT TRACK PRECISELY (BOUNDARY CHAR OFFSETS STAY SHORT AND
+// RELIABLE) AND SIDESTEPS Chrome'S ~15s SILENT CUTOFF ON LONG UTTERANCES.
 //
-// It exposes a single readable `state` store that the reader subscribes to for highlighting:
-//   paraIndex / sentIndex          — where we are in the loaded paragraph list
-//   sentStart / sentEnd            — plain-text char range of the spoken sentence (within its paragraph)
-//   wordStart / wordEnd            — plain-text char range of the word currently being spoken
-// Offsets are in the same plain-text space tokenize() produces, so the reader maps them straight onto
-// rendered word spans.
+// IT EXPOSES A SINGLE READABLE `state` STORE THAT THE READER SUBSCRIBES TO FOR HIGHLIGHTING:
+//   paraIndex / sentIndex          — WHERE WE ARE IN THE LOADED PARAGRAPH LIST
+//   sentStart / sentEnd            — PLAIN-TEXT CHAR RANGE OF THE SPOKEN SENTENCE (WITHIN ITS PARAGRAPH)
+//   wordStart / wordEnd            — PLAIN-TEXT CHAR RANGE OF THE WORD CURRENTLY BEING SPOKEN
+// OFFSETS ARE IN THE SAME PLAIN-TEXT SPACE tokenize() PRODUCES, SO THE READER MAPS THEM STRAIGHT ONTO
+// RENDERED WORD SPANS.
 
-import { get, writable, type Readable } from 'svelte/store';
+// IMPORTED DEP-TYPES
+import type { Readable } from 'svelte/store';
+// IMPORTED TYPES
+import type { Sentence } from './text';
+// IMPORTED DEP-MODULES
+import { get, writable } from 'svelte/store';
 import { browser } from '$app/environment';
+// IMPORTED MODULES
 import { ttsSettings, voices, wordTimingSupport } from '$lib/stores/tts';
-import { analyzeParagraph, type Sentence } from './text';
+import { analyzeParagraph } from './text';
+
+// -- TYPES -- //
 
 export type TtsStatus = 'idle' | 'playing' | 'paused';
 export type TtsLang = 'en' | 'zh';
@@ -21,19 +29,21 @@ export type TtsLang = 'en' | 'zh';
 export interface TtsState {
 	status: TtsStatus;
 	lang: TtsLang;
-	paraIndex: number; // -1 when idle
+	paraIndex: number; // -1 WHEN IDLE
 	sentIndex: number;
 	sentStart: number;
 	sentEnd: number;
 	wordStart: number;
 	wordEnd: number;
-	total: number; // paragraphs loaded
+	total: number; // PARAGRAPHS LOADED
 }
 
 interface Block {
 	plain: string;
 	sentences: Sentence[];
 }
+
+// -- CONSTANTS -- //
 
 const IDLE: TtsState = {
 	status: 'idle',
@@ -49,14 +59,16 @@ const IDLE: TtsState = {
 
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
 
+// -- FUNCTIONS -- //
+
 function createEngine() {
 	const state = writable<TtsState>({ ...IDLE });
 
 	let blocks: Block[] = [];
 	let lang: TtsLang = 'en';
-	let loadedRef: string[] | null = null; // identity of the last-loaded paragraph array
+	let loadedRef: string[] | null = null; // IDENTITY OF THE LAST-LOADED PARAGRAPH ARRAY
 	let loadedLang: TtsLang | null = null;
-	let gen = 0; // bumped on every interrupt so stale utterance callbacks are ignored
+	let gen = 0; // BUMPED ON EVERY INTERRUPT SO STALE UTTERANCE CALLBACKS ARE IGNORED
 	let keepalive: ReturnType<typeof setInterval> | null = null;
 	// HOLD A LIVE REFERENCE TO THE SPEAKING UTTERANCE. WITHOUT THIS, Chrome/Safari CAN GARBAGE-COLLECT IT
 	// MID-SENTENCE — onend/onboundary STOP FIRING AND THE READ SILENTLY STALLS. WRITE-ONLY ON PURPOSE: ITS
@@ -68,22 +80,22 @@ function createEngine() {
 		return browser && 'speechSynthesis' in window;
 	}
 
-	// Remember whether a voice actually reports word-boundary timing. Some voices (notably Google's
-	// remote "Google UK English …" voices) only fire start/end, so word highlighting can't work for
-	// them. We learn this from real playback and the dialog uses it to disable the word-highlight option.
+	// REMEMBER WHETHER A VOICE ACTUALLY REPORTS WORD-BOUNDARY TIMING. SOME VOICES (NOTABLY Google'S
+	// REMOTE "Google UK English …" VOICES) ONLY FIRE start/end, SO WORD HIGHLIGHTING CAN'T WORK FOR
+	// THEM. WE LEARN THIS FROM REAL PLAYBACK AND THE DIALOG USES IT TO DISABLE THE WORD-HIGHLIGHT OPTION.
 	function recordVoiceTiming(uri: string | null, sawBoundary: boolean, wordCount: number) {
 		if (!uri) return;
 		if (sawBoundary) {
 			wordTimingSupport.update((m) => (m[uri] === true ? m : { ...m, [uri]: true }));
 		} else if (wordCount >= 3 && get(wordTimingSupport)[uri] === undefined) {
-			// Only conclude "unsupported" from a sentence long enough to expect a boundary; never
-			// downgrade a voice we've already seen fire one.
+			// ONLY CONCLUDE "UNSUPPORTED" FROM A SENTENCE LONG ENOUGH TO EXPECT A BOUNDARY; NEVER
+			// DOWNGRADE A VOICE WE'VE ALREADY SEEN FIRE ONE.
 			wordTimingSupport.update((m) => ({ ...m, [uri]: false }));
 		}
 	}
 
-	// Build the per-paragraph speech model. No-op if the same array is already loaded; skipped while
-	// speaking so an incidental reactive re-run can't wipe the queue mid-read.
+	// BUILD THE PER-PARAGRAPH SPEECH MODEL. NO-OP IF THE SAME ARRAY IS ALREADY LOADED; SKIPPED WHILE
+	// SPEAKING SO AN INCIDENTAL REACTIVE RE-RUN CAN'T WIPE THE QUEUE MID-READ.
 	function load(paras: string[], l: TtsLang) {
 		if (!supported()) return;
 		if (paras === loadedRef && l === loadedLang) return;
@@ -113,8 +125,8 @@ function createEngine() {
 
 	function startKeepalive() {
 		stopKeepalive();
-		// Chrome can silently stop a long-running queue; a periodic resume() (a no-op when healthy)
-		// keeps it alive without the audible glitch a pause/resume pair causes.
+		// Chrome CAN SILENTLY STOP A LONG-RUNNING QUEUE; A PERIODIC resume() (A NO-OP WHEN HEALTHY)
+		// KEEPS IT ALIVE WITHOUT THE AUDIBLE GLITCH A pause/resume PAIR CAUSES.
 		keepalive = setInterval(() => {
 			// ONLY NUDGE WHEN WE BELIEVE WE'RE PLAYING *AND* THE SYNTH ISN'T EXTERNALLY PAUSED (e.g. AN OS/
 			// HARDWARE MEDIA-KEY PAUSE) — OTHERWISE resume() WOULD FIGHT THE USER EVERY 9s.
@@ -122,7 +134,7 @@ function createEngine() {
 				try {
 					window.speechSynthesis.resume();
 				} catch {
-					/* ignore */
+					/* IGNORE */
 				}
 			}
 		}, 9000);
@@ -132,7 +144,7 @@ function createEngine() {
 		keepalive = null;
 	}
 
-	// Speak the sentence at the current (paraIndex, sentIndex); chain to the next on end.
+	// SPEAK THE SENTENCE AT THE CURRENT (paraIndex, sentIndex); CHAIN TO THE NEXT ON END.
 	function speakCurrent() {
 		if (!supported()) return;
 		const myGen = gen;
@@ -176,8 +188,8 @@ function createEngine() {
 			u.lang = lang === 'en' ? 'en-US' : 'zh-TW';
 		}
 
-		// Track boundary support so we can tell the settings dialog whether word highlighting is possible
-		// for this voice.
+		// TRACK BOUNDARY SUPPORT SO WE CAN TELL THE SETTINGS DIALOG WHETHER WORD HIGHLIGHTING IS POSSIBLE
+		// FOR THIS VOICE.
 		const wordCount = (text.match(/\S+/g) ?? []).length;
 		let sawBoundary = false;
 
@@ -201,8 +213,8 @@ function createEngine() {
 		};
 		u.onerror = (e) => {
 			if (gen !== myGen) return;
-			// 'interrupted'/'canceled' belong to a superseded run (filtered by gen). A real error on the
-			// live run: skip the troublesome sentence rather than stalling the whole read.
+			// 'interrupted'/'canceled' BELONG TO A SUPERSEDED RUN (FILTERED BY gen). A REAL ERROR ON THE
+			// LIVE RUN: SKIP THE TROUBLESOME SENTENCE RATHER THAN STALLING THE WHOLE READ.
 			if (e.error === 'interrupted' || e.error === 'canceled') return;
 			state.update((x) => ({ ...x, sentIndex: x.sentIndex + 1, wordStart: -1, wordEnd: -1 }));
 			speakCurrent();
@@ -212,14 +224,14 @@ function createEngine() {
 		window.speechSynthesis.speak(u);
 	}
 
-	// Hard-interrupt the current utterance and (re)start speaking at a position.
+	// HARD-INTERRUPT THE CURRENT UTTERANCE AND (RE)START SPEAKING AT A POSITION.
 	function startAt(paraIndex: number, sentIndex: number) {
 		if (!supported() || !blocks.length) return;
 		gen++;
 		try {
 			window.speechSynthesis.cancel();
 		} catch {
-			/* ignore */
+			/* IGNORE */
 		}
 		state.update((x) => ({
 			...x,
@@ -230,7 +242,7 @@ function createEngine() {
 			wordEnd: -1,
 		}));
 		startKeepalive();
-		// A microtask gap after cancel() makes the following speak() reliable in Chrome.
+		// A MICROTASK GAP AFTER cancel() MAKES THE FOLLOWING speak() RELIABLE IN Chrome.
 		setTimeout(() => speakCurrent(), 0);
 	}
 
@@ -243,7 +255,7 @@ function createEngine() {
 		try {
 			window.speechSynthesis.pause();
 		} catch {
-			/* ignore */
+			/* IGNORE */
 		}
 		state.update((x) => ({ ...x, status: 'paused' }));
 	}
@@ -253,7 +265,7 @@ function createEngine() {
 		try {
 			window.speechSynthesis.resume();
 		} catch {
-			/* ignore */
+			/* IGNORE */
 		}
 		state.update((x) => ({ ...x, status: 'playing' }));
 	}
@@ -265,7 +277,7 @@ function createEngine() {
 		try {
 			window.speechSynthesis.cancel();
 		} catch {
-			/* ignore */
+			/* IGNORE */
 		}
 		state.set({ ...IDLE, lang, total: blocks.length });
 	}
@@ -281,7 +293,7 @@ function createEngine() {
 		else play(0, 0);
 	}
 
-	// Jump one sentence forward/back, crossing paragraph boundaries.
+	// JUMP ONE SENTENCE FORWARD/BACK, CROSSING PARAGRAPH BOUNDARIES.
 	function step(delta: number) {
 		const st = get(state);
 		if (st.paraIndex < 0) return;
@@ -309,8 +321,8 @@ function createEngine() {
 	const next = () => step(1);
 	const prev = () => step(-1);
 
-	// Start reading from the sentence that contains a given plain-text offset in a paragraph
-	// (powers click-a-word-to-read-from-here).
+	// START READING FROM THE SENTENCE THAT CONTAINS A GIVEN PLAIN-TEXT OFFSET IN A PARAGRAPH
+	// (POWERS CLICK-A-WORD-TO-READ-FROM-HERE).
 	function seekToOffset(paraIndex: number, offset: number) {
 		const block = blocks[paraIndex];
 		if (!block) return;
@@ -325,8 +337,8 @@ function createEngine() {
 		startAt(paraIndex, s);
 	}
 
-	// Live-apply voice/rate/pitch/volume edits: re-speak the current sentence so the change is heard
-	// immediately rather than at the next sentence.
+	// LIVE-APPLY VOICE/RATE/PITCH/VOLUME EDITS: RE-SPEAK THE CURRENT SENTENCE SO THE CHANGE IS HEARD
+	// IMMEDIATELY RATHER THAN AT THE NEXT SENTENCE.
 	if (browser) {
 		let prevSettings = get(ttsSettings);
 		let reapply: ReturnType<typeof setTimeout> | null = null;
@@ -349,7 +361,7 @@ function createEngine() {
 				if (st.status === 'playing') startAt(st.paraIndex, st.sentIndex);
 			}, 250);
 		});
-		// Keep playback from outliving the page.
+		// KEEP PLAYBACK FROM OUTLIVING THE PAGE.
 		window.addEventListener('pagehide', () => stop());
 	}
 

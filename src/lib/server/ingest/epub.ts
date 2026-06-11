@@ -1,6 +1,11 @@
-import { unzipSync } from 'fflate';
-import { decodeTextBytes } from '../charset';
+// IMPORTED DEP-TYPES
 import type { ImportedBook } from '$lib/types';
+// IMPORTED DEP-MODULES
+import { unzipSync } from 'fflate';
+// IMPORTED MODULES
+import { decodeTextBytes } from '../charset';
+
+// -- CONSTANTS -- //
 
 // ZIP-BOMB GUARDS: A FEW-MB EPUB CAN INFLATE TO MANY GB. CAP BOTH PER-ENTRY AND TOTAL INFLATED BYTES,
 // AND ONLY INFLATE THE TEXTUAL ENTRIES WE ACTUALLY READ (XHTML/XML/OPF/NCX) — SKIP IMAGES/FONTS/CSS,
@@ -8,6 +13,8 @@ import type { ImportedBook } from '$lib/types';
 const MAX_ENTRY_INFLATED = 25 * 1024 * 1024;
 const MAX_TOTAL_INFLATED = 150 * 1024 * 1024;
 const TEXT_ENTRY_RE = /\.(x?html?|xml|opf|ncx)$/i;
+
+// -- FUNCTIONS -- //
 
 function decodeEntities(s: string): string {
 	return s
@@ -56,7 +63,7 @@ function resolvePath(base: string, rel: string): string {
 	return out.join('/');
 }
 
-/** IMPORT AN EPUB FILE INTO AN ORDERED LIST OF CHAPTERS */
+// IMPORT AN EPUB FILE INTO AN ORDERED LIST OF CHAPTERS
 export function importEpub(bytes: Uint8Array, fallbackTitle: string): ImportedBook {
 	// EPUB IS A ZIP — REJECT ANYTHING THAT ISN'T (MAGIC BYTES "PK\x03\x04" / EMPTY-ARCHIVE "PK\x05\x06").
 	if (bytes.length < 4 || bytes[0] !== 0x50 || bytes[1] !== 0x4b || (bytes[2] !== 0x03 && bytes[2] !== 0x05)) {

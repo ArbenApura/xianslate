@@ -6,13 +6,14 @@
 	// IMPORTED MODULES
 	import { cn } from '$lib/utils/cn';
 	import { focusTrap } from '$lib/actions/focusTrap';
+	import { ripple } from '$lib/actions/ripple';
+	import { scrollLock } from '$lib/actions/scrollLock';
 	// IMPORTED DEP-COMPONENTS
 	import TriangleAlert from 'lucide-svelte/icons/triangle-alert';
 
-	// -- REQUIRED PROPS -- //
-	export let open = false;
-
 	// -- OPTIONAL PROPS -- //
+
+	export let open = false;
 	export let title = 'Are you sure?';
 	export let message = 'This action cannot be undone.';
 	export let confirmLabel = 'Confirm';
@@ -20,6 +21,7 @@
 	export let variant: 'danger' | 'default' = 'danger';
 
 	// -- CONSTANTS -- //
+
 	const dispatch = createEventDispatcher<{ confirm: void; cancel: void }>();
 	const STYLES = {
 		danger: { icon: 'text-red-500', iconBg: 'bg-red-500/10', confirm: 'bg-red-600 text-white hover:bg-red-500' },
@@ -27,6 +29,7 @@
 	} as const;
 
 	// -- FUNCTIONS -- //
+
 	function confirm() {
 		open = false;
 		dispatch('confirm');
@@ -39,21 +42,32 @@
 
 <svelte:window on:keydown={(e) => open && e.key === 'Escape' && cancel()} />
 
+<!-- DIALOG OVERLAY -->
 {#if open}
-	<div class="fixed inset-0 z-[100] flex items-center justify-center p-4" role="dialog" aria-modal="true">
+	<!-- use:scrollLock FREEZES THE PAGE BEHIND WHILE THE DIALOG IS OPEN -->
+	<div
+		use:scrollLock
+		class="fixed inset-0 z-[100] flex items-center justify-center p-4"
+		role="dialog"
+		aria-modal="true"
+	>
+		<!-- BACKDROP DISMISS BUTTON -->
 		<button
+			use:ripple
 			class="absolute inset-0 bg-black/40 backdrop-blur-sm"
 			on:click={cancel}
 			aria-label="Cancel"
 			tabindex="-1"
 			transition:fade={{ duration: 150 }}
 		></button>
+		<!-- DIALOG PANEL -->
 		<div
 			use:focusTrap
 			tabindex="-1"
 			transition:fly={{ y: 16, duration: 220, easing: cubicOut }}
 			class="relative z-10 w-full max-w-sm rounded-xl border border-black/10 bg-white p-5 text-slate-900 shadow-2xl outline-none dark:border-white/[0.08] dark:bg-slate-900 dark:text-slate-100"
 		>
+			<!-- ICON AND MESSAGE -->
 			<div class="flex gap-4">
 				<div
 					class={cn(
@@ -68,14 +82,17 @@
 					<p class="mt-1 text-xs opacity-60">{message}</p>
 				</div>
 			</div>
+			<!-- ACTION BUTTONS -->
 			<div class="mt-5 flex justify-end gap-2">
 				<button
+					use:ripple
 					class="hover:bg-current/5 rounded-lg border border-black/10 px-4 py-2 text-xs font-medium opacity-70 transition-colors hover:opacity-100 dark:border-white/[0.08]"
 					on:click={cancel}
 				>
 					{cancelLabel}
 				</button>
 				<button
+					use:ripple
 					class={cn('rounded-lg px-4 py-2 text-xs font-medium transition-colors', STYLES[variant].confirm)}
 					on:click={confirm}
 				>

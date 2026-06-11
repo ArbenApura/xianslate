@@ -6,10 +6,13 @@
 	// IMPORTED MODULES
 	import { cn } from '$lib/utils/cn';
 	import { focusTrap } from '$lib/actions/focusTrap';
+	import { ripple } from '$lib/actions/ripple';
+	import { scrollLock } from '$lib/actions/scrollLock';
 	// IMPORTED DEP-COMPONENTS
 	import X from 'lucide-svelte/icons/x';
 
 	// -- OPTIONAL PROPS -- //
+
 	export let open = false;
 	export let title = '';
 	export let size: 'sm' | 'md' | 'lg' | 'xl' = 'md';
@@ -17,6 +20,7 @@
 	export let bodyClass = 'p-5';
 
 	// -- CONSTANTS -- //
+
 	const dispatch = createEventDispatcher();
 	const SIZES: Record<string, string> = {
 		sm: 'sm:max-w-sm',
@@ -26,6 +30,7 @@
 	};
 
 	// -- FUNCTIONS -- //
+
 	function close() {
 		dispatch('close');
 	}
@@ -34,15 +39,23 @@
 <svelte:window on:keydown={(e) => open && e.key === 'Escape' && close()} />
 
 {#if open}
-	<!-- DIALOG: BOTTOM SHEET ON MOBILE, CENTERED CARD ON DESKTOP -->
-	<div class="fixed inset-0 z-50 flex items-end justify-center sm:items-center" role="dialog" aria-modal="true">
+	<!-- DIALOG: BOTTOM SHEET ON MOBILE, CENTERED CARD ON DESKTOP. use:scrollLock FREEZES THE PAGE BEHIND. -->
+	<div
+		use:scrollLock
+		class="fixed inset-0 z-50 flex items-end justify-center sm:items-center"
+		role="dialog"
+		aria-modal="true"
+	>
+		<!-- BACKDROP OVERLAY -->
 		<button
 			class="absolute inset-0 bg-black/40 backdrop-blur-sm"
 			on:click={close}
+			use:ripple
 			aria-label="Close dialog"
 			tabindex="-1"
 			transition:fade={{ duration: 150 }}
 		></button>
+		<!-- MODAL CARD -->
 		<div
 			use:focusTrap
 			tabindex="-1"
@@ -53,13 +66,16 @@
 			)}
 		>
 			{#if title || $$slots.header}
+				<!-- MODAL HEADER -->
 				<header
 					class="flex shrink-0 items-center justify-between gap-3 border-b border-slate-200 px-5 py-3.5 dark:border-slate-700"
 				>
 					<h2 class="text-base font-semibold">{title}</h2>
 					<slot name="header" />
+					<!-- CLOSE BUTTON -->
 					<button
 						on:click={close}
+						use:ripple
 						class="rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800"
 						aria-label="Close"
 					>
@@ -67,10 +83,12 @@
 					</button>
 				</header>
 			{/if}
+			<!-- MODAL BODY -->
 			<div class={cn('min-h-0 flex-1 overflow-y-auto', bodyClass)}>
 				<slot />
 			</div>
 			{#if $$slots.footer}
+				<!-- MODAL FOOTER -->
 				<footer
 					class="flex shrink-0 items-center justify-end gap-2 border-t border-slate-200 px-5 py-3 dark:border-slate-700"
 				>

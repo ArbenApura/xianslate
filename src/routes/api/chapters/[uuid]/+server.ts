@@ -1,14 +1,21 @@
+// IMPORTED DEP-MODULES
 import { error, json } from '@sveltejs/kit';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
+// IMPORTED MODULES
 import { deleteChapter } from '$lib/server/books';
 import { db } from '$lib/server/db';
 import { chapters } from '$lib/server/db/schema';
+// IMPORTED TYPES
 import type { RequestHandler } from './$types';
+
+// -- CONSTANTS -- //
 
 const PatchBody = z
 	.object({ titleZh: z.string().trim().min(1).optional(), contentZh: z.string().trim().min(1).optional() })
 	.refine((b) => b.titleZh !== undefined || b.contentZh !== undefined, 'Nothing to update.');
+
+// -- FUNCTIONS -- //
 
 // RENAME OR EDIT A CHAPTER. CHANGING THE CHINESE CONTENT CLEARS THE STALE TRANSLATION SO IT RE-TRANSLATES.
 export const PATCH: RequestHandler = async ({ params, request }) => {

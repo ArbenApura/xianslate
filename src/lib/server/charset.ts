@@ -1,15 +1,19 @@
 // CHARSET-AWARE DECODING FOR INGESTED CHINESE TEXT.
-// Chinese novel files (.txt, EPUB XHTML) are frequently NOT UTF-8 — Traditional sources use Big5 and
-// Simplified sources use GB2312/GBK/GB18030. Decoding those bytes as UTF-8 yields mojibake. Node ships
-// full-ICU, so its built-in TextDecoder decodes 'gb18030' (a superset of GB2312/GBK) and 'big5'
-// natively — no third-party dependency needed. We detect the encoding from (in priority order):
-//   1. a UTF-8 / UTF-16 byte-order mark,
-//   2. a declared charset in the markup (XML prolog `encoding=` or HTML `<meta charset>`),
-//   3. a strict UTF-8 validity check,
-//   4. a scoring heuristic that decodes the bytes as gb18030 vs big5 and keeps whichever yields the
-//      most CJK characters with the fewest replacement chars.
+// CHINESE NOVEL FILES (.txt, EPUB XHTML) ARE FREQUENTLY NOT UTF-8 — TRADITIONAL SOURCES USE Big5 AND
+// SIMPLIFIED SOURCES USE GB2312/GBK/GB18030. DECODING THOSE BYTES AS UTF-8 YIELDS MOJIBAKE. Node SHIPS
+// FULL-ICU, SO ITS BUILT-IN TextDecoder DECODES 'gb18030' (A SUPERSET OF GB2312/GBK) AND 'big5'
+// NATIVELY — NO THIRD-PARTY DEPENDENCY NEEDED. WE DETECT THE ENCODING FROM (IN PRIORITY ORDER):
+//   1. A UTF-8 / UTF-16 BYTE-ORDER MARK,
+//   2. A DECLARED CHARSET IN THE MARKUP (XML PROLOG `encoding=` OR HTML `<meta charset>`),
+//   3. A STRICT UTF-8 VALIDITY CHECK,
+//   4. A SCORING HEURISTIC THAT DECODES THE BYTES AS gb18030 VS big5 AND KEEPS WHICHEVER YIELDS THE
+//      MOST CJK CHARACTERS WITH THE FEWEST REPLACEMENT CHARS.
+
+// -- CONSTANTS -- //
 
 const SAMPLE_BYTES = 64 * 1024;
+
+// -- FUNCTIONS -- //
 
 function hasBom(b: Uint8Array, sig: number[]): boolean {
 	if (b.length < sig.length) return false;
@@ -17,7 +21,7 @@ function hasBom(b: Uint8Array, sig: number[]): boolean {
 	return true;
 }
 
-/** STRICT UTF-8 VALIDITY: returns the decoded string if the bytes are valid UTF-8, else null. */
+/** STRICT UTF-8 VALIDITY: RETURNS THE DECODED STRING IF THE BYTES ARE VALID UTF-8, ELSE null. */
 function tryUtf8(bytes: Uint8Array): string | null {
 	try {
 		return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
@@ -68,8 +72,8 @@ function declaredLabel(bytes: Uint8Array): string | null {
 
 /**
  * DECODE RAW FILE BYTES TO A STRING, AUTO-DETECTING THE CHARSET.
- * @param sniffMarkup when true, honour an XML/HTML encoding declaration in the byte prefix (use for
- *        EPUB XHTML / OPF); leave false for plain .txt which has no markup declaration.
+ * @param sniffMarkup WHEN true, HONOUR AN XML/HTML ENCODING DECLARATION IN THE BYTE PREFIX (USE FOR
+ *        EPUB XHTML / OPF); LEAVE false FOR PLAIN .txt WHICH HAS NO MARKUP DECLARATION.
  */
 export function decodeTextBytes(bytes: Uint8Array, sniffMarkup = false): string {
 	if (bytes.length === 0) return '';

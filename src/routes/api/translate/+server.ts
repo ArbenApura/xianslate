@@ -1,7 +1,12 @@
+// IMPORTED DEP-TYPES
+import type { RequestHandler } from './$types';
+// IMPORTED DEP-MODULES
 import { error } from '@sveltejs/kit';
 import { z } from 'zod';
+// IMPORTED MODULES
 import { ensureTranslationJob, subscribe } from '$lib/server/translation-service';
-import type { RequestHandler } from './$types';
+
+// -- CONSTANTS -- //
 
 const Body = z.object({
 	chapterId: z.number().int().positive(),
@@ -9,6 +14,8 @@ const Body = z.object({
 	// AUTO-EXTRACT + SAVE GLOSSARY TERMS ONCE BEFORE TRANSLATING (READER PASSES THE USER'S SETTING)
 	autoExtract: z.boolean().optional(),
 });
+
+// -- FUNCTIONS -- //
 
 export const POST: RequestHandler = async ({ request }) => {
 	const parsed = Body.safeParse(await request.json().catch(() => null));

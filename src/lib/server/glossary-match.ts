@@ -1,17 +1,26 @@
+// IMPORTED DEP-MODULES
 import AhoCorasick from 'ahocorasick';
+// IMPORTED MODULES
 import { getEffectiveGlossary } from './glossary';
+// IMPORTED TYPES
 import type { TermDraft } from '$lib/types';
+
+// -- TYPES -- //
 
 interface Built {
 	ac: AhoCorasick;
 	byRaw: Map<string, TermDraft>;
 }
 
+// -- CONSTANTS -- //
+
 // PER-BOOK AUTOMATON CACHE (L1), LRU-BOUNDED. REBUILT WHEN THE BOOK OR GLOBAL GLOSSARY CHANGES. EACH
 // BUILT AUTOMATON CAN HOLD THOUSANDS OF TERMS, SO AN UNBOUNDED MAP WOULD GROW WITHOUT LIMIT IN A
 // LONG-LIVED PROCESS THAT TOUCHES MANY BOOKS — CAP IT AND EVICT THE LEAST-RECENTLY-USED ENTRY.
 const MAX_CACHED_BOOKS = 32;
 const cache = new Map<string, Built>();
+
+// -- FUNCTIONS -- //
 
 export function invalidateBook(bookId: string): void {
 	cache.delete(bookId);
@@ -44,10 +53,8 @@ async function build(bookId: string): Promise<Built> {
 	return built;
 }
 
-/**
- * RETURN ONLY THE EFFECTIVE-GLOSSARY TERMS PRESENT IN THIS CHAPTER.
- * LONGEST MATCH WINS: A TERM THAT IS A STRICT SUBSTRING OF ANOTHER MATCHED TERM IS DROPPED.
- */
+// RETURN ONLY THE EFFECTIVE-GLOSSARY TERMS PRESENT IN THIS CHAPTER.
+// LONGEST MATCH WINS: A TERM THAT IS A STRICT SUBSTRING OF ANOTHER MATCHED TERM IS DROPPED.
 export async function matchTerms(bookId: string, content: string): Promise<TermDraft[]> {
 	const { ac, byRaw } = await build(bookId);
 	if (byRaw.size === 0) return [];

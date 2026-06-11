@@ -1,7 +1,13 @@
+// IMPORTED DEP-TYPES
 import type { Handle } from '@sveltejs/kit';
+// IMPORTED MODULES
 import { THEME_BG, THEME_COOKIE } from '$lib/stores/settings';
 
+// -- CONSTANTS -- //
+
 const DARK = ['dark', 'oled', 'contrast'];
+
+// -- FUNCTIONS -- //
 
 // PRE-RENDER THE SAVED THEME ONTO <html> FROM THE COOKIE SO THERE'S NO FLASH ON LOAD
 export const handle: Handle = async ({ event, resolve }) => {

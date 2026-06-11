@@ -1,6 +1,11 @@
-import { error } from '@sveltejs/kit';
-import { getChapterView } from '$lib/server/books';
+// IMPORTED DEP-TYPES
 import type { PageServerLoad } from './$types';
+// IMPORTED DEP-MODULES
+import { error } from '@sveltejs/kit';
+// IMPORTED MODULES
+import { getChapterView } from '$lib/server/books';
+
+// -- FUNCTIONS -- //
 
 // SSR THE CHAPTER BY ITS UUID (PATH PARAM). THIS IS A REAL VIEW, SO IT RECORDS THE RESUME POINT.
 export const load: PageServerLoad = async ({ params }) => {

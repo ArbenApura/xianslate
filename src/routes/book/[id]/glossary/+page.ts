@@ -1,4 +1,7 @@
+// IMPORTED TYPES
 import type { PageLoad } from './$types';
+
+// -- FUNCTIONS -- //
 
 export const load: PageLoad = async ({ params, fetch }) => {
 	const res = await fetch(`/api/books/${params.id}`);

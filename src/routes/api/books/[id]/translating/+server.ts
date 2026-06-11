@@ -1,9 +1,14 @@
+// IMPORTED DEP-MODULES
 import { json } from '@sveltejs/kit';
 import { and, eq, inArray } from 'drizzle-orm';
+// IMPORTED MODULES
 import { db } from '$lib/server/db';
 import { chapters } from '$lib/server/db/schema';
 import { runningChapterIds } from '$lib/server/translation-service';
+// IMPORTED TYPES
 import type { RequestHandler } from './$types';
+
+// -- FUNCTIONS -- //
 
 // LIVE SET OF CHAPTERS IN THIS BOOK WITH A TRANSLATION JOB RUNNING (CURRENT READ + BACKGROUND PREFETCH).
 // THE SIDEBAR/TOC POLLS THIS SO ITS 'TRANSLATING' BADGES REFLECT THE TRUE SERVER STATE.

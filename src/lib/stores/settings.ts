@@ -1,5 +1,9 @@
-import { writable } from 'svelte/store';
+// IMPORTED ENVS
 import { browser } from '$app/environment';
+// IMPORTED DEP-MODULES
+import { writable } from 'svelte/store';
+
+// -- TYPES -- //
 
 export type Theme = 'light' | 'sepia' | 'dark' | 'oled' | 'contrast';
 export type LayoutMode = 'sidebyside' | 'interleaved' | 'en' | 'zh';
@@ -26,6 +30,8 @@ export interface ReaderSettings {
 	prefetchTranslate: boolean;
 }
 
+// -- CONSTANTS -- //
+
 // BUMP version WHEN DEFAULTS CHANGE — TRIGGERS A ONE-TIME MIGRATION OF SAVED SETTINGS
 export const DEFAULTS: ReaderSettings = {
 	version: 3,
@@ -46,8 +52,10 @@ export const DEFAULTS: ReaderSettings = {
 };
 
 const KEY = 'xianslate:settings';
+
 // COOKIE LETS THE SERVER RENDER THE CORRECT THEME ON FIRST PAINT (NO FLICKER)
 export const THEME_COOKIE = 'xs_theme';
+
 const DARK_THEMES: Theme[] = ['dark', 'oled', 'contrast'];
 
 // SINGLE SOURCE OF TRUTH FOR THEME SURFACE COLOURS — APPLIED APP-WIDE AT THE LAYOUT ROOT
@@ -60,8 +68,37 @@ export const THEME_CLASS: Record<Theme, string> = {
 	contrast: 'bg-black text-slate-100',
 };
 
+// ROOT BACKGROUND PER THEME — KEEPS BROWSER CHROME, SCROLLBARS, AND OVERSCROLL IN SYNC
+export const THEME_BG: Record<Theme, string> = {
+	light: '#fbfaf7',
+	sepia: '#f4ecd8',
+	dark: '#0e131c',
+	oled: '#000000',
+	contrast: '#000000',
+};
+
+// -- STORES -- //
+
+export const settings = createSettings();
+
+// -- FUNCTIONS -- //
+
 export function isDarkTheme(theme: Theme): boolean {
 	return DARK_THEMES.includes(theme);
+}
+
+// APPLY THE THEME AT THE DOCUMENT ROOT: dark CLASS, color-scheme, AND ROOT BACKGROUND
+export function applyThemeClass(theme: Theme): void {
+	if (!browser) return;
+	const isDark = DARK_THEMES.includes(theme);
+	const root = document.documentElement;
+	root.classList.toggle('dark', isDark);
+	root.style.colorScheme = isDark ? 'dark' : 'light';
+	root.style.backgroundColor = THEME_BG[theme];
+}
+
+export function resetSettings() {
+	settings.set({ ...DEFAULTS });
 }
 
 // MERGE A PARSED OBJECT ONTO DEFAULTS, KEEPING ONLY KNOWN KEYS WHOSE VALUE TYPE MATCHES THE DEFAULT —
@@ -86,32 +123,13 @@ function load(): ReaderSettings {
 			const parsed = JSON.parse(raw);
 			// MIGRATION: MERGE THE USER'S SAVED VALUES *FORWARD* ONTO THE CURRENT DEFAULTS RATHER THAN
 			// DISCARDING THEM ON A version BUMP — A DEFAULTS CHANGE MUST NOT WIPE THE READER'S THEME, LAYOUT,
-			// AND TYPOGRAPHY. New keys come from DEFAULTS; known keys keep the saved value (type-checked).
+			// AND TYPOGRAPHY. NEW KEYS COME FROM DEFAULTS; KNOWN KEYS KEEP THE SAVED VALUE (TYPE-CHECKED).
 			return mergeKnown(parsed);
 		}
 	} catch {
 		// IGNORE CORRUPT STATE
 	}
 	return { ...DEFAULTS };
-}
-
-// ROOT BACKGROUND PER THEME — KEEPS BROWSER CHROME, SCROLLBARS, AND OVERSCROLL IN SYNC
-export const THEME_BG: Record<Theme, string> = {
-	light: '#fbfaf7',
-	sepia: '#f4ecd8',
-	dark: '#0e131c',
-	oled: '#000000',
-	contrast: '#000000',
-};
-
-/** APPLY THE THEME AT THE DOCUMENT ROOT: dark CLASS, color-scheme, AND ROOT BACKGROUND */
-export function applyThemeClass(theme: Theme): void {
-	if (!browser) return;
-	const isDark = DARK_THEMES.includes(theme);
-	const root = document.documentElement;
-	root.classList.toggle('dark', isDark);
-	root.style.colorScheme = isDark ? 'dark' : 'light';
-	root.style.backgroundColor = THEME_BG[theme];
 }
 
 function createSettings() {
@@ -135,10 +153,4 @@ function createSettings() {
 		});
 	}
 	return store;
-}
-
-export const settings = createSettings();
-
-export function resetSettings() {
-	settings.set({ ...DEFAULTS });
 }

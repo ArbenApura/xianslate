@@ -26,37 +26,45 @@
 	import { cubicOut } from 'svelte/easing';
 	// IMPORTED MODULES
 	import { cn } from '$lib/utils/cn';
+	import { ripple } from '$lib/actions/ripple';
 	// IMPORTED DEP-COMPONENTS
 	import Check from 'lucide-svelte/icons/check';
 	import ChevronDown from 'lucide-svelte/icons/chevron-down';
 
 	// -- REQUIRED PROPS -- //
+
 	export let items: SelectOption[];
-	export let value = '';
 
 	// -- OPTIONAL PROPS -- //
+
+	export let value = '';
 	export let placeholder = 'Select…';
 	export let disabled = false;
 	let className = '';
 	export { className as class };
 
 	// -- CONSTANTS -- //
+
 	const dispatch = createEventDispatcher<{ change: string }>();
 
 	// -- STATES -- //
+
 	let open = false;
 	let triggerEl: HTMLButtonElement;
 	let dropdownEl: HTMLDivElement;
 	let portalTarget: HTMLDivElement;
 	let dropdownStyle = '';
-	let activeIndex = -1; // KEYBOARD-HIGHLIGHTED OPTION (ROVING, VIA aria-activedescendant)
+	// KEYBOARD-HIGHLIGHTED OPTION (ROVING, VIA aria-activedescendant)
+	let activeIndex = -1;
 	const listboxId = `sel-${Math.round(performance.now() * 1000)}-${Math.floor(performance.now() % 1000)}`;
 	const optionId = (i: number) => `${listboxId}-opt-${i}`;
 
 	// -- REACTIVE STATES -- //
+
 	$: selected = items.find((o) => o.value === value) ?? null;
 
 	// -- FUNCTIONS -- //
+
 	function select(opt: SelectOption) {
 		value = opt.value;
 		open = false;
@@ -97,11 +105,13 @@
 		let left = rect.left;
 		if (left + width > window.innerWidth - 8) left = window.innerWidth - width - 8;
 		if (left < 8) left = 8;
-		// Flip above the trigger when there isn't room below. Anchor the dropdown's
-		// bottom edge to the trigger so it hugs it regardless of its actual height.
+		// FLIP ABOVE THE TRIGGER WHEN THERE IS NOT ROOM BELOW. ANCHOR THE DROPDOWN'S
+		// BOTTOM EDGE TO THE TRIGGER SO IT HUGS IT REGARDLESS OF ITS ACTUAL HEIGHT.
 		const spaceBelow = window.innerHeight - rect.bottom - gap;
 		const spaceAbove = rect.top - gap;
-		const base = `position:fixed;left:${left}px;width:${width}px;z-index:9999;`;
+		// RUNTIME-DYNAMIC PIXEL VALUES (left, width, top/bottom) CANNOT USE TAILWIND ARBITRARY CLASSES
+		// BECAUSE THEY DEPEND ON getBoundingClientRect() AT RUNTIME — style="" EXCEPTION (b).
+		const base = `left:${left}px;width:${width}px;`;
 		if (spaceBelow < maxH && spaceAbove > spaceBelow) {
 			dropdownStyle = `${base}bottom:${Math.round(window.innerHeight - rect.top + gap)}px;`;
 		} else {
@@ -164,6 +174,7 @@
 	}
 
 	// -- LIFECYCLES -- //
+
 	onMount(() => {
 		portalTarget = document.createElement('div');
 		document.body.appendChild(portalTarget);
@@ -183,12 +194,13 @@
 	});
 </script>
 
+<!-- TRIGGER -->
 <div class={cn('relative', className)}>
-	<!-- TRIGGER -->
 	<button
 		bind:this={triggerEl}
 		type="button"
 		{disabled}
+		use:ripple={{ disabled }}
 		on:click={toggle}
 		on:keydown={onTriggerKeydown}
 		role="combobox"
@@ -213,6 +225,7 @@
 </div>
 
 <!-- DROPDOWN (PORTALED — NEUTRAL SURFACE) -->
+<!-- RUNTIME-DYNAMIC PIXEL VALUES (left, width, top/bottom) REQUIRE style="" — EXCEPTION (b). FIXED POSITIONING AND Z-INDEX ARE IN TAILWIND CLASSES. -->
 {#if open && portalTarget}
 	<div
 		bind:this={dropdownEl}
@@ -222,14 +235,16 @@
 		tabindex="-1"
 		transition:fly={{ y: -8, duration: 160, easing: cubicOut }}
 		style={dropdownStyle}
-		class="max-h-64 overflow-y-auto rounded-xl border border-black/10 bg-white p-1 shadow-lg dark:border-white/[0.08] dark:bg-slate-800"
+		class="fixed z-[9999] max-h-64 overflow-y-auto rounded-xl border border-black/10 bg-white p-1 shadow-lg dark:border-white/[0.08] dark:bg-slate-800"
 	>
+		<!-- OPTION LIST -->
 		{#each items as opt, i (opt.value)}
 			<button
 				type="button"
 				role="option"
 				id={optionId(i)}
 				aria-selected={opt.value === value}
+				use:ripple
 				on:click={() => select(opt)}
 				on:mousemove={() => (activeIndex = i)}
 				class={cn(

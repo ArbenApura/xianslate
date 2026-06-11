@@ -1,4 +1,4 @@
-// SHARED TYPES ACROSS CLIENT + SERVER
+// -- TYPES -- //
 
 export type Gender = 'neuter' | 'masculine' | 'feminine';
 export type GlossaryScope = 'global' | 'book';

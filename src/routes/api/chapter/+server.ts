@@ -1,6 +1,11 @@
+// IMPORTED DEP-MODULES
 import { error, json } from '@sveltejs/kit';
-import { getChapterView } from '$lib/server/books';
+// IMPORTED TYPES
 import type { RequestHandler } from './$types';
+// IMPORTED MODULES
+import { getChapterView } from '$lib/server/books';
+
+// -- FUNCTIONS -- //
 
 export const GET: RequestHandler = async ({ url }) => {
 	const uuid = url.searchParams.get('id') ?? url.searchParams.get('uuid');

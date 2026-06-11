@@ -1,13 +1,20 @@
+// IMPORTED DEP-TYPES
+import type { RequestHandler } from './$types';
+// IMPORTED DEP-MODULES
 import { error, json } from '@sveltejs/kit';
 import { z } from 'zod';
+// IMPORTED MODULES
 import { createEmptyBook, listBooks } from '$lib/server/books';
-import type { RequestHandler } from './$types';
+
+// -- CONSTANTS -- //
+
+const CreateBody = z.object({ title: z.string().trim().min(1), author: z.string().trim().optional() });
+
+// -- FUNCTIONS -- //
 
 export const GET: RequestHandler = async () => {
 	return json(await listBooks());
 };
-
-const CreateBody = z.object({ title: z.string().trim().min(1), author: z.string().trim().optional() });
 
 // CREATE AN EMPTY (MANUALLY-MANAGED) BOOK — LETS THE USER CURATE A GLOSSARY BEFORE ADDING CHAPTERS
 export const POST: RequestHandler = async ({ request }) => {

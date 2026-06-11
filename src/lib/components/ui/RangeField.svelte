@@ -1,5 +1,6 @@
 <script lang="ts">
 	// -- OPTIONAL PROPS -- //
+
 	export let value = 0;
 	export let min = 0;
 	export let max = 100;

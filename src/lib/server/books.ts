@@ -1,10 +1,15 @@
+// IMPORTED TYPES
+import type { ImportedBook, SourceType } from '$lib/types';
+// IMPORTED DEP-MODULES
 import { randomUUID } from 'node:crypto';
 import { and, asc, desc, eq, gt, gte, inArray, lt, lte, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/sqlite-core';
+// IMPORTED MODULES
 import { db } from './db';
 import { books, chapters, type Book, type Chapter } from './db/schema';
 import { fetchChapter } from './fetcher';
-import type { ImportedBook, SourceType } from '$lib/types';
+
+// -- TYPES -- //
 
 export interface ChapterView {
 	id: number; // INTERNAL PK — USED BY translate/extract
@@ -43,13 +48,18 @@ export interface BookSummary {
 	createdAt: number;
 }
 
+// CHUNKED MULTI-ROW INSERT (SQLite CAPS BOUND PARAMETERS PER STATEMENT) — RETURNS {id,uuid} IN ORDER.
+type ChapterInsert = typeof chapters.$inferInsert;
+
+// -- FUNCTIONS -- //
+
 async function neighborUuidByUrl(url: string | null): Promise<string | null> {
 	if (!url) return null;
 	const row = await db.select({ uuid: chapters.uuid }).from(chapters).where(eq(chapters.chapterUrl, url)).limit(1);
 	return row[0]?.uuid ?? null;
 }
 
-// GAP-TOLERANT NEIGHBOR FOR seq-ORDERED BOOKS: nearest chapter below (prev) / above (next).
+// GAP-TOLERANT NEIGHBOR FOR seq-ORDERED BOOKS: NEAREST CHAPTER BELOW (prev) / ABOVE (next).
 // TOLERATES seq GAPS LEFT BY DELETES/REORDERS — NO NEED TO RE-PACK seq AFTER EVERY EDIT.
 async function neighborUuidByOrder(bookId: string, seq: number, dir: 'prev' | 'next'): Promise<string | null> {
 	const row = await db
@@ -179,11 +189,11 @@ export async function getChapterView(uuid: string, recordResume = false): Promis
 
 /**
  * FETCH (OR RETURN CACHED) A WEB CHAPTER.
- * - `anchor` (reader Prev/Next fetch) inserts the new chapter at the correct seq relative to the
- *   chapter navigated from, instead of appending to the tail.
- * - `targetBookId` forces the chapter into a specific existing book (e.g. a manual book the user is
- *   building from scraped URLs). When omitted, it creates/uses the site's own web book as before.
- *   Either way the chapter keeps its scraped chapterUrl/prevUrl/nextUrl, so Prev/Next stay enabled.
+ * - `anchor` (READER Prev/Next FETCH) INSERTS THE NEW CHAPTER AT THE CORRECT seq RELATIVE TO THE
+ *   CHAPTER NAVIGATED FROM, INSTEAD OF APPENDING TO THE TAIL.
+ * - `targetBookId` FORCES THE CHAPTER INTO A SPECIFIC EXISTING BOOK (E.G. A MANUAL BOOK THE USER IS
+ *   BUILDING FROM SCRAPED URLs). WHEN OMITTED, IT CREATES/USES THE SITE'S OWN WEB BOOK AS BEFORE.
+ *   EITHER WAY THE CHAPTER KEEPS ITS SCRAPED chapterUrl/prevUrl/nextUrl, SO Prev/Next STAY ENABLED.
  */
 export async function ingestWebChapter(
 	url: string,
@@ -316,8 +326,6 @@ export async function createImportedBook(
 	return { bookId, firstChapterUuid };
 }
 
-// CHUNKED MULTI-ROW INSERT (SQLite CAPS BOUND PARAMETERS PER STATEMENT) — RETURNS {id,uuid} IN ORDER.
-type ChapterInsert = typeof chapters.$inferInsert;
 async function batchInsertChapters(
 	tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
 	rows: ChapterInsert[],

@@ -1,14 +1,12 @@
+// IMPORTED DEP-TYPES
+import type { RequestHandler } from './$types';
+// IMPORTED DEP-MODULES
 import { error, json } from '@sveltejs/kit';
 import { z } from 'zod';
+// IMPORTED MODULES
 import { deleteTerm, updateTerm } from '$lib/server/glossary';
-import type { RequestHandler } from './$types';
 
-// STRICT POSITIVE-INTEGER PK PARSE — REJECTS "3.9", "0x10", " 3 ", "3abc" THAT Number() WOULD COERCE.
-function parseId(s: string): number | null {
-	if (!/^\d+$/.test(s)) return null;
-	const n = Number(s);
-	return Number.isSafeInteger(n) && n > 0 ? n : null;
-}
+// -- CONSTANTS -- //
 
 const PutBody = z.object({
 	raw: z.string().min(1).optional(),
@@ -16,6 +14,15 @@ const PutBody = z.object({
 	gender: z.enum(['neuter', 'masculine', 'feminine']).optional(),
 	tags: z.string().nullable().optional(),
 });
+
+// -- FUNCTIONS -- //
+
+// STRICT POSITIVE-INTEGER PK PARSE — REJECTS "3.9", "0x10", " 3 ", "3abc" THAT Number() WOULD COERCE.
+function parseId(s: string): number | null {
+	if (!/^\d+$/.test(s)) return null;
+	const n = Number(s);
+	return Number.isSafeInteger(n) && n > 0 ? n : null;
+}
 
 export const PUT: RequestHandler = async ({ params, request }) => {
 	const id = parseId(params.id);

@@ -1,9 +1,13 @@
+// IMPORTED DEP-MODULES
 import { execFile } from 'node:child_process';
 import { lookup } from 'node:dns/promises';
 import { existsSync } from 'node:fs';
 import { promisify } from 'node:util';
 import { parse } from 'node-html-parser';
+// IMPORTED TYPES
 import type { ParsedChapter } from '$lib/types';
+
+// -- CONSTANTS -- //
 
 const execFileAsync = promisify(execFile);
 
@@ -19,7 +23,46 @@ const CURL_BIN: string = (() => {
 	return 'curl';
 })();
 
-// -- SSRF GUARD -- //
+const MAX_REDIRECTS = 5;
+
+const FETCH_TIMEOUT_MS = 30_000;
+
+const BROWSER_UA =
+	'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+
+const BROWSER_HEADERS: Record<string, string> = {
+	'User-Agent': BROWSER_UA,
+	Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+	'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+	'Upgrade-Insecure-Requests': '1',
+	'sec-ch-ua': '"Chromium";v="120", "Not(A:Brand";v="24", "Google Chrome";v="120"',
+	'sec-ch-ua-mobile': '?0',
+	'sec-ch-ua-platform': '"Windows"',
+	'Sec-Fetch-Dest': 'document',
+	'Sec-Fetch-Mode': 'navigate',
+	'Sec-Fetch-Site': 'none',
+	'Sec-Fetch-User': '?1',
+};
+
+const ENTITIES: Record<string, string> = {
+	'&emsp;': '　',
+	'&ensp;': ' ',
+	'&nbsp;': ' ',
+	'&amp;': '&',
+	'&lt;': '<',
+	'&gt;': '>',
+	'&quot;': '"',
+	'&#39;': "'",
+	'&apos;': "'",
+	'&ldquo;': '"',
+	'&rdquo;': '"',
+};
+
+// CONSTRUCTED FROM AN ESCAPE (NOT A LITERAL U+3000) TO AVOID A no-irregular-whitespace LINT ERROR.
+const IDEOGRAPHIC_SPACE_RE = new RegExp('\\u3000', 'g');
+
+// -- FUNCTIONS -- //
+
 // THE FETCH TARGET IS USER-SUPPLIED, SO REFUSE LOOPBACK / PRIVATE / LINK-LOCAL DESTINATIONS BEFORE WE
 // (OR THE curl FALLBACK) TOUCH THEM — OTHERWISE THE SERVER COULD BE STEERED AT INTERNAL SERVICES OR
 // CLOUD METADATA ENDPOINTS. WE RESOLVE THE HOST AND CHECK EVERY ADDRESS (GUARDS DNS-REBINDING TOO).
@@ -76,29 +119,9 @@ async function assertPublicUrl(raw: string): Promise<{ url: URL; address: string
 	return { url: u, address: addrs[0].address, family: addrs[0].family };
 }
 
-const MAX_REDIRECTS = 5;
-const FETCH_TIMEOUT_MS = 30_000;
-
-const BROWSER_UA =
-	'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
-
-const BROWSER_HEADERS: Record<string, string> = {
-	'User-Agent': BROWSER_UA,
-	Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-	'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-	'Upgrade-Insecure-Requests': '1',
-	'sec-ch-ua': '"Chromium";v="120", "Not(A:Brand";v="24", "Google Chrome";v="120"',
-	'sec-ch-ua-mobile': '?0',
-	'sec-ch-ua-platform': '"Windows"',
-	'Sec-Fetch-Dest': 'document',
-	'Sec-Fetch-Mode': 'navigate',
-	'Sec-Fetch-Site': 'none',
-	'Sec-Fetch-User': '?1',
-};
-
 // THESE NOVEL SITES OFTEN SERVE LEGACY CHINESE ENCODINGS (Big5 / GBK / GB18030), NOT UTF-8. DECODE THE
 // RAW BYTES BY THE DECLARED CHARSET (HTTP Content-Type → <meta charset> → <meta http-equiv>) SO THE
-// TEXT ISN'T MOJIBAKE. Node's TextDecoder ships full-ICU, so gbk/big5/gb18030 labels work natively.
+// TEXT ISN'T MOJIBAKE. Node's TextDecoder SHIPS full-ICU, SO gbk/big5/gb18030 LABELS WORK NATIVELY.
 function detectCharset(bytes: Uint8Array, contentType: string | null): string {
 	if (bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) return 'utf-8';
 	const fromHeader = contentType?.match(/charset=["']?([\w-]+)/i)?.[1];
@@ -121,7 +144,7 @@ function decodeHtmlBytes(bytes: Uint8Array, contentType: string | null): string 
 	}
 }
 
-/** CURL FALLBACK — PROVEN TO PASS THE SITE'S BOT CHECK ON THIS HOST. `pin` IS THE PRE-VALIDATED IP. */
+// CURL FALLBACK — PROVEN TO PASS THE SITE'S BOT CHECK ON THIS HOST. `pin` IS THE PRE-VALIDATED IP.
 async function curlFetch(u: URL, pin: { address: string; family: number }): Promise<string> {
 	const port = u.port || (u.protocol === 'https:' ? '443' : '80');
 	const { stdout } = await execFileAsync(
@@ -155,11 +178,9 @@ async function curlFetch(u: URL, pin: { address: string; family: number }): Prom
 	return decodeHtmlBytes(buf, null);
 }
 
-/**
- * FETCH HTML, FALLING BACK TO SYSTEM curl WHEN THE NODE CLIENT IS BLOCKED (CLOUDFLARE 403).
- * REDIRECTS ARE FOLLOWED *MANUALLY* SO EVERY HOP IS RE-VALIDATED BY THE SSRF GUARD — A PUBLIC URL THAT
- * 30x-REDIRECTS TO 127.0.0.1 / 169.254.169.254 / AN INTERNAL HOST IS REJECTED INSTEAD OF FOLLOWED.
- */
+// FETCH HTML, FALLING BACK TO SYSTEM curl WHEN THE NODE CLIENT IS BLOCKED (CLOUDFLARE 403).
+// REDIRECTS ARE FOLLOWED *MANUALLY* SO EVERY HOP IS RE-VALIDATED BY THE SSRF GUARD — A PUBLIC URL THAT
+// 30x-REDIRECTS TO 127.0.0.1 / 169.254.169.254 / AN INTERNAL HOST IS REJECTED INSTEAD OF FOLLOWED.
 async function fetchHtml(url: string): Promise<string> {
 	let current = url;
 	for (let hop = 0; hop < MAX_REDIRECTS; hop++) {
@@ -189,20 +210,6 @@ async function fetchHtml(url: string): Promise<string> {
 	throw new Error('Too many redirects.');
 }
 
-const ENTITIES: Record<string, string> = {
-	'&emsp;': '　',
-	'&ensp;': ' ',
-	'&nbsp;': ' ',
-	'&amp;': '&',
-	'&lt;': '<',
-	'&gt;': '>',
-	'&quot;': '"',
-	'&#39;': "'",
-	'&apos;': "'",
-	'&ldquo;': '“',
-	'&rdquo;': '”',
-};
-
 // SAFELY TURN A NUMERIC CODEPOINT INTO A CHAR — A MALFORMED &#1114112; (> 0x10FFFF) WOULD OTHERWISE
 // THROW RangeError AND ABORT THE WHOLE PARSE; FALL BACK TO THE LITERAL ENTITY INSTEAD.
 function codePointOr(cp: number, literal: string): string {
@@ -226,10 +233,7 @@ function decodeEntities(s: string): string {
 	return out;
 }
 
-// CONSTRUCTED FROM AN ESCAPE (NOT A LITERAL U+3000) TO AVOID A no-irregular-whitespace LINT ERROR.
-const IDEOGRAPHIC_SPACE_RE = new RegExp('\\u3000', 'g');
-
-/** TURN A CONTENT-DIV innerHTML INTO CLEAN PARAGRAPH TEXT */
+// TURN A CONTENT-DIV innerHTML INTO CLEAN PARAGRAPH TEXT
 function htmlToParagraphs(html: string): string {
 	const noScripts = html
 		.replace(/<script[\s\S]*?<\/script>/gi, '')
@@ -254,7 +258,7 @@ function abs(href: string | undefined, base: string): string | null {
 	}
 }
 
-/** FETCH + PARSE A uukanshu.cc CHAPTER PAGE */
+// FETCH + PARSE A uukanshu.cc CHAPTER PAGE
 export async function fetchChapter(url: string): Promise<ParsedChapter> {
 	const html = await fetchHtml(url);
 	const root = parse(html);

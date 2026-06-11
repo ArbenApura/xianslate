@@ -5,6 +5,7 @@
 	import { CJK_FONTS, LATIN_FONTS } from '$lib/fonts';
 	import { resetSettings, settings, type LayoutMode, type Theme } from '$lib/stores/settings';
 	import { cn } from '$lib/utils/cn';
+	import { ripple } from '$lib/actions/ripple';
 	// IMPORTED DEP-COMPONENTS
 	import Check from 'lucide-svelte/icons/check';
 	import RotateCcw from 'lucide-svelte/icons/rotate-ccw';
@@ -15,9 +16,11 @@
 	import Select from '$lib/components/ui/Select.svelte';
 
 	// -- OPTIONAL PROPS -- //
+
 	export let open = false;
 
 	// -- CONSTANTS -- //
+
 	const dispatch = createEventDispatcher();
 	const THEMES: { key: Theme; label: string; swatch: string }[] = [
 		{ key: 'light', label: 'Light', swatch: 'bg-white border-slate-300' },
@@ -44,6 +47,7 @@
 			<div class="grid grid-cols-4 gap-1.5">
 				{#each LAYOUTS as l (l.key)}
 					<button
+						use:ripple
 						on:click={() => ($settings.layout = l.key)}
 						class={cn(
 							'rounded-lg border px-2 py-1.5 text-sm transition-colors',
@@ -56,12 +60,13 @@
 			</div>
 		</div>
 
-		<!-- THEME -->
+		<!-- THEME SWATCHES -->
 		<div>
 			<span class="mb-1.5 block text-xs font-medium opacity-60">Theme</span>
 			<div class="flex flex-wrap gap-2.5">
 				{#each THEMES as t (t.key)}
 					<button
+						use:ripple
 						on:click={() => ($settings.theme = t.key)}
 						title={t.label}
 						aria-label={t.label}
@@ -177,7 +182,7 @@
 				</span>
 			</label>
 
-			<!-- PREFETCH -->
+			<!-- PREFETCH CONTROLS -->
 			<div class="mt-4">
 				<span class="mb-1.5 block text-xs opacity-60">Prefetch upcoming chapters</span>
 				<div
@@ -185,6 +190,7 @@
 				>
 					{#each [0, 1, 2, 3] as n (n)}
 						<button
+							use:ripple
 							on:click={() => ($settings.prefetch = n)}
 							class={cn(
 								'px-3 py-1.5 transition-colors',
@@ -193,7 +199,7 @@
 						>
 					{/each}
 				</div>
-				<p class="mt-1 text-xs opacity-50">Downloads the next chapter(s) while you read, so “Next” is instant.</p>
+				<p class="mt-1 text-xs opacity-50">Downloads the next chapter(s) while you read, so "Next" is instant.</p>
 			</div>
 			<label class="mt-2 flex items-start gap-2 text-sm" class:opacity-40={$settings.prefetch === 0}>
 				<input

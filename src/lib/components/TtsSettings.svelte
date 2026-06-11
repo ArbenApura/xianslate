@@ -1,14 +1,11 @@
 <script lang="ts">
-	// READ-ALOUD CUSTOMIZATION DIALOG — voice (per language), rate / pitch / volume, highlight + scroll
-	// behaviour. Changes apply live (the engine re-speaks the current sentence on a voice/rate change).
+	// READ-ALOUD CUSTOMIZATION DIALOG — VOICE (PER LANGUAGE), RATE / PITCH / VOLUME, HIGHLIGHT + SCROLL
+	// BEHAVIOUR. CHANGES APPLY LIVE (THE ENGINE RE-SPEAKS THE CURRENT SENTENCE ON A VOICE/RATE CHANGE).
 	import { createEventDispatcher } from 'svelte';
 	import { cn } from '$lib/utils/cn';
+	import { ripple } from '$lib/actions/ripple';
 	import RotateCcw from 'lucide-svelte/icons/rotate-ccw';
 	import Play from 'lucide-svelte/icons/play';
-	import Button from '$lib/components/ui/Button.svelte';
-	import Modal from '$lib/components/ui/Modal.svelte';
-	import RangeField from '$lib/components/ui/RangeField.svelte';
-	import Select from '$lib/components/ui/Select.svelte';
 	import TriangleAlert from 'lucide-svelte/icons/triangle-alert';
 	import {
 		ttsSettings,
@@ -19,23 +16,57 @@
 		voiceHasWordTiming,
 	} from '$lib/stores/tts';
 	import { tts } from '$lib/tts/engine';
+	import Button from '$lib/components/ui/Button.svelte';
+	import Modal from '$lib/components/ui/Modal.svelte';
+	import RangeField from '$lib/components/ui/RangeField.svelte';
+	import Select from '$lib/components/ui/Select.svelte';
 
 	// -- OPTIONAL PROPS -- //
+
 	export let open = false;
-	// Which language is currently being read — used to surface that voice picker first.
+	// WHICH LANGUAGE IS CURRENTLY BEING READ — USED TO SURFACE THAT VOICE PICKER FIRST.
 	export let lang: 'en' | 'zh' = 'en';
+
+	// -- CONSTANTS -- //
 
 	const dispatch = createEventDispatcher();
 
-	$: if (open) ensureVoices();
-
-	// -- REACTIVE STATES -- //
-	$: enVoices = $voices.filter((v) => v.lang?.toLowerCase().startsWith('en'));
-	$: zhVoices = $voices.filter((v) => v.lang?.toLowerCase().startsWith('zh'));
 	const toOptions = (vs: SpeechSynthesisVoice[]) => [
 		{ value: '', label: 'Automatic (system default)' },
 		...vs.map((v) => ({ value: v.voiceURI, label: `${v.name} · ${v.lang}` })),
 	];
+
+	// -- REACTIVE STATES -- //
+
+	$: enVoices = $voices.filter((v) => v.lang?.toLowerCase().startsWith('en'));
+	$: zhVoices = $voices.filter((v) => v.lang?.toLowerCase().startsWith('zh'));
+
+	// THE VOICE THAT WILL ACTUALLY BE USED FOR THE LANGUAGE CURRENTLY BEING READ, AND WHETHER IT CAN
+	// DRIVE WORD-LEVEL HIGHLIGHTING (NETWORK VOICES LIKE GOOGLE'S ONLY FIRE start/end EVENTS).
+	$: activeVoice = (() => {
+		const uri = lang === 'zh' ? $ttsSettings.zhVoiceURI : $ttsSettings.enVoiceURI;
+		const pool = lang === 'zh' ? zhVoices : enVoices;
+		return (uri ? pool.find((v) => v.voiceURI === uri) : null) ?? pool[0] ?? null;
+	})();
+	$: wordTimingOk = voiceHasWordTiming(activeVoice, $wordTimingSupport);
+
+	// ORDER THE TWO VOICE PICKERS SO THE LANGUAGE BEING READ SHOWS FIRST.
+	$: voiceBlocks =
+		lang === 'zh'
+			? ([
+					{ key: 'zh', label: 'Chinese voice', opts: toOptions(zhVoices), empty: zhVoices.length === 0 },
+					{ key: 'en', label: 'English voice', opts: toOptions(enVoices), empty: enVoices.length === 0 },
+				] as const)
+			: ([
+					{ key: 'en', label: 'English voice', opts: toOptions(enVoices), empty: enVoices.length === 0 },
+					{ key: 'zh', label: 'Chinese voice', opts: toOptions(zhVoices), empty: zhVoices.length === 0 },
+				] as const);
+
+	// -- REACTIVE STATEMENTS -- //
+
+	$: if (open) ensureVoices();
+
+	// -- FUNCTIONS -- //
 
 	function preview(which: 'en' | 'zh') {
 		if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
@@ -58,38 +89,19 @@
 		window.speechSynthesis.cancel();
 		window.speechSynthesis.speak(u);
 	}
-
-	// The voice that will actually be used for the language currently being read, and whether it can
-	// drive word-level highlighting (network voices like Google's only fire start/end events).
-	$: activeVoice = (() => {
-		const uri = lang === 'zh' ? $ttsSettings.zhVoiceURI : $ttsSettings.enVoiceURI;
-		const pool = lang === 'zh' ? zhVoices : enVoices;
-		return (uri ? pool.find((v) => v.voiceURI === uri) : null) ?? pool[0] ?? null;
-	})();
-	$: wordTimingOk = voiceHasWordTiming(activeVoice, $wordTimingSupport);
-
-	// Order the two voice pickers so the language being read shows first.
-	$: voiceBlocks =
-		lang === 'zh'
-			? ([
-					{ key: 'zh', label: 'Chinese voice', opts: toOptions(zhVoices), empty: zhVoices.length === 0 },
-					{ key: 'en', label: 'English voice', opts: toOptions(enVoices), empty: enVoices.length === 0 },
-				] as const)
-			: ([
-					{ key: 'en', label: 'English voice', opts: toOptions(enVoices), empty: enVoices.length === 0 },
-					{ key: 'zh', label: 'Chinese voice', opts: toOptions(zhVoices), empty: zhVoices.length === 0 },
-				] as const);
 </script>
 
+<!-- MODAL WRAPPER -->
 <Modal {open} title="Read-aloud settings" size="md" on:close={() => dispatch('close')}>
 	<div class="flex flex-col gap-5">
-		<!-- VOICES -->
+		<!-- VOICE PICKERS -->
 		<div class="flex flex-col gap-3">
 			{#each voiceBlocks as b (b.key)}
 				<div>
 					<div class="mb-1 flex items-center justify-between">
 						<span class="text-xs font-medium opacity-60">{b.label}</span>
 						<button
+							use:ripple
 							on:click={() => preview(b.key)}
 							class="inline-flex items-center gap-1 text-xs opacity-60 hover:opacity-100"
 							title="Preview"><Play size={11} /> Preview</button
@@ -110,7 +122,7 @@
 			{/each}
 		</div>
 
-		<!-- SLIDERS -->
+		<!-- SLIDERS — SPEED / PITCH / VOLUME -->
 		<div class="flex flex-col gap-3.5">
 			<RangeField
 				label="Speed"
@@ -138,7 +150,7 @@
 			/>
 		</div>
 
-		<!-- HIGHLIGHT + SCROLL -->
+		<!-- HIGHLIGHT AND SCROLL OPTIONS -->
 		<div class="flex flex-col gap-2.5 border-t border-black/[0.06] pt-4 text-sm dark:border-white/[0.045]">
 			<span class="text-xs font-medium opacity-60">While reading</span>
 			<label class="flex items-center gap-2">
@@ -156,11 +168,12 @@
 				Highlight the current word
 			</label>
 			{#if $ttsSettings.highlight && !wordTimingOk}
+				<!-- WORD TIMING WARNING -->
 				<p class="flex items-start gap-1.5 pl-6 text-xs text-amber-600 dark:text-amber-400">
 					<TriangleAlert size={13} class="mt-0.5 shrink-0" />
 					<span
 						>{activeVoice?.name ?? 'This voice'} doesn't report word timing, so only the sentence is highlighted.
-						Pick a local/offline voice (e.g. a “Microsoft …” voice) for word-by-word highlighting.</span
+						Pick a local/offline voice (e.g. a "Microsoft …" voice) for word-by-word highlighting.</span
 					>
 				</p>
 			{/if}
@@ -170,12 +183,14 @@
 			</label>
 		</div>
 
+		<!-- FOOTER HINT -->
 		<p class="text-xs opacity-50">
 			Voices come from your browser/OS. Install more system voices to expand the list. Tip: click any word
 			while reading to jump there.
 		</p>
 	</div>
 
+	<!-- RESET BUTTON SLOT -->
 	<svelte:fragment slot="footer">
 		<Button on:click={resetTtsSettings}><RotateCcw size={14} /> Reset</Button>
 	</svelte:fragment>

@@ -1,8 +1,13 @@
+// IMPORTED TYPES
+import type { PageServerLoad } from './$types';
+// IMPORTED DEP-MODULES
 import { error, redirect } from '@sveltejs/kit';
 import { asc, eq } from 'drizzle-orm';
+// IMPORTED MODULES
 import { db } from '$lib/server/db';
 import { books, chapters } from '$lib/server/db/schema';
-import type { PageServerLoad } from './$types';
+
+// -- FUNCTIONS -- //
 
 // NO CHAPTER IN THE PATH → REDIRECT TO THE RESUME POINT (ELSE THE FIRST CHAPTER)
 export const load: PageServerLoad = async ({ params }) => {

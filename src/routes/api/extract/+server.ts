@@ -1,13 +1,20 @@
+// IMPORTED TYPES
+import type { RequestHandler } from './$types';
+// IMPORTED DEP-MODULES
 import { error, json } from '@sveltejs/kit';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
+// IMPORTED MODULES
 import { db } from '$lib/server/db';
 import { chapters } from '$lib/server/db/schema';
 import { addNewTerms, extractTerms, getEffectiveGlossary } from '$lib/server/glossary';
 import { stripLeadingTitle } from '$lib/chapter-label';
-import type { RequestHandler } from './$types';
+
+// -- CONSTANTS -- //
 
 const Body = z.object({ chapterId: z.number().int().positive() });
+
+// -- FUNCTIONS -- //
 
 export const POST: RequestHandler = async ({ request }) => {
 	const parsed = Body.safeParse(await request.json().catch(() => null));

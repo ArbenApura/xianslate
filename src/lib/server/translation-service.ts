@@ -1,3 +1,8 @@
+// IMPORTED DEP-TYPES
+import type { TranslationUsage } from '$lib/types';
+// IMPORTED MODULES
+import { stripLeadingTitle } from '$lib/chapter-label';
+// IMPORTED DEP-MODULES
 import { eq } from 'drizzle-orm';
 import { db } from './db';
 import { chapters } from './db/schema';
@@ -13,8 +18,8 @@ import {
 	translateChapterStreaming,
 	translateTitle,
 } from './translate';
-import { stripLeadingTitle } from '$lib/chapter-label';
-import type { TranslationUsage } from '$lib/types';
+
+// -- TYPES -- //
 
 export type TranslationEvent =
 	| { type: 'stage'; stage: 'extracting' } // PIPELINE PROGRESS BEFORE THE MATCHED-TERM META ARRIVES
@@ -22,7 +27,7 @@ export type TranslationEvent =
 	| { type: 'meta'; matched: number; cached: boolean }
 	| { type: 'title'; text: string }
 	| { type: 'delta'; text: string }
-	| { type: 'replace'; text: string } // FULL-TEXT CORRECTION (e.g. AFTER A CHINESE-LEAK REPAIR PASS)
+	| { type: 'replace'; text: string } // FULL-TEXT CORRECTION (E.G. AFTER A CHINESE-LEAK REPAIR PASS)
 	| { type: 'done'; cached: boolean; matched: number; usage: TranslationUsage }
 	| { type: 'error'; message: string };
 
@@ -36,6 +41,8 @@ interface Job {
 	controller: AbortController; // ABORTS THE IN-FLIGHT LLM CALLS WHEN A force RE-RUN SUPERSEDES THIS JOB
 }
 
+// -- CONSTANTS -- //
+
 const ZERO_USAGE: TranslationUsage = {
 	model: MODEL,
 	promptTokens: 0,
@@ -47,6 +54,8 @@ const ZERO_USAGE: TranslationUsage = {
 // MODULE-LEVEL REGISTRY: ONE DETACHED JOB PER CHAPTER. SURVIVES CLIENT DISCONNECTS;
 // COMPLETION IS PERSISTED TO THE DB, SO CLOSING THE BROWSER DOES NOT LOSE PROGRESS.
 const jobs = new Map<number, Job>();
+
+// -- FUNCTIONS -- //
 
 function emit(job: Job, evt: TranslationEvent) {
 	job.events.push(evt);
@@ -87,8 +96,8 @@ async function run(job: Job, force: boolean, autoExtract: boolean) {
 		const body = stripLeadingTitle(chapter.contentZh, chapter.titleZh);
 
 		// FAST PATH: ALREADY TRANSLATED → SERVE THE STORED ENGLISH. NEVER RE-BILL OR RE-EXTRACT ON A
-		// RE-READ/RE-NAVIGATION, REGARDLESS OF ANY GLOSSARY DRIFT SINCE IT WAS TRANSLATED. Re-translate
-		// (force) is the only way to redo it. matchTerms IS LOCAL/FREE, SO THE METER STAYS ACCURATE.
+		// RE-READ/RE-NAVIGATION, REGARDLESS OF ANY GLOSSARY DRIFT SINCE IT WAS TRANSLATED. RE-TRANSLATE
+		// (force) IS THE ONLY WAY TO REDO IT. matchTerms IS LOCAL/FREE, SO THE METER STAYS ACCURATE.
 		if (chapter.contentEn && !force) {
 			const terms = await matchTerms(chapter.bookId, body);
 			emit(job, { type: 'meta', matched: terms.length, cached: true });

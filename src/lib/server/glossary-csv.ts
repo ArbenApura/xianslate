@@ -1,5 +1,9 @@
+// IMPORTED DEP-MODULES
 import Papa from 'papaparse';
+// IMPORTED TYPES
 import type { Gender, TermDraft } from '$lib/types';
+
+// -- TYPES -- //
 
 interface CsvRow {
 	raw?: string;
@@ -7,16 +11,20 @@ interface CsvRow {
 	description?: string;
 }
 
+// -- CONSTANTS -- //
+
+// HARD CAP ON IMPORTED ROWS — A 10 MB CSV COULD OTHERWISE MATERIALISE 100k+ DRAFTS IN MEMORY.
+const MAX_ROWS = 100_000;
+
+// -- FUNCTIONS -- //
+
 function genderFromTags(tags: string[]): Gender {
 	if (tags.includes('#masculine') || tags.includes('#male')) return 'masculine';
 	if (tags.includes('#feminine') || tags.includes('#female')) return 'feminine';
 	return 'neuter';
 }
 
-/** PARSE A `raw,translation,description` CSV; DERIVE gender FROM #masculine/#feminine TAGS */
-// HARD CAP ON IMPORTED ROWS — A 10 MB CSV COULD OTHERWISE MATERIALISE 100k+ DRAFTS IN MEMORY.
-const MAX_ROWS = 100_000;
-
+// PARSE A `raw,translation,description` CSV; DERIVE gender FROM #masculine/#feminine TAGS
 export function parseGlossaryCsv(text: string): TermDraft[] {
 	const parsed = Papa.parse<CsvRow>(text, {
 		header: true,
@@ -53,7 +61,7 @@ function descriptionFor(t: TermDraft): string {
 	return parts.join(' ');
 }
 
-/** SERIALISE TERMS BACK TO THE SAME `raw,translation,description` FORMAT (ROUND-TRIPS WITH IMPORT) */
+// SERIALISE TERMS BACK TO THE SAME `raw,translation,description` FORMAT (ROUND-TRIPS WITH IMPORT)
 export function toGlossaryCsv(terms: TermDraft[]): string {
 	const rows = terms.map((t) => ({ raw: t.raw, translation: t.translation, description: descriptionFor(t) }));
 	return Papa.unparse(rows, { columns: ['raw', 'translation', 'description'] });

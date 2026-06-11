@@ -1,9 +1,10 @@
+// IMPORTED DEP-MODULES
 import { sql } from 'drizzle-orm';
 import { index, integer, real, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
-// -- BOOKS -- //
-// A LIBRARY ENTRY FROM ANY SOURCE. id IS THE SITE BOOK id FOR web, A GENERATED id FOR epub/txt.
+// -- CONSTANTS -- //
 
+// A LIBRARY ENTRY FROM ANY SOURCE. id IS THE SITE BOOK id FOR web, A GENERATED id FOR epub/txt.
 export const books = sqliteTable('books', {
 	id: text('id').primaryKey(),
 	sourceType: text('source_type', { enum: ['web', 'epub', 'txt', 'manual'] }).notNull(),
@@ -20,9 +21,7 @@ export const books = sqliteTable('books', {
 		.$defaultFn(() => Date.now()),
 });
 
-// -- CHAPTERS -- //
 // CACHE OF FETCHED/IMPORTED CHAPTERS. WEB NAV USES prevUrl/nextUrl; EPUB/TXT NAV USES seq.
-
 export const chapters = sqliteTable(
 	'chapters',
 	{
@@ -60,9 +59,7 @@ export const chapters = sqliteTable(
 	}),
 );
 
-// -- TRANSLATIONS -- //
 // MEMOIZED TRANSLATIONS KEYED BY content+glossary+model+prompt FINGERPRINT.
-
 export const translations = sqliteTable(
 	'translations',
 	{
@@ -87,10 +84,8 @@ export const translations = sqliteTable(
 	}),
 );
 
-// -- GLOSSARY -- //
 // scope='global' (bookId NULL) APPLIES TO EVERY BOOK; scope='book' IS PRIVATE.
 // EFFECTIVE GLOSSARY = global UNION book, WITH book OVERRIDING global ON THE SAME raw.
-
 export const glossary = sqliteTable(
 	'glossary',
 	{
@@ -122,10 +117,18 @@ export const glossary = sqliteTable(
 	}),
 );
 
+// -- TYPES -- //
+
 export type Book = typeof books.$inferSelect;
+
 export type NewBook = typeof books.$inferInsert;
+
 export type Chapter = typeof chapters.$inferSelect;
+
 export type NewChapter = typeof chapters.$inferInsert;
+
 export type Translation = typeof translations.$inferSelect;
+
 export type GlossaryEntry = typeof glossary.$inferSelect;
+
 export type NewGlossaryEntry = typeof glossary.$inferInsert;

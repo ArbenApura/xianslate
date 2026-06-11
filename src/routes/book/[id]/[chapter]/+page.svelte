@@ -1,4 +1,9 @@
 <script lang="ts">
+	// IMPORTED DEP-TYPES
+	import type { TranslationUsage } from '$lib/types';
+	// IMPORTED TYPES
+	import type { Phase } from '$lib/components/TranslationStatus.svelte';
+	import type { PageData } from './$types';
 	// IMPORTED DEP-MODULES
 	import { toast } from 'svelte-sonner';
 	import { onDestroy, onMount } from 'svelte';
@@ -8,6 +13,11 @@
 	import { cjkStack, latinStack } from '$lib/fonts';
 	import { settings, type LayoutMode, type Theme } from '$lib/stores/settings';
 	import { cn } from '$lib/utils/cn';
+	import { chapterLabel, stripChapterPrefix, stripLeadingTitle } from '$lib/chapter-label';
+	import { renderMarkup } from '$lib/markup';
+	import { tts } from '$lib/tts/engine';
+	import { ttsSettings, ensureVoices } from '$lib/stores/tts';
+	import { ripple } from '$lib/actions/ripple';
 	// IMPORTED DEP-COMPONENTS
 	import ArrowLeft from 'lucide-svelte/icons/arrow-left';
 	import ChevronDown from 'lucide-svelte/icons/chevron-down';
@@ -42,22 +52,16 @@
 	import Skeleton from '$lib/components/ui/Skeleton.svelte';
 	import SpokenParagraph from '$lib/components/SpokenParagraph.svelte';
 	import TocDrawer from '$lib/components/TocDrawer.svelte';
-	import TranslationStatus, { type Phase } from '$lib/components/TranslationStatus.svelte';
+	import TranslationStatus from '$lib/components/TranslationStatus.svelte';
 	import TtsBar from '$lib/components/TtsBar.svelte';
 	import TtsSettings from '$lib/components/TtsSettings.svelte';
-	import { chapterLabel, stripChapterPrefix, stripLeadingTitle } from '$lib/chapter-label';
-	import { renderMarkup } from '$lib/markup';
-	import { tts } from '$lib/tts/engine';
-	import { ttsSettings, ensureVoices } from '$lib/stores/tts';
-	// IMPORTED DEP-TYPES
-	import type { TranslationUsage } from '$lib/types';
-	// IMPORTED TYPES
-	import type { PageData } from './$types';
 
 	// -- REQUIRED PROPS -- //
+
 	export let data: PageData;
 
 	// -- TYPES -- //
+
 	type ChapterView = {
 		id: number;
 		uuid: string;
@@ -77,6 +81,7 @@
 	};
 
 	// -- CONSTANTS -- //
+
 	// QUICK CYCLE FOR THE HEADER THEME SWITCH (FULL SET LIVES IN SETTINGS)
 	const QUICK_THEMES: Theme[] = ['light', 'sepia', 'dark'];
 	const THEME_ICON = { light: Sun, sepia: Coffee, dark: Moon, oled: Moon, contrast: Contrast } as const;
@@ -86,8 +91,10 @@
 		{ id: 'interleaved', label: 'Stacked' },
 		{ id: 'zh', label: '中文' },
 	];
+	const scrollKey = (uuid: string) => `xianslate:scroll:${uuid}`;
 
 	// -- STATES -- //
+
 	let view: ChapterView = data.view;
 	let titleEn = data.view.titleEn ?? '';
 	let busyNav = false;
@@ -119,11 +126,20 @@
 	// SUPPRESS SCROLL-SAVE WHILE WE PROGRAMMATICALLY RESTORE A SAVED POSITION
 	let restoringScroll = false;
 	let scrollSaveTimer: ReturnType<typeof setTimeout> | undefined;
+	// FOLLOW THE SPOKEN LINE: TRACK LAST SCROLLED KEY TO AVOID REDUNDANT SCROLL CALLS
+	let lastScrollKey = '';
+	// PREFETCH: TRACK IN-FLIGHT STATUS AND WHICH CHAPTER WE LAST PREFETCHED FROM
+	let prefetching = false;
+	let prefetchedFrom: string | null = null;
+	let prefetchTimer: ReturnType<typeof setTimeout> | undefined;
+
+	// -- STORES -- //
 
 	// READ-ALOUD ENGINE STATE (DRIVES HIGHLIGHTING + THE HEADER ICON)
 	const ttsState = tts.state;
 
 	// -- REACTIVE STATES -- //
+
 	// CUT A REDUNDANT LEADING TITLE LINE FROM THE SOURCE (AND ANY ALREADY-BAKED-IN ENGLISH ONE)
 	$: zhBody = view ? stripLeadingTitle(view.contentZh, view.titleZh) : '';
 	// WHILE STREAMING, SHOW THE RAW TEXT — STRIPPING MID-STREAM WOULD MAKE THE FIRST PARAGRAPH SUDDENLY
@@ -182,8 +198,6 @@
 	$: canNext = !!(view && (view.nextUuid || view.nextUrl));
 	// PREPARE UPCOMING CHAPTER(S) IN THE BACKGROUND WHENEVER THE CURRENT CHAPTER CHANGES
 	$: if (view) schedulePrefetch(view.uuid);
-
-	// -- READ-ALOUD -- //
 	// READ ENGLISH WHEN IT EXISTS AND WE'RE NOT IN THE CHINESE-ONLY VIEW; OTHERWISE READ CHINESE.
 	$: spokenLang = (enParas.length > 0 && $settings.layout !== 'zh' ? 'en' : 'zh') as 'en' | 'zh';
 	$: spokenParas = spokenLang === 'en' ? enParas : zhParas;
@@ -200,10 +214,12 @@
 		highlightWord: $ttsSettings.highlightWord,
 	};
 	$: ttsActive = $ttsState.status !== 'idle';
+
+	// -- REACTIVE STATEMENTS -- //
+
 	// KEEP THE ENGINE'S SENTENCE MODEL IN SYNC WITH WHAT'S ON SCREEN (NO-OP WHILE SPEAKING)
 	$: if (browser) tts.load(spokenParas, spokenLang);
 	// FOLLOW THE SPOKEN LINE: SCROLL ON SENTENCE CHANGE ONLY (NOT EVERY WORD), AND ONLY WHEN OFF-SCREEN
-	let lastScrollKey = '';
 	$: if (browser && $ttsState.status === 'playing' && $ttsSettings.autoScroll && $ttsState.paraIndex >= 0) {
 		const key = `${$ttsState.paraIndex}:${$ttsState.sentIndex}`;
 		if (key !== lastScrollKey) {
@@ -213,6 +229,7 @@
 	}
 
 	// -- FUNCTIONS -- //
+
 	// SYNC LOCAL STATE FROM THE SSR-LOADED CHAPTER (AFTER NAVIGATING TO A NEW CHAPTER)
 	function syncFromData() {
 		// CANCEL ANY STREAM STILL RUNNING FOR THE CHAPTER WE'RE LEAVING
@@ -259,13 +276,8 @@
 		else if (url) fetchByUrl(url, dir);
 	}
 
-	// -- PREFETCH -- //
 	// WHILE READING, QUIETLY PREPARE THE NEXT CHAPTER(S) SO 'NEXT' IS INSTANT: DOWNLOAD UPCOMING
 	// CHAPTERS (AND OPTIONALLY WARM THEIR TRANSLATIONS). FIRE-AND-FORGET, BAILS IF YOU NAVIGATE AWAY.
-	let prefetching = false;
-	let prefetchedFrom: string | null = null;
-	let prefetchTimer: ReturnType<typeof setTimeout> | undefined;
-
 	async function getChapterView(uuid: string): Promise<ChapterView | null> {
 		try {
 			const r = await fetch(`/api/chapter?id=${uuid}`);
@@ -299,7 +311,7 @@
 				body: JSON.stringify({ chapterId, autoExtract: $settings.autoExtract }),
 				signal: ctrl.signal,
 			});
-			await res.body?.getReader().read(); // first chunk → job is running
+			await res.body?.getReader().read(); // FIRST CHUNK → JOB IS RUNNING
 		} catch {
 			// IGNORE — BACKGROUND WARM-UP IS BEST-EFFORT
 		} finally {
@@ -314,7 +326,7 @@
 		try {
 			let cur = view;
 			for (let i = 0; i < n; i++) {
-				if (view?.uuid !== fromUuid) return; // navigated away — stop the chain
+				if (view?.uuid !== fromUuid) return; // NAVIGATED AWAY — STOP THE CHAIN
 				let nextV: ChapterView | null = null;
 				if (cur.nextUuid) {
 					nextV = await getChapterView(cur.nextUuid);
@@ -517,10 +529,8 @@
 		if (!restoringScroll) scheduleScrollSave();
 	}
 
-	// -- READING POSITION MEMORY -- //
 	// REMEMBER HOW FAR DOWN EACH CHAPTER YOU WERE (AS A RATIO, SO IT SURVIVES FONT/LAYOUT CHANGES) AND
 	// RESTORE IT ON RETURN — SO "RESUME" DROPS YOU EXACTLY WHERE YOU STOPPED, NOT JUST AT THE CHAPTER TOP.
-	const scrollKey = (uuid: string) => `xianslate:scroll:${uuid}`;
 	function scheduleScrollSave() {
 		clearTimeout(scrollSaveTimer);
 		scrollSaveTimer = setTimeout(() => {
@@ -536,6 +546,7 @@
 			}
 		}, 350);
 	}
+
 	function restoreScroll(uuid: string) {
 		if (!browser) return;
 		let ratio = 0;
@@ -583,6 +594,7 @@
 	}
 
 	// -- LIFECYCLES -- //
+
 	onMount(() => {
 		if (browser) sidebarCollapsed = localStorage.getItem('xianslate:sidebar') === '1';
 		window.addEventListener('keydown', onKey);
@@ -631,10 +643,11 @@
 			<div
 				class="flex shrink-0 items-center gap-1 border-b border-black/[0.06] px-2 py-2 text-sm dark:border-white/[0.045]"
 			>
-				<a href="/" class="flex min-w-0 flex-1 items-center gap-2 px-1 font-semibold" title="Library">
+				<a href="/" use:ripple class="flex min-w-0 flex-1 items-center gap-2 px-1 font-semibold" title="Library">
 					<ArrowLeft size={15} class="shrink-0 opacity-60" /><span class="truncate">{view.bookTitle}</span>
 				</a>
 				<button
+					use:ripple
 					on:click={() => setSidebar(true)}
 					class="rounded p-1 opacity-60 hover:opacity-100"
 					title="Collapse ([)"
@@ -653,6 +666,7 @@
 
 	<!-- SCROLL PROGRESS BAR -->
 	<div class="fixed inset-x-0 top-0 z-30 h-0.5 bg-transparent">
+		<!-- RUNTIME-DYNAMIC PROGRESS WIDTH — CANNOT BE A TAILWIND CLASS -->
 		<div class="h-full bg-sky-500 transition-[width] duration-150" style="width:{progress}%"></div>
 	</div>
 
@@ -665,9 +679,11 @@
 		)}
 	>
 		<!-- ALIGN HEADER WIDTH TO THE READING COLUMN -->
+		<!-- RUNTIME-DYNAMIC CONTAINER STYLE: FONT STACK, FONT SIZE, AND ch-BASED MAX-WIDTH FROM SETTINGS -->
 		<div class="mx-auto flex items-center gap-2 px-3 py-2.5 text-sm sm:px-6" style={containerStyle}>
 			<a
 				href="/"
+				use:ripple
 				class="shrink-0 rounded-md p-2 opacity-70 hover:opacity-100"
 				title="Library"
 				aria-label="Library"><ArrowLeft size={18} /></a
@@ -677,6 +693,7 @@
 				>{/if}
 			<!-- MOBILE: A SINGLE "MORE" BUTTON OPENS AN ACTIONS SHEET (THE FULL CLUSTER IS DESKTOP-ONLY) -->
 			<button
+				use:ripple
 				on:click={() => (moreOpen = true)}
 				class="-mr-1 shrink-0 rounded-md p-2 opacity-70 hover:opacity-100 sm:hidden"
 				title="More"
@@ -684,6 +701,7 @@
 			>
 			<div class="hidden shrink-0 items-center gap-0.5 sm:flex">
 				<button
+					use:ripple
 					on:click={cycleTheme}
 					class="rounded-md p-1.5 opacity-70 hover:opacity-100"
 					title="Theme (d)"
@@ -694,6 +712,7 @@
 				<!-- QUICK FONT SIZE (− / +); FULL TYPOGRAPHY CONTROLS LIVE IN SETTINGS -->
 				<div class="hidden items-center rounded-md sm:flex">
 					<button
+						use:ripple
 						on:click={() => bumpFont(-1)}
 						disabled={$settings.fontSizePx <= 12}
 						class="rounded-l-md py-1.5 pl-1.5 pr-1 opacity-70 hover:opacity-100 disabled:opacity-30"
@@ -701,6 +720,7 @@
 						aria-label="Smaller text"><Minus size={15} /></button
 					>
 					<button
+						use:ripple
 						on:click={() => bumpFont(1)}
 						disabled={$settings.fontSizePx >= 34}
 						class="rounded-r-md py-1.5 pl-1 pr-1.5 opacity-70 hover:opacity-100 disabled:opacity-30"
@@ -709,12 +729,14 @@
 					>
 				</div>
 				<button
+					use:ripple
 					on:click={() => (tocOpen = true)}
 					class="rounded-md p-1.5 opacity-70 hover:opacity-100 lg:hidden"
 					title="Contents (c)"
 					aria-label="Contents"><Menu size={17} /></button
 				>
 				<button
+					use:ripple
 					on:click={() => setSidebar(!sidebarCollapsed)}
 					class="hidden rounded-md p-1.5 opacity-70 hover:opacity-100 lg:inline-flex"
 					title="Toggle chapters ([)"
@@ -728,6 +750,7 @@
 					)}
 				>
 					<button
+						use:ripple
 						on:click={toggleSpeak}
 						class={cn(
 							'rounded-l-md py-1.5 pl-1.5 pr-1 hover:opacity-100',
@@ -745,6 +768,7 @@
 							/>{:else}<Volume2 size={16} />{/if}
 					</button>
 					<button
+						use:ripple
 						on:click={() => (ttsSettingsOpen = true)}
 						class="rounded-r-md py-1.5 pl-0.5 pr-1.5 opacity-60 hover:opacity-100"
 						title="Voice & speed"
@@ -753,23 +777,27 @@
 				</div>
 				<a
 					href="/book/{view?.bookId}/manage/"
+					use:ripple
 					class="rounded-md p-1.5 opacity-70 hover:opacity-100"
 					title="Manage chapters"
 					aria-label="Manage chapters"><ListOrdered size={16} /></a
 				>
 				<button
+					use:ripple
 					on:click={() => (glossaryOpen = true)}
 					class="rounded-md p-1.5 opacity-70 hover:opacity-100"
 					title="Glossary"
 					aria-label="Glossary"><Languages size={16} /></button
 				>
 				<button
+					use:ripple
 					on:click={() => (shortcutsOpen = true)}
 					class="hidden rounded-md p-1.5 opacity-70 hover:opacity-100 sm:inline-flex"
 					title="Keyboard shortcuts (?)"
 					aria-label="Keyboard shortcuts"><Keyboard size={16} /></button
 				>
 				<button
+					use:ripple
 					on:click={() => (settingsOpen = true)}
 					class="rounded-md p-1.5 opacity-70 hover:opacity-100"
 					title="Settings (s)"
@@ -779,6 +807,7 @@
 		</div>
 	</header>
 
+	<!-- RUNTIME-DYNAMIC CONTAINER STYLE: ch-BASED MAX-WIDTH AND FONT SETTINGS FROM SETTINGS STORE -->
 	<div class="pb-bottombar mx-auto px-4 py-8 sm:px-6 sm:pb-8" style={containerStyle}>
 		{#if view}
 			<!-- TITLE -->
@@ -814,6 +843,7 @@
 				>
 					{#each LAYOUTS as l (l.id)}
 						<button
+							use:ripple
 							on:click={() => ($settings.layout = l.id)}
 							class={cn(
 								'flex-1 px-2.5 py-1.5 transition-colors sm:flex-none sm:py-1',
@@ -824,12 +854,14 @@
 				</div>
 				<!-- SECONDARY ACTIONS — INLINE ON DESKTOP, MOVED INTO THE "MORE" SHEET ON MOBILE -->
 				<button
+					use:ripple
 					on:click={() => translate(true)}
 					disabled={translating}
 					class="hidden items-center gap-1 opacity-70 hover:opacity-100 disabled:opacity-40 sm:inline-flex"
 					title="Translate again, ignoring cache"><RefreshCw size={14} /> Re-translate</button
 				>
 				<button
+					use:ripple
 					on:click={extractGlossary}
 					disabled={extracting}
 					class="hidden items-center gap-1 opacity-70 hover:opacity-100 disabled:opacity-40 sm:inline-flex"
@@ -839,6 +871,7 @@
 				</button>
 				<a
 					href="/book/{view.bookId}/glossary/"
+					use:ripple
 					class="hidden items-center gap-1 opacity-70 hover:opacity-100 sm:inline-flex"
 					><Languages size={14} /> Glossary</a
 				>
@@ -855,14 +888,17 @@
 			{/if}
 
 			<!-- CONTENT -->
+			<!-- RUNTIME-DYNAMIC FONT STYLE: FONT FAMILY, SIZE, LINE-HEIGHT, LETTER-SPACING, AND ALIGNMENT FROM SETTINGS -->
 			<article style={fontStyle}>
 				{#if $settings.layout === 'zh'}
 					{#each zhParas as p, i (i)}
 						{#if zhSpoken}
+							<!-- RUNTIME-DYNAMIC PARAGRAPH SPACING AND INDENT FROM SETTINGS -->
 							<p style={pStyle} id={`tts-p-${i}`}>
 								<SpokenParagraph {...hl} text={p} index={i} active={ttsActive && $ttsState.paraIndex === i} on:seek={onTtsSeek} />
 							</p>
 						{:else}
+							<!-- RUNTIME-DYNAMIC PARAGRAPH SPACING AND INDENT FROM SETTINGS -->
 							<p style={pStyle}>{p}</p>
 						{/if}
 					{/each}
@@ -870,20 +906,26 @@
 					<!-- EMPTY STATE IS HANDLED BY THE STEP CARD + SKELETON ABOVE -->
 					{#each enParas as p, i (i)}
 						{#if enSpoken}
+							<!-- RUNTIME-DYNAMIC PARAGRAPH SPACING AND INDENT FROM SETTINGS -->
 							<p style={pStyle} id={`tts-p-${i}`}>
 								<SpokenParagraph {...hl} text={p} index={i} active={ttsActive && $ttsState.paraIndex === i} on:seek={onTtsSeek} />
 							</p>
 						{:else}
-							<!-- eslint-disable-next-line svelte/no-at-html-tags -- renderMarkup() escapes then re-allows only a bare inline-tag whitelist -->
+							<!-- eslint-disable-next-line svelte/no-at-html-tags -- renderMarkup() ESCAPES THEN RE-ALLOWS ONLY A BARE INLINE-TAG WHITELIST -->
+							<!-- RUNTIME-DYNAMIC PARAGRAPH SPACING AND INDENT FROM SETTINGS -->
 							<p style={pStyle}>{@html enHtml[i]}</p>
 						{/if}
 					{/each}
 				{:else if $settings.layout === 'interleaved'}
 					<!-- PER-PARAGRAPH: EACH CHINESE PARAGRAPH FOLLOWED BY ITS ENGLISH, PAIRED BY POSITION -->
 					{#each interleaved as pair (pair.i)}
-						{#if pair.zh}<p style={pStyle} class="opacity-60">{pair.zh}</p>{/if}
+						{#if pair.zh}
+							<!-- RUNTIME-DYNAMIC PARAGRAPH SPACING AND INDENT FROM SETTINGS -->
+							<p style={pStyle} class="opacity-60">{pair.zh}</p>
+						{/if}
 						{#if pair.en}
 							{#if enSpoken}
+								<!-- RUNTIME-DYNAMIC PARAGRAPH SPACING AND INDENT FROM SETTINGS -->
 								<p style={pStyle} id={`tts-p-${pair.i}`}>
 									<SpokenParagraph
 										{...hl}
@@ -895,6 +937,7 @@
 								</p>
 							{:else}
 								<!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitized by renderMarkup() -->
+								<!-- RUNTIME-DYNAMIC PARAGRAPH SPACING AND INDENT FROM SETTINGS -->
 								<p style={pStyle}>{@html enHtml[pair.i] ?? ''}</p>
 							{/if}
 						{/if}
@@ -904,8 +947,10 @@
 					     LINKED PARAGRAPHS START AT THE SAME POSITION. STACKS ON MOBILE. -->
 					<div class="grid grid-cols-1 items-start gap-x-8 sm:grid-cols-2">
 						{#each interleaved as pair (pair.i)}
+							<!-- RUNTIME-DYNAMIC PARAGRAPH SPACING AND INDENT FROM SETTINGS -->
 							<p style={pStyle} class="opacity-70">{pair.zh ?? ''}</p>
 							{#if pair.en && enSpoken}
+								<!-- RUNTIME-DYNAMIC PARAGRAPH SPACING AND INDENT FROM SETTINGS -->
 								<p style={pStyle} id={`tts-p-${pair.i}`}>
 									<SpokenParagraph
 										{...hl}
@@ -917,6 +962,7 @@
 								</p>
 							{:else}
 								<!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitized by renderMarkup() -->
+								<!-- RUNTIME-DYNAMIC PARAGRAPH SPACING AND INDENT FROM SETTINGS -->
 								<p style={pStyle}>{#if pair.en}{@html enHtml[pair.i] ?? ''}{/if}</p>
 							{/if}
 						{/each}
@@ -929,6 +975,7 @@
 				class="mt-12 hidden items-center justify-between gap-2 border-t border-black/[0.06] pt-5 dark:border-white/[0.045] sm:flex"
 			>
 				<button
+					use:ripple
 					on:click={() => go('prev')}
 					disabled={!canPrev || busyNav}
 					class="hover:bg-current/5 inline-flex items-center gap-1 rounded-lg border border-black/10 px-4 py-2 text-sm disabled:opacity-30 dark:border-white/[0.06]"
@@ -936,6 +983,7 @@
 				>
 				<span class="text-xs opacity-50">{chLabel.kind === 'chapter' ? `#${chLabel.number}` : chapterText}</span>
 				<button
+					use:ripple
 					on:click={() => go('next')}
 					disabled={!canNext || busyNav}
 					class="hover:bg-current/5 inline-flex items-center gap-1 rounded-lg border border-black/10 px-4 py-2 text-sm disabled:opacity-30 dark:border-white/[0.06]"
@@ -960,27 +1008,32 @@
 		aria-label="Reader controls"
 	>
 		<button
+			use:ripple
 			on:click={() => go('prev')}
 			disabled={!canPrev || busyNav}
 			class="flex flex-1 flex-col items-center justify-center gap-0.5 py-1.5 text-[10px] font-medium opacity-80 active:opacity-100 disabled:opacity-25"
 			aria-label="Previous chapter"><ChevronLeft size={22} /> Prev</button
 		>
 		<button
+			use:ripple
 			on:click={() => (tocOpen = true)}
 			class="flex flex-1 flex-col items-center justify-center gap-0.5 py-1.5 text-[10px] font-medium opacity-80 active:opacity-100"
 			aria-label="Contents"><Menu size={22} /> Contents</button
 		>
 		<button
+			use:ripple
 			on:click={() => (settingsOpen = true)}
 			class="flex flex-1 flex-col items-center justify-center gap-0.5 py-1.5 text-[10px] font-medium opacity-80 active:opacity-100"
 			aria-label="Reading settings"><Type size={22} /> Aa</button
 		>
 		<button
+			use:ripple
 			on:click={toggleSpeak}
 			class="flex flex-1 flex-col items-center justify-center gap-0.5 py-1.5 text-[10px] font-medium opacity-80 active:opacity-100"
 			aria-label="Read aloud"><Volume2 size={22} /> Listen</button
 		>
 		<button
+			use:ripple
 			on:click={() => go('next')}
 			disabled={!canNext || busyNav}
 			class="flex flex-1 flex-col items-center justify-center gap-0.5 py-1.5 text-[10px] font-medium opacity-80 active:opacity-100 disabled:opacity-25"
@@ -1010,7 +1063,7 @@
 	open={glossaryOpen}
 	title="Book glossary"
 	size="xl"
-	bodyClass="px-5 pb-5 pt-0"
+	bodyClass="flex min-h-0 flex-col overflow-hidden px-5 py-0"
 	on:close={() => (glossaryOpen = false)}
 >
 	{#if view}
@@ -1043,6 +1096,7 @@
 	<Modal open={moreOpen} title="Actions" size="sm" on:close={() => (moreOpen = false)}>
 		<div class="flex flex-col">
 			<button
+				use:ripple
 				on:click={() => {
 					moreOpen = false;
 					translate(true);
@@ -1053,6 +1107,7 @@
 				<RefreshCw size={18} class="opacity-70" /> Re-translate
 			</button>
 			<button
+				use:ripple
 				on:click={() => {
 					moreOpen = false;
 					extractGlossary();
@@ -1063,6 +1118,7 @@
 				<Sparkles size={18} class="opacity-70" /> {extracting ? 'Extracting…' : 'Extract terms'}
 			</button>
 			<button
+				use:ripple
 				on:click={() => {
 					moreOpen = false;
 					glossaryOpen = true;
@@ -1073,11 +1129,13 @@
 			</button>
 			<a
 				href="/book/{view.bookId}/manage/"
+				use:ripple
 				class="hover:bg-current/5 flex items-center gap-3 rounded-lg px-2 py-3 text-left text-sm"
 			>
 				<ListOrdered size={18} class="opacity-70" /> Manage chapters
 			</a>
 			<button
+				use:ripple
 				on:click={() => {
 					moreOpen = false;
 					ttsSettingsOpen = true;

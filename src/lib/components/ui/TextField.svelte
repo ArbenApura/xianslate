@@ -3,6 +3,7 @@
 	import { cn } from '$lib/utils/cn';
 
 	// -- OPTIONAL PROPS -- //
+
 	export let value = '';
 	export let label = '';
 	export let placeholder = '';
@@ -12,7 +13,10 @@
 
 <!-- TEXT FIELD: OPTIONAL LABEL + THEMED INPUT, FORWARDS NATIVE EVENTS -->
 <label class="block">
+	<!-- LABEL TEXT -->
 	{#if label}<span class="mb-1 block text-xs font-medium opacity-60">{label}</span>{/if}
+
+	<!-- INPUT — type IS BRANCHED (NOT DYNAMIC {type}) BECAUSE Svelte FORBIDS A DYNAMIC type WITH bind:value; outline-none SUPPRESSES THE NATIVE OUTLINE, FOCUS IS SHOWN VIA focus:border-sky-500 -->
 	{#if type === 'search'}
 		<input
 			type="search"

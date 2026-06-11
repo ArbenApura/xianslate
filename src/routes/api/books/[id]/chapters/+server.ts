@@ -1,12 +1,21 @@
+// IMPORTED DEP-TYPES
+import type { RequestHandler } from './$types';
+// IMPORTED DEP-MODULES
 import { error, json } from '@sveltejs/kit';
 import { z } from 'zod';
+// IMPORTED MODULES
 import { appendChapters, getBook, ingestWebChapter, reorderChapters } from '$lib/server/books';
-import type { RequestHandler } from './$types';
+
+// -- CONSTANTS -- //
 
 const AddBody = z.discriminatedUnion('kind', [
 	z.object({ kind: z.literal('manual'), titleZh: z.string().trim().min(1), contentZh: z.string().trim().min(1) }),
 	z.object({ kind: z.literal('url'), url: z.string().url() }),
 ]);
+
+const ReorderBody = z.object({ order: z.array(z.string()).min(1) });
+
+// -- FUNCTIONS -- //
 
 // ADD CHAPTER(S) INTO AN EXISTING BOOK (PASTE OR SINGLE-URL FETCH). APPENDS AT THE TAIL.
 export const POST: RequestHandler = async ({ params, request }) => {
@@ -32,8 +41,6 @@ export const POST: RequestHandler = async ({ params, request }) => {
 		throw error(502, e instanceof Error ? e.message : 'Failed to fetch chapter.');
 	}
 };
-
-const ReorderBody = z.object({ order: z.array(z.string()).min(1) });
 
 // REORDER CHAPTERS — REWRITES seq TO MATCH THE GIVEN uuid ORDER
 export const PATCH: RequestHandler = async ({ params, request }) => {

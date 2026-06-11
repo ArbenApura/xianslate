@@ -1,8 +1,13 @@
+// IMPORTED DEP-TYPES
 import { error } from '@sveltejs/kit';
-import { getEffectiveGlossary, getGlossary } from '$lib/server/glossary';
-import { toGlossaryCsv } from '$lib/server/glossary-csv';
+// IMPORTED TYPES
 import type { TermDraft } from '$lib/types';
 import type { RequestHandler } from './$types';
+// IMPORTED MODULES
+import { getEffectiveGlossary, getGlossary } from '$lib/server/glossary';
+import { toGlossaryCsv } from '$lib/server/glossary-csv';
+
+// -- FUNCTIONS -- //
 
 export const GET: RequestHandler = async ({ url }) => {
 	const scope = url.searchParams.get('scope') ?? 'global';

@@ -1,10 +1,14 @@
 <script lang="ts">
+	// IMPORTED DEP-TYPES
+	// IMPORTED TYPES
+	import type { SourceType } from '$lib/types';
 	// IMPORTED DEP-MODULES
 	import { toast } from 'svelte-sonner';
+	import { onMount } from 'svelte';
 	// IMPORTED MODULES
 	import { browser } from '$app/environment';
 	import { goto } from '$app/navigation';
-	import { onMount } from 'svelte';
+	import { ripple } from '$lib/actions/ripple';
 	import { cn } from '$lib/utils/cn';
 	// IMPORTED DEP-COMPONENTS
 	import BookOpen from 'lucide-svelte/icons/book-open';
@@ -19,8 +23,6 @@
 	import Select from '$lib/components/ui/Select.svelte';
 	import TextField from '$lib/components/ui/TextField.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
-	// IMPORTED DEP-TYPES
-	import type { SourceType } from '$lib/types';
 
 	// -- TYPES -- //
 
@@ -101,16 +103,6 @@
 	let statusFilter: StatusFilter = 'all';
 	let search = '';
 
-	// -- HELPERS -- //
-
-	// READING-PROGRESS FRACTION (0..1) — RESUME POSITION OVER TOTAL CHAPTERS
-	function progressFrac(b: BookSummary): number {
-		return b.chapterCount > 0 ? Math.min(1, b.readChapters / b.chapterCount) : 0;
-	}
-	function isFinished(b: BookSummary): boolean {
-		return b.chapterCount > 0 && b.readChapters >= b.chapterCount;
-	}
-
 	// -- REACTIVE STATES -- //
 
 	// MOST RECENTLY *READ* BOOK (NOT THE FIRST-CREATED). FALLS BACK TO ANY BOOK WITH A RESUME POINT.
@@ -136,10 +128,21 @@
 		sortKey,
 	);
 
+	// -- REACTIVE STATEMENTS -- //
+
 	// PERSIST PREFS WHENEVER THEY CHANGE
 	$: if (browser) savePrefs(sortKey, sourceFilter, statusFilter);
 
 	// -- FUNCTIONS -- //
+
+	// READING-PROGRESS FRACTION (0..1) — RESUME POSITION OVER TOTAL CHAPTERS
+	function progressFrac(b: BookSummary): number {
+		return b.chapterCount > 0 ? Math.min(1, b.readChapters / b.chapterCount) : 0;
+	}
+
+	function isFinished(b: BookSummary): boolean {
+		return b.chapterCount > 0 && b.readChapters >= b.chapterCount;
+	}
 
 	function sortBooks(list: BookSummary[], key: SortKey): BookSummary[] {
 		const arr = [...list];
@@ -171,6 +174,7 @@
 			// IGNORE CORRUPT PREFS
 		}
 	}
+
 	function savePrefs(s: SortKey, src: SourceFilter, st: StatusFilter) {
 		try {
 			localStorage.setItem(PREFS_KEY, JSON.stringify({ sortKey: s, sourceFilter: src, statusFilter: st }));
@@ -183,9 +187,11 @@
 	function setSort(v: string) {
 		sortKey = v as SortKey;
 	}
+
 	function setSource(v: string) {
 		sourceFilter = v as SourceFilter;
 	}
+
 	function setStatus(v: string) {
 		statusFilter = v as StatusFilter;
 	}
@@ -335,7 +341,9 @@
 				>
 				<span class="hidden text-xs opacity-50 sm:inline">· CN → EN novel reader</span>
 			</div>
+			<!-- GLOSSARY NAVIGATION LINK -->
 			<a
+				use:ripple
 				href="/glossary/"
 				class="hover:bg-current/5 inline-flex items-center gap-1.5 rounded-lg border border-black/[0.06] px-3 py-1.5 text-sm dark:border-white/[0.045]"
 			>
@@ -348,6 +356,7 @@
 		<!-- ADD BOOK BAR -->
 		<section class="mb-8">
 			<button
+				use:ripple
 				on:click={() => (showAddBook = true)}
 				class="inline-flex items-center gap-1.5 rounded-xl border border-dashed border-black/[0.12] px-4 py-2.5 text-sm opacity-70 hover:opacity-100 dark:border-white/[0.08]"
 			>
@@ -382,6 +391,7 @@
 			<section class="mb-10">
 				<h2 class="mb-3 text-xs font-semibold uppercase tracking-widest opacity-50">Continue reading</h2>
 				<button
+					use:ripple
 					on:click={() => openBook(continueBook)}
 					class="bg-current/[0.03] flex w-full items-stretch gap-4 overflow-hidden rounded-2xl border border-black/[0.06] p-4 text-left shadow-sm transition hover:shadow-md dark:border-white/[0.045] sm:gap-5"
 				>
@@ -409,6 +419,7 @@
 									<span class="tabular-nums">{Math.round(progressFrac(continueBook) * 100)}%</span>
 								</div>
 								<div class="h-1.5 overflow-hidden rounded-full bg-black/10 dark:bg-white/10">
+									<!-- RUNTIME-DYNAMIC WIDTH: PERCENTAGE DERIVED FROM PER-BOOK READ PROGRESS -->
 									<div
 										class="h-full rounded-full bg-sky-500"
 										style="width:{progressFrac(continueBook) * 100}%"
@@ -493,9 +504,10 @@
 					{#each shelf as b (b.id)}
 						{@const frac = progressFrac(b)}
 						{@const done = isFinished(b)}
-						<!-- BOOK ON THE SHELF -->
+						<!-- BOOK CARD ON THE SHELF -->
 						<div class="group flex flex-col gap-2">
 							<div
+								use:ripple
 								role="button"
 								tabindex="0"
 								on:click={() => openBook(b)}
@@ -522,8 +534,9 @@
 								<span class="ml-1 line-clamp-4 text-sm font-bold leading-tight text-white drop-shadow"
 									>{b.titleEn || b.title}</span
 								>
-								<!-- DELETE -->
+								<!-- DELETE BUTTON -->
 								<button
+									use:ripple
 									on:click={(e) => askDelete(b, e)}
 									class="absolute right-1.5 top-1.5 hidden rounded-md bg-black/30 p-1.5 text-white/90 hover:bg-red-600 group-hover:block"
 									aria-label="Delete book"><Trash2 size={14} /></button
@@ -531,6 +544,7 @@
 								<!-- READING-PROGRESS BAR PINNED TO THE COVER FOOT -->
 								{#if b.readChapters > 0 && !done}
 									<div class="absolute inset-x-0 bottom-0 h-1 bg-black/25">
+										<!-- RUNTIME-DYNAMIC WIDTH: PERCENTAGE DERIVED FROM PER-BOOK READ PROGRESS -->
 										<div class="h-full bg-white/90" style="width:{frac * 100}%"></div>
 									</div>
 								{/if}

@@ -4,6 +4,7 @@
 	// IMPORTED MODULES
 	import { chapterLabel, stripChapterPrefix } from '$lib/chapter-label';
 	import { cn } from '$lib/utils/cn';
+	import { ripple } from '$lib/actions/ripple';
 	// IMPORTED DEP-COMPONENTS
 	import Check from 'lucide-svelte/icons/check';
 	import Loader2 from 'lucide-svelte/icons/loader-2';
@@ -11,18 +12,23 @@
 	import Badge from '$lib/components/ui/Badge.svelte';
 
 	// -- REQUIRED PROPS -- //
+
 	export let bookId: string;
 
 	// -- OPTIONAL PROPS -- //
+
 	export let currentUuid: string | null = null;
 
 	// -- TYPES -- //
+
 	type TocItem = { uuid: string; seq: number; titleZh: string; titleEn: string | null; hasEn: boolean };
 
 	// -- CONSTANTS -- //
+
 	const dispatch = createEventDispatcher();
 
 	// -- STATES -- //
+
 	let items: TocItem[] = [];
 	let loading = true;
 	let loaded = false;
@@ -34,6 +40,7 @@
 	let pollTimer: ReturnType<typeof setInterval> | undefined;
 
 	// -- REACTIVE STATES -- //
+
 	// SEQ OF THE CHAPTER BEING READ — EVERYTHING BEFORE IT COUNTS AS ALREADY READ (GETS A ✓).
 	$: currentSeq = items.find((it) => it.uuid === currentUuid)?.seq ?? -Infinity;
 	$: q = query.trim().toLowerCase();
@@ -47,6 +54,7 @@
 	$: if (loaded) scheduleRefresh(currentUuid, translatingKey);
 
 	// -- FUNCTIONS -- //
+
 	async function fetchItems(): Promise<TocItem[] | null> {
 		try {
 			const res = await fetch(`/api/books/${bookId}`);
@@ -101,6 +109,7 @@
 	}
 
 	// -- LIFECYCLES -- //
+
 	onMount(() => {
 		load();
 		void pollTranslating();
@@ -114,6 +123,7 @@
 
 <!-- CHAPTER LIST: SHARED BY THE DESKTOP SIDEBAR AND THE MOBILE DRAWER -->
 <div class="flex h-full min-h-0 flex-col">
+	<!-- HEADER: TITLE AND OPTIONAL ACTION SLOT -->
 	<div
 		class="flex items-center justify-between gap-2 border-b border-black/[0.06] px-3 py-2.5 dark:border-white/[0.045]"
 	>
@@ -122,6 +132,7 @@
 		</span>
 		<slot name="action" />
 	</div>
+	<!-- SEARCH INPUT: SHOWN ONLY WHEN THERE ARE MORE THAN 8 CHAPTERS -->
 	{#if items.length > 8}
 		<div class="border-b border-black/[0.06] p-2 dark:border-white/[0.045]">
 			<input
@@ -132,6 +143,7 @@
 			/>
 		</div>
 	{/if}
+	<!-- SCROLLABLE CHAPTER LIST -->
 	<div bind:this={listEl} class="min-h-0 flex-1 overflow-y-auto">
 		{#if loading}
 			<p class="p-4 text-sm opacity-50">Loading…</p>
@@ -144,6 +156,7 @@
 					{@const isRead = it.uuid !== currentUuid && it.seq < currentSeq}
 					<li>
 						<button
+							use:ripple
 							data-active={it.uuid === currentUuid}
 							on:click={() => pick(it.uuid)}
 							class={cn(
@@ -157,10 +170,7 @@
 						>
 							<!-- ALWAYS SHOW THE REAL CHAPTER NUMBER ('·' FOR NON-CHAPTER ENTRIES) — THE ✓ LIVES ON THE
 							     TITLE, NOT IN THIS NUMBER COLUMN. -->
-							<span
-								class="flex shrink-0 justify-end text-right text-xs tabular-nums opacity-40"
-								style="min-width:1.85rem"
-							>
+							<span class="flex min-w-[1.85rem] shrink-0 justify-end text-right text-xs tabular-nums opacity-40">
 								{lbl.kind === 'chapter' ? lbl.number : '·'}
 							</span>
 							<!-- READ CHAPTERS GET A ✓ PREFIXED TO THE TITLE -->

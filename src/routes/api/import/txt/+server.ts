@@ -1,9 +1,14 @@
+// IMPORTED DEP-TYPES
+import type { RequestHandler } from './$types';
+// IMPORTED DEP-MODULES
 import { error, json } from '@sveltejs/kit';
+// IMPORTED MODULES
 import { appendChapters, createImportedBook, getBook } from '$lib/server/books';
 import { importTxt } from '$lib/server/ingest/txt';
 import { decodeTextBytes } from '$lib/server/charset';
 import { assertMaxSize, MB } from '$lib/server/uploads';
-import type { RequestHandler } from './$types';
+
+// -- FUNCTIONS -- //
 
 export const POST: RequestHandler = async ({ request }) => {
 	const form = await request.formData().catch(() => null);

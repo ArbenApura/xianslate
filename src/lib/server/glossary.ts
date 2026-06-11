@@ -1,12 +1,45 @@
-import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm';
+// IMPORTED DEP-TYPES
 import type { SQLiteColumn } from 'drizzle-orm/sqlite-core';
+// IMPORTED TYPES
+import type { Gender, GlossaryScope, TermDraft } from '$lib/types';
+// IMPORTED DEP-MODULES
+import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm';
+// IMPORTED MODULES
 import { db } from './db';
 import { glossary, type GlossaryEntry } from './db/schema';
 import { deepseek, MODEL, hasApiKey, queued, thinkingParam, withRetry } from './deepseek';
 import { invalidateAll, invalidateBook } from './glossary-match';
-import type { Gender, GlossaryScope, TermDraft } from '$lib/types';
+
+// -- CONSTANTS -- //
 
 const GENDERS: Gender[] = ['neuter', 'masculine', 'feminine'];
+
+const EXTRACT_SYSTEM = `You build a translation glossary from a passage of a Traditional Chinese web novel (xianxia / xuanhuan / wuxia).
+
+Return ONLY a JSON object of exactly this shape — no markdown, no comments, no extra text:
+{"terms":[{"raw":"<chinese copied verbatim from the passage>","translation":"<natural English>","gender":"neuter|masculine|feminine"}]}
+
+Capture the recurring PROPER NOUNS and setting-specific TERMS that must stay consistent across the whole book:
+- People: character names and distinctive epithets / forms of address.
+- Places: realms, regions, cities, mountains, palaces, halls, sect locations.
+- Organizations: sects, clans, factions, orders, families.
+- Powers: cultivation techniques, martial / sword / fist arts, skills, spells, bloodlines.
+- Items: artifacts, weapons, pills, treasures, manuals.
+- World terms: cultivation realms / ranks, named creatures, unique concepts.
+
+Hard rules:
+- "raw" MUST be copied EXACTLY as it appears in the passage — identical characters, no added or removed spaces or punctuation — so it can be found again by exact string match. Prefer the bare name over a name + title combination.
+- "translation" must be natural, idiomatic English that reads smoothly INSIDE a sentence, the way a professional novelist-translator would write it — never a stiff word-for-word gloss. Use Title Case for proper nouns. Romanize personal names with pinyin and NO tone marks (李澈 → "Li Che", 蘇媚 → "Su Mei"). Translate meaningful terms by sense and keep them concise (龍象金剛 → "Dragon-Elephant Vajra", 洞天 → "Cave Heaven", 結丹 → "Core Formation").
+- "gender": masculine or feminine ONLY for an individual person whose gender is clear from the passage; everything else is neuter.
+- Skip common words, generic vocabulary, pronouns, numbers, and anything that is not a name or distinctive term. Favor quality and consistency over sheer count.
+- CONSISTENCY: if an "ESTABLISHED GLOSSARY" message is provided, treat those translations as FIXED. Reuse the exact English for any of those terms that appear, and translate any NEW related term to match that wording and style (shared name components, naming conventions) so the book stays consistent. Never contradict an established translation.`;
+
+const EXTRACT_CHUNK_CHARS = 9000;
+
+// MAX ESTABLISHED TERMS TO FEED AS CONTEXT PER CHUNK (BOUNDS PROMPT TOKENS ON LARGE GLOSSARIES).
+const MAX_CONTEXT_TERMS = 120;
+
+// -- FUNCTIONS -- //
 
 // CASE-INSENSITIVE "CONTAINS" THAT TREATS THE USER'S % _ \ AS LITERALS (NOT LIKE WILDCARDS)
 function likeContains(col: SQLiteColumn, q: string) {
@@ -19,7 +52,50 @@ function invalidate(scope: GlossaryScope, bookId: string | null): void {
 	else if (bookId) invalidateBook(bookId);
 }
 
-/** ROWS FOR A SINGLE SCOPE (EDITOR VIEW) */
+// SPLIT THE WHOLE CHAPTER INTO PARAGRAPH-ALIGNED CHUNKS SO EVERY PART IS SCANNED FOR TERMS — THE OLD
+// SINGLE 12k SLICE MISSED EVERYTHING PAST IT IN LONG CHAPTERS.
+function chunkForExtraction(content: string): string[] {
+	const paras = content.split(/\n{2,}/).filter((p) => p.trim().length > 0);
+	if (paras.length === 0) return content.trim() ? [content] : [];
+	const chunks: string[] = [];
+	let cur = '';
+	for (const p of paras) {
+		if (cur.length + p.length > EXTRACT_CHUNK_CHARS && cur.length > 0) {
+			chunks.push(cur);
+			cur = '';
+		}
+		cur = cur ? `${cur}\n\n${p}` : p;
+	}
+	if (cur) chunks.push(cur);
+	return chunks;
+}
+
+// ROBUST PARSE: ACCEPT CLEAN JSON, A BARE ARRAY, OR A TRUNCATED RESPONSE (SALVAGE COMPLETE {…} OBJECTS)
+// SO A SLIGHTLY MALFORMED / CUT-OFF REPLY STILL YIELDS THE TERMS IT DID CONTAIN INSTEAD OF ZERO.
+function parseTermObjects(text: string): unknown[] {
+	const tryParse = (s: string): unknown => {
+		try {
+			return JSON.parse(s);
+		} catch {
+			return undefined;
+		}
+	};
+	const whole = tryParse(text);
+	if (Array.isArray(whole)) return whole;
+	const terms = (whole as { terms?: unknown })?.terms;
+	if (Array.isArray(terms)) return terms;
+	// SALVAGE EVERY COMPLETE {…} OBJECT (HANDLES A TRUNCATED ARRAY THAT NEVER GOT ITS CLOSING `]`)
+	const objs: unknown[] = [];
+	const re = /\{[^{}]*\}/g;
+	let m: RegExpExecArray | null;
+	while ((m = re.exec(text))) {
+		const o = tryParse(m[0]);
+		if (o) objs.push(o);
+	}
+	return objs;
+}
+
+// ROWS FOR A SINGLE SCOPE (EDITOR VIEW)
 export async function getGlossary(scope: GlossaryScope, bookId: string | null): Promise<GlossaryEntry[]> {
 	const where =
 		scope === 'global'
@@ -28,7 +104,7 @@ export async function getGlossary(scope: GlossaryScope, bookId: string | null): 
 	return db.select().from(glossary).where(where).orderBy(glossary.raw);
 }
 
-/** EFFECTIVE GLOSSARY FOR A BOOK = global ∪ book, WITH book OVERRIDING global ON THE SAME raw */
+// EFFECTIVE GLOSSARY FOR A BOOK = global ∪ book, WITH book OVERRIDING global ON THE SAME raw
 export async function getEffectiveGlossary(bookId: string): Promise<TermDraft[]> {
 	const globals = await db
 		.select()
@@ -46,7 +122,7 @@ export async function getEffectiveGlossary(bookId: string): Promise<TermDraft[]>
 	return [...map.values()];
 }
 
-/** PAGINATED + SEARCHABLE GLOSSARY ROWS FOR THE EDITOR */
+// PAGINATED + SEARCHABLE GLOSSARY ROWS FOR THE EDITOR
 export async function getGlossaryPage(
 	scope: GlossaryScope,
 	bookId: string | null,
@@ -128,7 +204,7 @@ export async function deleteTerm(id: number): Promise<void> {
 	invalidate(existing.scope, existing.bookId);
 }
 
-/** BULK UPSERT TERMS INTO ONE SCOPE; RETURNS {added, updated}. ATOMIC — ALL-OR-NOTHING. */
+// BULK UPSERT TERMS INTO ONE SCOPE; RETURNS {added, updated}. ATOMIC — ALL-OR-NOTHING.
 export async function mergeGlossary(
 	scope: GlossaryScope,
 	bookId: string | null,
@@ -211,11 +287,9 @@ export async function mergeGlossary(
 	return { added, updated: rows.length - added };
 }
 
-/**
- * SAVE ONLY *NEW* TERMS INTO A BOOK'S GLOSSARY — TERMS WHOSE raw ALREADY EXISTS IN THE EFFECTIVE
- * GLOSSARY (BOOK ∪ GLOBAL) ARE SKIPPED, NEVER OVERWRITTEN. THIS KEEPS ESTABLISHED TRANSLATIONS STABLE
- * SO EXTRACTION CAN'T "TAMPER" A TERM YOU ALREADY HAVE; IT ONLY ADDS WHAT'S GENUINELY MISSING.
- */
+// SAVE ONLY *NEW* TERMS INTO A BOOK'S GLOSSARY — TERMS WHOSE raw ALREADY EXISTS IN THE EFFECTIVE
+// GLOSSARY (BOOK ∪ GLOBAL) ARE SKIPPED, NEVER OVERWRITTEN. THIS KEEPS ESTABLISHED TRANSLATIONS STABLE
+// SO EXTRACTION CAN'T "TAMPER" A TERM YOU ALREADY HAVE; IT ONLY ADDS WHAT'S GENUINELY MISSING.
 export async function addNewTerms(bookId: string, terms: TermDraft[]): Promise<{ added: number; skipped: number }> {
 	if (terms.length === 0) return { added: 0, skipped: 0 };
 	// LOOK UP ONLY THE raws WE'RE ABOUT TO ADD (BOOK ∪ GLOBAL), NOT THE WHOLE 7000-TERM GLOSSARY.
@@ -241,79 +315,9 @@ export async function addNewTerms(bookId: string, terms: TermDraft[]): Promise<{
 	return { added, skipped };
 }
 
-const EXTRACT_SYSTEM = `You build a translation glossary from a passage of a Traditional Chinese web novel (xianxia / xuanhuan / wuxia).
-
-Return ONLY a JSON object of exactly this shape — no markdown, no comments, no extra text:
-{"terms":[{"raw":"<chinese copied verbatim from the passage>","translation":"<natural English>","gender":"neuter|masculine|feminine"}]}
-
-Capture the recurring PROPER NOUNS and setting-specific TERMS that must stay consistent across the whole book:
-- People: character names and distinctive epithets / forms of address.
-- Places: realms, regions, cities, mountains, palaces, halls, sect locations.
-- Organizations: sects, clans, factions, orders, families.
-- Powers: cultivation techniques, martial / sword / fist arts, skills, spells, bloodlines.
-- Items: artifacts, weapons, pills, treasures, manuals.
-- World terms: cultivation realms / ranks, named creatures, unique concepts.
-
-Hard rules:
-- "raw" MUST be copied EXACTLY as it appears in the passage — identical characters, no added or removed spaces or punctuation — so it can be found again by exact string match. Prefer the bare name over a name + title combination.
-- "translation" must be natural, idiomatic English that reads smoothly INSIDE a sentence, the way a professional novelist-translator would write it — never a stiff word-for-word gloss. Use Title Case for proper nouns. Romanize personal names with pinyin and NO tone marks (李澈 → "Li Che", 蘇媚 → "Su Mei"). Translate meaningful terms by sense and keep them concise (龍象金剛 → "Dragon-Elephant Vajra", 洞天 → "Cave Heaven", 結丹 → "Core Formation").
-- "gender": masculine or feminine ONLY for an individual person whose gender is clear from the passage; everything else is neuter.
-- Skip common words, generic vocabulary, pronouns, numbers, and anything that is not a name or distinctive term. Favor quality and consistency over sheer count.
-- CONSISTENCY: if an "ESTABLISHED GLOSSARY" message is provided, treat those translations as FIXED. Reuse the exact English for any of those terms that appear, and translate any NEW related term to match that wording and style (shared name components, naming conventions) so the book stays consistent. Never contradict an established translation.`;
-
-const EXTRACT_CHUNK_CHARS = 9000;
-
-// SPLIT THE WHOLE CHAPTER INTO PARAGRAPH-ALIGNED CHUNKS SO EVERY PART IS SCANNED FOR TERMS — THE OLD
-// SINGLE 12k SLICE MISSED EVERYTHING PAST IT IN LONG CHAPTERS.
-function chunkForExtraction(content: string): string[] {
-	const paras = content.split(/\n{2,}/).filter((p) => p.trim().length > 0);
-	if (paras.length === 0) return content.trim() ? [content] : [];
-	const chunks: string[] = [];
-	let cur = '';
-	for (const p of paras) {
-		if (cur.length + p.length > EXTRACT_CHUNK_CHARS && cur.length > 0) {
-			chunks.push(cur);
-			cur = '';
-		}
-		cur = cur ? `${cur}\n\n${p}` : p;
-	}
-	if (cur) chunks.push(cur);
-	return chunks;
-}
-
-// ROBUST PARSE: ACCEPT CLEAN JSON, A BARE ARRAY, OR A TRUNCATED RESPONSE (SALVAGE COMPLETE {…} OBJECTS)
-// SO A SLIGHTLY MALFORMED / CUT-OFF REPLY STILL YIELDS THE TERMS IT DID CONTAIN INSTEAD OF ZERO.
-function parseTermObjects(text: string): unknown[] {
-	const tryParse = (s: string): unknown => {
-		try {
-			return JSON.parse(s);
-		} catch {
-			return undefined;
-		}
-	};
-	const whole = tryParse(text);
-	if (Array.isArray(whole)) return whole;
-	const terms = (whole as { terms?: unknown })?.terms;
-	if (Array.isArray(terms)) return terms;
-	// SALVAGE EVERY COMPLETE {…} OBJECT (HANDLES A TRUNCATED ARRAY THAT NEVER GOT ITS CLOSING `]`)
-	const objs: unknown[] = [];
-	const re = /\{[^{}]*\}/g;
-	let m: RegExpExecArray | null;
-	while ((m = re.exec(text))) {
-		const o = tryParse(m[0]);
-		if (o) objs.push(o);
-	}
-	return objs;
-}
-
-// MAX ESTABLISHED TERMS TO FEED AS CONTEXT PER CHUNK (BOUNDS PROMPT TOKENS ON LARGE GLOSSARIES).
-const MAX_CONTEXT_TERMS = 120;
-
-/**
- * EXTRACT GLOSSARY TERM DRAFTS FROM A CHAPTER VIA DEEPSEEK (WHOLE CHAPTER, ROBUST, DEDUPED).
- * `known` = the book's existing effective glossary; the terms among it that appear in each chunk are
- * fed to the model as an "ESTABLISHED GLOSSARY" so NEW terms are translated consistently with them.
- */
+// EXTRACT GLOSSARY TERM DRAFTS FROM A CHAPTER VIA DEEPSEEK (WHOLE CHAPTER, ROBUST, DEDUPED).
+// `known` = THE BOOK'S EXISTING EFFECTIVE GLOSSARY; THE TERMS AMONG IT THAT APPEAR IN EACH CHUNK ARE
+// FED TO THE MODEL AS AN "ESTABLISHED GLOSSARY" SO NEW TERMS ARE TRANSLATED CONSISTENTLY WITH THEM.
 export async function extractTerms(
 	contentZh: string,
 	known: TermDraft[] = [],
@@ -328,8 +332,8 @@ export async function extractTerms(
 		// RUN, FILTERED TO THOSE APPEARING IN THIS CHUNK. THIS KEEPS LATER CHUNKS CONSISTENT WITH EARLIER
 		// ONES (NO SAME-TERM DRIFT ACROSS CHUNKS) AND WITH WHAT'S ALREADY SAVED.
 		const established = new Map<string, TermDraft>();
-		for (const t of byRaw.values()) established.set(t.raw, t); // this run's earlier chunks
-		for (const t of known) established.set(t.raw, t); // DB-fixed terms take precedence
+		for (const t of byRaw.values()) established.set(t.raw, t); // THIS RUN'S EARLIER CHUNKS
+		for (const t of known) established.set(t.raw, t); // DB-FIXED TERMS TAKE PRECEDENCE
 		const ctx = [...established.values()].filter((t) => t.raw && chunk.includes(t.raw)).slice(0, MAX_CONTEXT_TERMS);
 		const messages: { role: 'system' | 'user'; content: string }[] = [{ role: 'system', content: EXTRACT_SYSTEM }];
 		if (ctx.length) {

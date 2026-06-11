@@ -1,30 +1,28 @@
 // TTS TEXT MODEL
-// Turns a translated paragraph (which may carry the small inline-markup whitelist from markup.ts)
-// into the two views the speech engine + the highlighter both need, derived from the SAME source so
-// their character offsets line up exactly:
-//   • PLAIN TEXT  — what we feed SpeechSynthesis (no tags, entities decoded). Offsets here are the
-//     unit the boundary events + sentence ranges speak in.
-//   • TOKENS      — the same text split into word/space spans (each carrying the inline tags active
-//     over it) so the reader can wrap individual words for highlighting without breaking tag nesting.
+// TURNS A TRANSLATED PARAGRAPH (WHICH MAY CARRY THE SMALL INLINE-MARKUP WHITELIST FROM markup.ts)
+// INTO THE TWO VIEWS THE SPEECH ENGINE + THE HIGHLIGHTER BOTH NEED, DERIVED FROM THE SAME SOURCE SO
+// THEIR CHARACTER OFFSETS LINE UP EXACTLY:
+//   - PLAIN TEXT  — WHAT WE FEED SpeechSynthesis (NO TAGS, ENTITIES DECODED). OFFSETS HERE ARE THE
+//     UNIT THE BOUNDARY EVENTS + SENTENCE RANGES SPEAK IN.
+//   - TOKENS      — THE SAME TEXT SPLIT INTO WORD/SPACE SPANS (EACH CARRYING THE INLINE TAGS ACTIVE
+//     OVER IT) SO THE READER CAN WRAP INDIVIDUAL WORDS FOR HIGHLIGHTING WITHOUT BREAKING TAG NESTING.
 //
-// Both are computed by running renderMarkup() first, then parsing that HTML back into runs. Because
-// renderMarkup strips the markdown delimiters (**, *, `) into real tags, the resulting plain text is
-// exactly the spoken text, and tag boundaries never count toward an offset.
+// BOTH ARE COMPUTED BY RUNNING renderMarkup() FIRST, THEN PARSING THAT HTML BACK INTO RUNS. BECAUSE
+// renderMarkup STRIPS THE MARKDOWN DELIMITERS (**, *, `) INTO REAL TAGS, THE RESULTING PLAIN TEXT IS
+// EXACTLY THE SPOKEN TEXT, AND TAG BOUNDARIES NEVER COUNT TOWARD AN OFFSET.
 
+// IMPORTED MODULES
 import { renderMarkup } from '$lib/markup';
 
-const ENTITY: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', '#39': "'", nbsp: ' ' };
+// -- TYPES -- //
 
-// INLINE TAGS renderMarkup CAN EMIT (markup.ts ALLOWED list) — anything else is treated as plain text.
-const KNOWN_TAGS = new Set(['b', 'strong', 'i', 'em', 'u', 's', 'del', 'mark', 'sub', 'sup', 'code', 'br']);
-
-/** A stretch of plain text with the set of inline tags active over it. */
+/** A STRETCH OF PLAIN TEXT WITH THE SET OF INLINE TAGS ACTIVE OVER IT. */
 export interface Run {
 	text: string;
 	tags: string[];
 }
 
-/** A word or whitespace span, with its plain-text offset range and active tags. */
+/** A WORD OR WHITESPACE SPAN, WITH ITS PLAIN-TEXT OFFSET RANGE AND ACTIVE TAGS. */
 export interface Token {
 	text: string;
 	start: number;
@@ -34,13 +32,26 @@ export interface Token {
 	isBreak: boolean;
 }
 
-/** A sentence as a half-open [start, end) range over the paragraph's plain text. */
+/** A SENTENCE AS A HALF-OPEN [start, end) RANGE OVER THE PARAGRAPH'S PLAIN TEXT. */
 export interface Sentence {
 	start: number;
 	end: number;
 }
 
-/** Parse renderMarkup() HTML into plain-text runs, tracking the inline tags active over each run. */
+// -- CONSTANTS -- //
+
+const ENTITY: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', '#39': "'", nbsp: ' ' };
+
+// INLINE TAGS renderMarkup CAN EMIT (markup.ts ALLOWED LIST) — ANYTHING ELSE IS TREATED AS PLAIN TEXT.
+const KNOWN_TAGS = new Set(['b', 'strong', 'i', 'em', 'u', 's', 'del', 'mark', 'sub', 'sup', 'code', 'br']);
+
+const SENTENCE_ENDERS = '.!?。！？…';
+
+const TRAILERS = '"\'”’」』）)]》>';
+
+// -- FUNCTIONS -- //
+
+/** PARSE renderMarkup() HTML INTO PLAIN-TEXT RUNS, TRACKING THE INLINE TAGS ACTIVE OVER EACH RUN. */
 export function parseRuns(html: string): Run[] {
 	const runs: Run[] = [];
 	const stack: string[] = [];
@@ -67,7 +78,7 @@ export function parseRuns(html: string): Run[] {
 			if (KNOWN_TAGS.has(tag)) {
 				flush();
 				if (tag === 'br') {
-					// A hard break — a single newline so it both speaks as a pause and tokenizes as a <br>.
+					// A HARD BREAK — A SINGLE NEWLINE SO IT BOTH SPEAKS AS A PAUSE AND TOKENIZES AS A <br>.
 					runs.push({ text: '\n', tags: stack.slice() });
 				} else if (isClose) {
 					const idx = stack.lastIndexOf(tag);
@@ -77,7 +88,7 @@ export function parseRuns(html: string): Run[] {
 				}
 				i = j + 1;
 			} else {
-				// Not one of ours (shouldn't happen with renderMarkup output) — keep the literal char.
+				// NOT ONE OF OURS (SHOULDN'T HAPPEN WITH renderMarkup OUTPUT) — KEEP THE LITERAL CHAR.
 				buf += c;
 				i++;
 			}
@@ -101,24 +112,24 @@ export function parseRuns(html: string): Run[] {
 	return runs;
 }
 
-/** Concatenate runs back into the plain spoken text. */
+/** CONCATENATE RUNS BACK INTO THE PLAIN SPOKEN TEXT. */
 export function runsToPlain(runs: Run[]): string {
 	let s = '';
 	for (const r of runs) s += r.text;
 	return s;
 }
 
-/** Convenience: paragraph source → plain spoken text. */
+/** CONVENIENCE: PARAGRAPH SOURCE → PLAIN SPOKEN TEXT. */
 export function paragraphToPlain(p: string): string {
 	return runsToPlain(parseRuns(renderMarkup(p)));
 }
 
-/** Split runs into word/whitespace/break tokens carrying plain-text offsets and inline tags. */
+/** SPLIT RUNS INTO WORD/WHITESPACE/BREAK TOKENS CARRYING PLAIN-TEXT OFFSETS AND INLINE TAGS. */
 export function tokenize(runs: Run[]): Token[] {
 	const tokens: Token[] = [];
 	let off = 0;
 	for (const run of runs) {
-		// Keep whitespace as its own pieces so layout matches and sentence highlight stays continuous.
+		// KEEP WHITESPACE AS ITS OWN PIECES SO LAYOUT MATCHES AND SENTENCE HIGHLIGHT STAYS CONTINUOUS.
 		for (const part of run.text.split(/(\s+)/)) {
 			if (part === '') continue;
 			const start = off;
@@ -138,20 +149,17 @@ export function tokenize(runs: Run[]): Token[] {
 	return tokens;
 }
 
-const SENTENCE_ENDERS = '.!?。！？…';
-const TRAILERS = '"\'”’」』）)]》>';
-
 /**
- * Split plain text into sentence ranges. Handles both Latin (. ! ?) and CJK (。！？) terminators,
- * keeps trailing quotes/brackets with the sentence, breaks on hard newlines, and avoids splitting
- * decimals like "3.14" or single-letter abbreviations.
+ * SPLIT PLAIN TEXT INTO SENTENCE RANGES. HANDLES BOTH LATIN (. ! ?) AND CJK (。！？) TERMINATORS,
+ * KEEPS TRAILING QUOTES/BRACKETS WITH THE SENTENCE, BREAKS ON HARD NEWLINES, AND AVOIDS SPLITTING
+ * DECIMALS LIKE "3.14" OR SINGLE-LETTER ABBREVIATIONS.
  */
 export function splitSentences(plain: string): Sentence[] {
 	const out: Sentence[] = [];
 	let start = 0;
 	let i = 0;
 	const push = (end: number) => {
-		// Trim leading whitespace off the recorded range so offsets land on real text.
+		// TRIM LEADING WHITESPACE OFF THE RECORDED RANGE SO OFFSETS LAND ON REAL TEXT.
 		let s = start;
 		while (s < end && /\s/.test(plain[s])) s++;
 		if (end > s) out.push({ start: s, end });
@@ -166,13 +174,13 @@ export function splitSentences(plain: string): Sentence[] {
 			continue;
 		}
 		if (SENTENCE_ENDERS.includes(ch)) {
-			// Don't split a decimal point sitting between two digits.
+			// DON'T SPLIT A DECIMAL POINT SITTING BETWEEN TWO DIGITS.
 			if (ch === '.' && /\d/.test(plain[i - 1] ?? '') && /\d/.test(plain[i + 1] ?? '')) {
 				i++;
 				continue;
 			}
 			let j = i + 1;
-			// Absorb runs of enders (?!, …) and any trailing closing quotes/brackets.
+			// ABSORB RUNS OF ENDERS (?!, …) AND ANY TRAILING CLOSING QUOTES/BRACKETS.
 			while (j < plain.length && (SENTENCE_ENDERS.includes(plain[j]) || TRAILERS.includes(plain[j]))) j++;
 			push(j);
 			while (j < plain.length && /\s/.test(plain[j])) j++;
@@ -186,7 +194,7 @@ export function splitSentences(plain: string): Sentence[] {
 	return out;
 }
 
-/** Build the full speech model for one paragraph: runs, plain text, and sentence ranges. */
+/** BUILD THE FULL SPEECH MODEL FOR ONE PARAGRAPH: RUNS, PLAIN TEXT, AND SENTENCE RANGES. */
 export function analyzeParagraph(p: string): { runs: Run[]; plain: string; sentences: Sentence[] } {
 	const runs = parseRuns(renderMarkup(p));
 	const plain = runsToPlain(runs);

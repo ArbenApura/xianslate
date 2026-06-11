@@ -1,11 +1,16 @@
+// IMPORTED DEP-TYPES
+import type { RequestHandler } from './$types';
+// IMPORTED DEP-MODULES
 import { error, json } from '@sveltejs/kit';
 import { asc, eq, sql } from 'drizzle-orm';
+// IMPORTED MODULES
 import { deleteBook, getBook } from '$lib/server/books';
 import { db } from '$lib/server/db';
 import { books, chapters } from '$lib/server/db/schema';
 import { matchTerms } from '$lib/server/glossary-match';
 import { translateTitle } from '$lib/server/translate';
-import type { RequestHandler } from './$types';
+
+// -- FUNCTIONS -- //
 
 export const GET: RequestHandler = async ({ params }) => {
 	const book = await getBook(params.id);

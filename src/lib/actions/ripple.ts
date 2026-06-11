@@ -3,6 +3,7 @@
 // BORDER-RADIUS, THEN FADES IT OUT ON RELEASE. KEYFRAMES ARE INJECTED ONCE INTO <head> AT RUNTIME
 // (NOT A COMPONENT <style> BLOCK) SO EVERY use:ripple SHARES ONE STYLESHEET.
 
+// IMPORTED DEP-TYPES
 import type { Action } from 'svelte/action';
 
 // -- TYPES -- //

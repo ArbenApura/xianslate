@@ -1,5 +1,9 @@
-import { computeUsage, deepseek, hasApiKey, MODEL, queued, thinkingParam, withRetry } from './deepseek';
+// IMPORTED TYPES
 import type { TermDraft, TranslationUsage } from '$lib/types';
+// IMPORTED MODULES
+import { computeUsage, deepseek, hasApiKey, MODEL, queued, thinkingParam, withRetry } from './deepseek';
+
+// -- CONSTANTS -- //
 
 // BUMP WHEN THE PROMPT CHANGES — PARTICIPATES IN THE TRANSLATION CACHE KEY
 export const PROMPT_VERSION = 'v5';
@@ -13,8 +17,8 @@ const PARA = '⟦¶⟧';
 // THE MODEL OCCASIONALLY MANGLES THE BRACKETS (e.g. ⟦¶⟦ INSTEAD OF ⟦¶⟧), SO DETECT THE MARKER
 // TOLERANTLY — ANCHORED ON THE PILCROW WITH ANY SURROUNDING WHITE-BRACKET NOISE. A PILCROW NEVER
 // APPEARS IN NORMAL PROSE, SO THIS IS SAFE.
-const PARA_RE = /[⟦⟧]*¶[⟦⟧]*/g; // a complete marker
-const PARA_TAIL = /[⟦⟧¶]+$/; // a trailing run of marker chars (possible partial spanning two deltas)
+const PARA_RE = /[⟦⟧]*¶[⟦⟧]*/g; // A COMPLETE MARKER
+const PARA_TAIL = /[⟦⟧¶]+$/; // A TRAILING RUN OF MARKER CHARS (POSSIBLE PARTIAL SPANNING TWO DELTAS)
 
 // STABLE SYSTEM PREFIX — IDENTICAL ACROSS ALL CHAPTERS SO DEEPSEEK CACHES ITS TOKENS
 const SYSTEM_PROMPT = `You are an expert literary translator of Chinese web novels (xianxia/xuanhuan).
@@ -46,6 +50,23 @@ Rules:
   simple HTML <b>/<i> — but keep it minimal. Do NOT add headings, lists, code blocks, links, or any
   block-level formatting; output flowing prose paragraphs only.`;
 
+const TITLE_SYSTEM = `You translate Chinese web-novel chapter titles into concise, natural English.
+Use the glossary message's English for any of those names/terms that appear, fitting them naturally. Output ONLY the translated title — no quotes, no preamble.
+MANDATORY: the result must be fully English with NO Chinese characters — translate or romanize every word, including any "第N章" chapter marker.`;
+
+// CJK IDEOGRAPHS (incl. Ext-A, Ext-B, compatibility) — THE SIGNATURE OF A TRANSLATION THAT LEFT CHINESE
+// UNTRANSLATED. PUNCTUATION/FULL-WIDTH SYMBOLS ARE INTENTIONALLY NOT FLAGGED.
+const HAN_RE = /[㐀-䶿一-鿿豈-﫿]|[\u{20000}-\u{2a6df}]/u;
+
+const ZERO: TranslationUsage = { model: MODEL, promptTokens: 0, cachedTokens: 0, completionTokens: 0, costUsd: 0 };
+
+const REPAIR_SYSTEM = `You are fixing an English translation of a Chinese web novel in which some fragments of the original Chinese were left UNTRANSLATED or half-translated by mistake.
+Rewrite the text so it is 100% fluent English: translate or romanize EVERY remaining Chinese character (personal names → pinyin with no tone marks; terms/places/titles → natural English), and repair any garbled or half-translated spot, while keeping all the already-correct English EXACTLY as it is and preserving the meaning, tone, and length.
+The paragraphs are separated by the marker ${PARA}. Output the SAME number of paragraphs, separated by that EXACT marker and nothing else.
+MANDATORY: the result must contain NO Chinese character anywhere. Output ONLY the corrected English prose — no preamble, no notes.`;
+
+// -- FUNCTIONS -- //
+
 function pronoun(gender: TermDraft['gender']): string {
 	if (gender === 'masculine') return ' [he/him]';
 	if (gender === 'feminine') return ' [she/her]';
@@ -61,10 +82,6 @@ function glossaryBlock(terms: TermDraft[]): string | null {
 		`fluently in the sentence; do NOT force a stiff, literal insertion:\n${lines.join('\n')}`
 	);
 }
-
-const TITLE_SYSTEM = `You translate Chinese web-novel chapter titles into concise, natural English.
-Use the glossary message's English for any of those names/terms that appear, fitting them naturally. Output ONLY the translated title — no quotes, no preamble.
-MANDATORY: the result must be fully English with NO Chinese characters — translate or romanize every word, including any "第N章" chapter marker.`;
 
 /** TRANSLATE A SINGLE CHAPTER TITLE (SHORT, NON-STREAMED), GLOSSARY-AWARE */
 export async function translateTitle(
@@ -86,7 +103,7 @@ export async function translateTitle(
 			),
 		),
 	);
-	const text = (res.choices[0]?.message?.content ?? '').trim().replace(/^["'“”]|["'“”]$/g, '');
+	const text = (res.choices[0]?.message?.content ?? '').trim().replace(/^["'""]|["'""]$/g, '');
 	return { text, usage: computeUsage(res.usage) };
 }
 
@@ -113,24 +130,24 @@ function chunkParagraphs(contentZh: string): string[] {
 	return chunks;
 }
 
-// CJK IDEOGRAPHS (incl. Ext-A, Ext-B, compatibility) — THE SIGNATURE OF A TRANSLATION THAT LEFT CHINESE
-// UNTRANSLATED. PUNCTUATION/FULL-WIDTH SYMBOLS ARE INTENTIONALLY NOT FLAGGED.
-const HAN_RE = /[㐀-䶿一-鿿豈-﫿]|[\u{20000}-\u{2a6df}]/u;
 export function containsHan(s: string): boolean {
 	return HAN_RE.test(s);
 }
 
-const ZERO: TranslationUsage = { model: MODEL, promptTokens: 0, cachedTokens: 0, completionTokens: 0, costUsd: 0 };
-
-const REPAIR_SYSTEM = `You are fixing an English translation of a Chinese web novel in which some fragments of the original Chinese were left UNTRANSLATED or half-translated by mistake.
-Rewrite the text so it is 100% fluent English: translate or romanize EVERY remaining Chinese character (personal names → pinyin with no tone marks; terms/places/titles → natural English), and repair any garbled or half-translated spot, while keeping all the already-correct English EXACTLY as it is and preserving the meaning, tone, and length.
-The paragraphs are separated by the marker ${PARA}. Output the SAME number of paragraphs, separated by that EXACT marker and nothing else.
-MANDATORY: the result must contain NO Chinese character anywhere. Output ONLY the corrected English prose — no preamble, no notes.`;
+export function addUsage(a: TranslationUsage, b: TranslationUsage): TranslationUsage {
+	return {
+		model: b.model || a.model,
+		promptTokens: a.promptTokens + b.promptTokens,
+		cachedTokens: a.cachedTokens + b.cachedTokens,
+		completionTokens: a.completionTokens + b.completionTokens,
+		costUsd: a.costUsd + b.costUsd,
+	};
+}
 
 /**
- * REPAIR A TRANSLATION THAT LEAKED UNTRANSLATED CHINESE. Re-translates ONLY the paragraphs that still
- * contain Han characters (cheap — usually 0–2), up to two passes, and splices the cleaned paragraphs
- * back by index. Never corrupts on a paragraph-count mismatch (it leaves that pass's text unchanged).
+ * REPAIR A TRANSLATION THAT LEAKED UNTRANSLATED CHINESE. RE-TRANSLATES ONLY THE PARAGRAPHS THAT STILL
+ * CONTAIN Han CHARACTERS (CHEAP — USUALLY 0–2), UP TO TWO PASSES, AND SPLICES THE CLEANED PARAGRAPHS
+ * BACK BY INDEX. NEVER CORRUPTS ON A PARAGRAPH-COUNT MISMATCH (IT LEAVES THAT PASS'S TEXT UNCHANGED).
  */
 export async function repairChineseLeak(
 	paras: string[],
@@ -176,16 +193,6 @@ export async function repairChineseLeak(
 		repaired = true;
 	}
 	return { paras: work, usage, repaired };
-}
-
-export function addUsage(a: TranslationUsage, b: TranslationUsage): TranslationUsage {
-	return {
-		model: b.model || a.model,
-		promptTokens: a.promptTokens + b.promptTokens,
-		cachedTokens: a.cachedTokens + b.cachedTokens,
-		completionTokens: a.completionTokens + b.completionTokens,
-		costUsd: a.costUsd + b.costUsd,
-	};
 }
 
 /**

@@ -1,8 +1,13 @@
+// IMPORTED DEP-TYPES
+import type { PageServerLoad } from './$types';
+// IMPORTED DEP-MODULES
 import { error } from '@sveltejs/kit';
 import { asc, eq } from 'drizzle-orm';
+// IMPORTED MODULES
 import { db } from '$lib/server/db';
 import { books, chapters } from '$lib/server/db/schema';
-import type { PageServerLoad } from './$types';
+
+// -- FUNCTIONS -- //
 
 // LOAD THE BOOK + ITS ORDERED CHAPTERS FOR THE MANAGEMENT VIEW
 export const load: PageServerLoad = async ({ params }) => {

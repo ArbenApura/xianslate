@@ -1,10 +1,14 @@
 // CURATED READING FONTS (SELF-HOSTED VIA @fontsource, IMPORTED IN app.css)
 
+// -- TYPES -- //
+
 export interface FontOption {
 	key: string;
 	label: string;
 	stack: string;
 }
+
+// -- CONSTANTS -- //
 
 export const LATIN_FONTS: FontOption[] = [
 	{ key: 'literata', label: 'Literata', stack: "'Literata', Georgia, 'Times New Roman', serif" },
@@ -18,6 +22,8 @@ export const CJK_FONTS: FontOption[] = [
 	{ key: 'noto-sans-tc', label: 'Noto Sans TC', stack: "'Noto Sans TC', sans-serif" },
 	{ key: 'lxgw', label: 'LXGW WenKai TC', stack: "'LXGW WenKai TC', cursive, serif" },
 ];
+
+// -- FUNCTIONS -- //
 
 export function latinStack(key: string): string {
 	return (LATIN_FONTS.find((f) => f.key === key) ?? LATIN_FONTS[0]).stack;

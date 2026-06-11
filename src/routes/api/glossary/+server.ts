@@ -1,9 +1,25 @@
+// IMPORTED DEP-MODULES
 import { error, json } from '@sveltejs/kit';
 import { z } from 'zod';
+// IMPORTED MODULES
 import { addTerm, getGlossaryPage } from '$lib/server/glossary';
+// IMPORTED TYPES
 import type { RequestHandler } from './$types';
 
+// -- CONSTANTS -- //
+
 const scopeSchema = z.enum(['global', 'book']);
+
+const PostBody = z.object({
+	scope: scopeSchema,
+	bookId: z.string().nullable().optional(),
+	raw: z.string().min(1),
+	translation: z.string().min(1),
+	gender: z.enum(['neuter', 'masculine', 'feminine']).default('neuter'),
+	tags: z.string().nullable().optional(),
+});
+
+// -- FUNCTIONS -- //
 
 export const GET: RequestHandler = async ({ url }) => {
 	// safeParse → 400 (NOT AN UNHANDLED ZodError → 500) FOR A BAD ?scope= VALUE.
@@ -20,15 +36,6 @@ export const GET: RequestHandler = async ({ url }) => {
 	const { rows, total } = await getGlossaryPage(scope, bookId, { q, limit: pageSize, offset: (page - 1) * pageSize });
 	return json({ rows, total, page, pageSize });
 };
-
-const PostBody = z.object({
-	scope: scopeSchema,
-	bookId: z.string().nullable().optional(),
-	raw: z.string().min(1),
-	translation: z.string().min(1),
-	gender: z.enum(['neuter', 'masculine', 'feminine']).default('neuter'),
-	tags: z.string().nullable().optional(),
-});
 
 export const POST: RequestHandler = async ({ request }) => {
 	const parsed = PostBody.safeParse(await request.json().catch(() => null));

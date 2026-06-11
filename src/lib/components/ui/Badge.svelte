@@ -3,11 +3,13 @@
 	import { cn } from '$lib/utils/cn';
 
 	// -- OPTIONAL PROPS -- //
+
 	export let variant: 'neutral' | 'sky' | 'violet' | 'amber' | 'emerald' | 'rose' = 'neutral';
 	let className = '';
 	export { className as class };
 
 	// -- CONSTANTS -- //
+
 	const VARIANTS = {
 		neutral: 'bg-current/10 text-current opacity-70',
 		sky: 'bg-sky-500/10 text-sky-600 dark:text-sky-300',

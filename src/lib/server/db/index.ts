@@ -1,14 +1,23 @@
-import { createClient, type Client } from '@libsql/client';
-import { drizzle } from 'drizzle-orm/libsql';
+// IMPORTED DEP-TYPES
+import { type Client } from '@libsql/client';
+// IMPORTED ENVS ($env/...)
 import { env } from '$env/dynamic/private';
+// IMPORTED DEP-MODULES
+import { createClient } from '@libsql/client';
+import { drizzle } from 'drizzle-orm/libsql';
+// IMPORTED MODULES
 import * as schema from './schema';
 
-// SINGLETON CLIENT — REUSED ACROSS REQUESTS / HMR RELOADS
-const url = env.DATABASE_URL ?? 'file:./xianslate.db';
+// -- TYPES -- //
 
 declare global {
 	var __xianslateClient: Client | undefined;
 }
+
+// -- CONSTANTS -- //
+
+// SINGLETON CLIENT — REUSED ACROSS REQUESTS / HMR RELOADS
+const url = env.DATABASE_URL ?? 'file:./xianslate.db';
 
 const client = globalThis.__xianslateClient ?? createClient({ url });
 if (!globalThis.__xianslateClient) {

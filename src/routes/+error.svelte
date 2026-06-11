@@ -12,15 +12,21 @@
 	import Button from '$lib/components/ui/Button.svelte';
 
 	// -- REACTIVE STATES -- //
+
 	$: status = $page.status;
+
 	$: isNotFound = status === 404;
+
 	$: message = $page.error?.message ?? '';
+
 	$: heading = isNotFound ? 'Lost in the archives' : 'Something went wrong';
+
 	$: blurb = isNotFound
 		? "This page wandered off — the chapter, book, or scroll you were after isn't here anymore."
 		: message || 'An unexpected error interrupted your reading. Try again, or head back to the library.';
 
 	// -- FUNCTIONS -- //
+
 	// PREFER THE BROWSER HISTORY WHEN THERE IS ONE; OTHERWISE FALL BACK TO THE LIBRARY
 	function goBack() {
 		if (browser && window.history.length > 1) window.history.back();
@@ -46,12 +52,14 @@
 		</div>
 	</div>
 
+	<!-- HEADING AND DESCRIPTION -->
 	<h1 class="text-2xl font-bold sm:text-3xl">{heading}</h1>
 	<p class="mt-3 max-w-md text-sm leading-relaxed opacity-60 sm:text-base">{blurb}</p>
 	{#if message && !isNotFound}
 		<p class="mt-2 max-w-md break-words font-mono text-xs opacity-40">{message}</p>
 	{/if}
 
+	<!-- ACTION BUTTONS -->
 	<div class="mt-8 flex flex-wrap items-center justify-center gap-3">
 		<Button variant="primary" href="/"><Home size={16} /> Back to library</Button>
 		<Button on:click={goBack}><ArrowLeft size={16} /> Go back</Button>

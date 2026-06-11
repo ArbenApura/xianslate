@@ -3,6 +3,7 @@
 	import { cn } from '$lib/utils/cn';
 
 	// -- OPTIONAL PROPS -- //
+
 	export let value: string = '';
 	export let label = '';
 	export let options: { value: string; label: string }[] = [];
@@ -12,6 +13,7 @@
 <!-- SELECT FIELD: OPTIONAL LABEL + THEMED SELECT -->
 <label class="block">
 	{#if label}<span class="mb-1 block text-xs font-medium opacity-60">{label}</span>{/if}
+	<!-- outline-none SUPPRESSES BROWSER DEFAULT RING; focus:border-sky-500 PROVIDES THE VISIBLE FOCUS INDICATOR -->
 	<select
 		bind:value
 		class={cn(

@@ -1,20 +1,26 @@
-import { writable } from 'svelte/store';
+// IMPORTED ENVS
 import { browser } from '$app/environment';
+// IMPORTED DEP-MODULES
+import { writable } from 'svelte/store';
 
-// READ-ALOUD PREFERENCES — persisted separately from reading settings so a TTS-defaults bump doesn't
-// reset typography (and vice-versa). Voice is stored per spoken language (the app reads English or
-// Chinese) so each keeps its own chosen voice.
+// -- TYPES -- //
+
+// READ-ALOUD PREFERENCES — PERSISTED SEPARATELY FROM READING SETTINGS SO A TTS-DEFAULTS BUMP DOESN'T
+// RESET TYPOGRAPHY (AND VICE-VERSA). VOICE IS STORED PER SPOKEN LANGUAGE (THE APP READS ENGLISH OR
+// CHINESE) SO EACH KEEPS ITS OWN CHOSEN VOICE.
 export interface TtsSettings {
 	version: number;
-	rate: number; // 0.5–2.5 (1 = normal)
-	pitch: number; // 0–2 (1 = normal)
+	rate: number; // 0.5–2.5 (1 = NORMAL)
+	pitch: number; // 0–2 (1 = NORMAL)
 	volume: number; // 0–1
-	enVoiceURI: string | null; // null = auto-pick first matching voice
+	enVoiceURI: string | null; // null = AUTO-PICK FIRST MATCHING VOICE
 	zhVoiceURI: string | null;
-	highlight: boolean; // tint the sentence currently being spoken
-	highlightWord: boolean; // brighter tint on the exact word currently being spoken
-	autoScroll: boolean; // keep the spoken line in view
+	highlight: boolean; // TINT THE SENTENCE CURRENTLY BEING SPOKEN
+	highlightWord: boolean; // BRIGHTER TINT ON THE EXACT WORD CURRENTLY BEING SPOKEN
+	autoScroll: boolean; // KEEP THE SPOKEN LINE IN VIEW
 }
+
+// -- CONSTANTS -- //
 
 // BUMP version WHEN DEFAULTS CHANGE — TRIGGERS A ONE-TIME ADOPT OF THE NEW DEFAULTS.
 export const TTS_DEFAULTS: TtsSettings = {
@@ -30,6 +36,24 @@ export const TTS_DEFAULTS: TtsSettings = {
 };
 
 const KEY = 'xianslate:tts';
+
+// -- STATES -- //
+
+let voicesInit = false;
+
+// -- STORES -- //
+
+export const ttsSettings = create();
+
+// AVAILABLE SYSTEM VOICES — POPULATED LAZILY (Chrome LOADS THEM ASYNC VIA THE voiceschanged EVENT).
+export const voices = writable<SpeechSynthesisVoice[]>([]);
+
+// PER-VOICE WORD-TIMING SUPPORT, KEYED BY voiceURI. FILLED IN BY THE ENGINE FROM REAL PLAYBACK:
+// true ONCE A VOICE FIRES `boundary` EVENTS, false ONCE A LONG SENTENCE FINISHES WITHOUT ANY. VOICES
+// NOT YET OBSERVED ARE ABSENT (WE FALL BACK TO THE localService HEURISTIC IN voiceHasWordTiming).
+export const wordTimingSupport = writable<Record<string, boolean>>({});
+
+// -- FUNCTIONS -- //
 
 // MERGE SAVED VALUES FORWARD ONTO DEFAULTS (KNOWN KEYS, TYPE-CHECKED) — A TTS-DEFAULTS version BUMP MUST
 // NOT WIPE THE USER'S CHOSEN VOICES / RATE / PITCH.
@@ -73,25 +97,13 @@ function create() {
 	return store;
 }
 
-export const ttsSettings = create();
-
 export function resetTtsSettings() {
 	ttsSettings.set({ ...TTS_DEFAULTS });
 }
 
-// AVAILABLE SYSTEM VOICES — populated lazily (Chrome loads them async via the voiceschanged event).
-export const voices = writable<SpeechSynthesisVoice[]>([]);
-
-// PER-VOICE WORD-TIMING SUPPORT, keyed by voiceURI. Filled in by the engine from real playback:
-// true once a voice fires `boundary` events, false once a long sentence finishes without any. Voices
-// not yet observed are absent (we fall back to the localService heuristic in voiceHasWordTiming).
-export const wordTimingSupport = writable<Record<string, boolean>>({});
-
-/**
- * Whether word-level highlighting can work for a voice. Network voices (localService === false) —
- * e.g. Google's remote voices — only fire start/end, so word highlighting is impossible. A confirmed
- * runtime observation always wins over the heuristic. Unknown voice → assume yes.
- */
+// WHETHER WORD-LEVEL HIGHLIGHTING CAN WORK FOR A VOICE. NETWORK VOICES (localService === false) —
+// E.G. Google'S REMOTE VOICES — ONLY FIRE start/end, SO WORD HIGHLIGHTING IS IMPOSSIBLE. A CONFIRMED
+// RUNTIME OBSERVATION ALWAYS WINS OVER THE HEURISTIC. UNKNOWN VOICE → ASSUME YES.
 export function voiceHasWordTiming(
 	voice: SpeechSynthesisVoice | null | undefined,
 	observed: Record<string, boolean>,
@@ -102,7 +114,6 @@ export function voiceHasWordTiming(
 	return voice.localService !== false;
 }
 
-let voicesInit = false;
 export function ensureVoices() {
 	if (!browser || voicesInit || !('speechSynthesis' in window)) return;
 	voicesInit = true;

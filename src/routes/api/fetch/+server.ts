@@ -1,7 +1,12 @@
+// IMPORTED TYPES
+import type { RequestHandler } from './$types';
+// IMPORTED DEP-MODULES
 import { error, json } from '@sveltejs/kit';
 import { z } from 'zod';
+// IMPORTED MODULES
 import { ingestWebChapter } from '$lib/server/books';
-import type { RequestHandler } from './$types';
+
+// -- CONSTANTS -- //
 
 const Body = z.object({
 	url: z.string().url(),
@@ -11,6 +16,8 @@ const Body = z.object({
 	// KEEP A FETCHED NEIGHBOR IN THE CURRENT BOOK (E.G. A MANUAL BOOK BUILT FROM SCRAPED URLS)
 	targetBookId: z.string().optional(),
 });
+
+// -- FUNCTIONS -- //
 
 export const POST: RequestHandler = async ({ request }) => {
 	const parsed = Body.safeParse(await request.json().catch(() => null));

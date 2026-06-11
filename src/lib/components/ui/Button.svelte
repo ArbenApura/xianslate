@@ -1,10 +1,12 @@
 <script lang="ts">
+	// IMPORTED DEP-MODULES
+	import Loader2 from 'lucide-svelte/icons/loader-2';
 	// IMPORTED MODULES
 	import { cn } from '$lib/utils/cn';
-	// IMPORTED DEP-COMPONENTS
-	import Loader2 from 'lucide-svelte/icons/loader-2';
+	import { ripple } from '$lib/actions/ripple';
 
 	// -- OPTIONAL PROPS -- //
+
 	export let variant: 'primary' | 'secondary' | 'ghost' | 'danger' = 'secondary';
 	export let size: 'sm' | 'md' = 'md';
 	export let type: 'button' | 'submit' = 'button';
@@ -15,6 +17,7 @@
 	export { className as class };
 
 	// -- CONSTANTS -- //
+
 	const BASE =
 		'inline-flex items-center justify-center gap-1.5 rounded-lg border font-medium transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-sky-500/40 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-50';
 	const VARIANTS = {
@@ -29,13 +32,17 @@
 	} as const;
 
 	// -- REACTIVE STATES -- //
+
 	$: classes = cn(BASE, VARIANTS[variant], SIZES[size], className);
 </script>
 
+<!-- LINK VARIANT (href provided) -->
 {#if href}
-	<a {href} class={cn(classes, disabled && 'pointer-events-none opacity-50')}><slot /></a>
+	<a {href} use:ripple={{ disabled }} class={cn(classes, disabled && 'pointer-events-none opacity-50')}><slot /></a>
+<!-- BUTTON VARIANT -->
 {:else}
-	<button {type} {disabled} class={classes} on:click>
+	<button {type} {disabled} use:ripple={{ disabled }} class={classes} on:click>
+		<!-- LOADING SPINNER -->
 		{#if loading}<Loader2 size={15} class="animate-spin" />{/if}
 		<slot />
 	</button>

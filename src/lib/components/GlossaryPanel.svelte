@@ -1,8 +1,11 @@
 <script lang="ts">
+	// IMPORTED TYPES
+	import type { Gender, GlossaryScope } from '$lib/types';
 	// IMPORTED DEP-MODULES
 	import { toast } from 'svelte-sonner';
 	import { onMount, onDestroy } from 'svelte';
 	// IMPORTED MODULES
+	import { cn } from '$lib/utils/cn';
 	import { settings, THEME_CLASS } from '$lib/stores/settings';
 	// IMPORTED DEP-COMPONENTS
 	import ChevronLeft from 'lucide-svelte/icons/chevron-left';
@@ -18,13 +21,13 @@
 	import Button from '$lib/components/ui/Button.svelte';
 	import Modal from '$lib/components/ui/Modal.svelte';
 	import Select from '$lib/components/ui/Select.svelte';
-	// IMPORTED DEP-TYPES
-	import type { Gender, GlossaryScope } from '$lib/types';
 
 	// -- REQUIRED PROPS -- //
+
 	export let scope: GlossaryScope;
 
 	// -- OPTIONAL PROPS -- //
+
 	export let bookId: string | null = null;
 	export let bookTitle = '';
 	// SURFACE THE STICKY SEARCH BAR PAINTS OVER. DEFAULTS TO THE THEMED PAGE BG; THE DIALOG OVERRIDES
@@ -32,14 +35,17 @@
 	export let surface = '';
 
 	// -- TYPES -- //
+
 	type Entry = { id: number; raw: string; translation: string; gender: Gender; tags: string | null };
 
 	// -- CONSTANTS -- //
+
 	const GENDERS: Gender[] = ['neuter', 'masculine', 'feminine'];
 	const GENDER_ITEMS = GENDERS.map((g) => ({ value: g, label: g }));
 	const PAGE_SIZE_ITEMS = [10, 25, 50, 100, 200].map((n) => ({ value: String(n), label: `${n} / page` }));
 
 	// -- STATES -- //
+
 	let rows: Entry[] = [];
 	let total = 0;
 	let page = 1;
@@ -56,26 +62,34 @@
 	let debounce: ReturnType<typeof setTimeout>;
 	let loadToken = 0; // GUARDS AGAINST OUT-OF-ORDER load() RESPONSES PAINTING STALE ROWS
 
-	onDestroy(() => clearTimeout(debounce));
-
 	// -- REACTIVE STATES -- //
+
 	$: scopeQs = scope === 'book' && bookId ? `scope=book&bookId=${encodeURIComponent(bookId)}` : 'scope=global';
 	$: pageCount = Math.max(1, Math.ceil(total / pageSize));
 	// 1-BASED RANGE OF ROWS SHOWN ON THE CURRENT PAGE ("1–10 of 7,403")
 	$: rangeFrom = total === 0 ? 0 : (page - 1) * pageSize + 1;
 	$: rangeTo = Math.min(page * pageSize, total);
-	// STICKY HEADER (TOOLBAR + SEARCH) PINS TO THE TOP WHILE ROWS SCROLL UNDER IT. IN A DIALOG (surface
-	// SET) THE MODAL BODY IS RENDERED WITH pt-0 SO THE HEADER PINS TO THE TRUE TOP — NO PADDING STRIP
-	// FOR ROWS TO PEEK THROUGH — AND THE HEADER SUPPLIES ITS OWN pt-5 + OPAQUE SURFACE. ON A STANDALONE
-	// PAGE THE DOC SCROLLS TO THE VIEWPORT TOP, SO JUST PIN IT WITH THE THEME SURFACE.
 	$: pageSurface = THEME_CLASS[$settings.theme] || 'bg-white dark:bg-slate-900';
-	$: headerClass =
-		`sticky top-0 z-20 flex flex-col gap-3 border-b border-black/[0.06] pb-3 dark:border-white/[0.045] ` +
-		(surface ? `pt-5 ${surface}` : `pt-4 ${pageSurface}`);
+	// IN A DIALOG (surface SET) THE PANEL IS A FLEX COLUMN THAT FILLS THE MODAL BODY: THE HEADER AND THE
+	// PAGINATION FOOTER ARE FIXED FLEX ITEMS (shrink-0) AND ONLY THE TABLE AREA BETWEEN THEM SCROLLS — SO
+	// THE SCROLLBAR LIVES ON THE TABLE, NOT THE WHOLE DIALOG. ON A STANDALONE PAGE THE PANEL FLOWS NORMALLY
+	// AND THE HEADER STICKS TO THE DOCUMENT TOP.
+	$: rootClass = surface ? 'flex min-h-0 flex-1 flex-col' : 'flex flex-col gap-4';
+	$: headerClass = cn(
+		'flex flex-col gap-3 border-b border-black/[0.06] pb-3 dark:border-white/[0.045]',
+		surface ? `shrink-0 pt-5 ${surface}` : `sticky top-0 z-20 pt-4 ${pageSurface}`,
+	);
+	// THE TABLE SCROLL AREA — THE ONLY SCROLLER IN DIALOG MODE; A TRANSPARENT PASS-THROUGH STANDALONE.
+	$: scrollClass = surface ? 'min-h-0 flex-1 overflow-y-auto py-4' : '';
+	$: footerClass = cn(
+		'flex flex-col gap-3 border-t border-black/[0.06] pt-3 text-sm dark:border-white/[0.045] sm:flex-row sm:items-center sm:justify-between',
+		surface ? `shrink-0 pb-5 ${surface}` : '',
+	);
 	// KEEP THE JUMP FIELD IN SYNC WITH THE CURRENT PAGE (USER EDITS IT THEN SUBMITS TO JUMP)
 	$: jumpValue = page;
 
 	// -- FUNCTIONS -- //
+
 	async function load() {
 		const token = ++loadToken;
 		loading = true;
@@ -209,20 +223,24 @@
 	}
 
 	// -- LIFECYCLES -- //
+
 	onMount(load);
+	onDestroy(() => clearTimeout(debounce));
 </script>
 
-<!-- GLOSSARY PANEL: PAGINATED, SEARCHABLE, IMPORT/EXPORT -->
-<div class="flex flex-col gap-4">
-	<!-- STICKY HEADER: TOOLBAR + SEARCH PIN TO THE TOP WHILE THE TERM LIST SCROLLS UNDER THEM -->
+<!-- GLOSSARY PANEL: PAGINATED, SEARCHABLE, IMPORT/EXPORT. IN A DIALOG IT IS A FLEX COLUMN WHOSE TABLE
+     AREA IS THE ONLY SCROLLER, KEEPING THE HEADER AND PAGINATION FOOTER FIXED. -->
+<div class={rootClass}>
+	<!-- FIXED HEADER: TOOLBAR + SEARCH (shrink-0 IN A DIALOG, STICKY ON A STANDALONE PAGE) -->
 	<div class={headerClass}>
 		<!-- TOOLBAR: ACTIONS ON ONE TIDY ROW, TERM COUNT RIGHT-ALIGNED (PREDICTABLE AT EVERY WIDTH) -->
 		<div class="grid grid-cols-2 items-center gap-2 sm:flex sm:flex-wrap">
 			<Button variant="primary" class="col-span-2 sm:col-auto" on:click={() => (showAdd = true)}>
 				<Plus size={14} /> Add term
 			</Button>
-			<Button on:click={() => fileInput.click()} disabled={busy}><Upload size={14} /> Import CSV</Button>
-			<Button href={exportHref(scope)}><Download size={14} /> Export</Button>
+			<!-- IMPORT USES Download (ARROW IN), EXPORT USES Upload (ARROW OUT) — ARROWS MATCH THE IN/OUT MEANING -->
+			<Button on:click={() => fileInput.click()} disabled={busy}><Download size={14} /> Import CSV</Button>
+			<Button href={exportHref(scope)}><Upload size={14} /> Export</Button>
 			<span class="col-span-2 text-center text-xs tabular-nums opacity-60 sm:col-auto sm:ml-auto sm:text-right">
 				{total.toLocaleString()} terms
 			</span>
@@ -248,69 +266,71 @@
 		</div>
 	</div>
 
-	<!-- TABLE -->
-	{#if loading && rows.length === 0}
-		<!-- FIRST LOAD ONLY — PAGINATION KEEPS THE CURRENT ROWS VISIBLE (JUST DIMMED) TO AVOID FLICKER -->
-		<p class="py-6 text-center text-sm opacity-50">Loading…</p>
-	{:else if rows.length === 0}
-		<p class="py-6 text-center text-sm opacity-50">
-			{query ? 'No matches.' : 'No terms yet — add or import some.'}
-		</p>
-	{:else}
-		<div
-			class="overflow-hidden rounded-xl border border-black/[0.06] transition-opacity dark:border-white/[0.045]"
-			class:opacity-50={loading}
-		>
-			<!-- COLUMN HEADERS — DESKTOP ONLY; ALIGN WITH THE ROW COLUMNS BELOW -->
+	<!-- TABLE SCROLL AREA: ONLY THIS REGION SCROLLS IN A DIALOG; HEADER AND FOOTER STAY FIXED -->
+	<div class={scrollClass}>
+		{#if loading && rows.length === 0}
+			<!-- FIRST LOAD ONLY — PAGINATION KEEPS THE CURRENT ROWS VISIBLE (JUST DIMMED) TO AVOID FLICKER -->
+			<p class="py-6 text-center text-sm opacity-50">Loading…</p>
+		{:else if rows.length === 0}
+			<p class="py-6 text-center text-sm opacity-50">
+				{query ? 'No matches.' : 'No terms yet — add or import some.'}
+			</p>
+		{:else}
 			<div
-				class="hidden items-center gap-3 border-b border-black/[0.06] bg-black/[0.02] px-2.5 py-2 text-[11px] font-semibold uppercase tracking-wide opacity-50 dark:border-white/[0.045] dark:bg-white/[0.02] sm:flex"
+				class="overflow-hidden rounded-xl border border-black/[0.06] transition-opacity dark:border-white/[0.045]"
+				class:opacity-50={loading}
 			>
-				<span class="flex-1">原文 · Raw</span>
-				<span class="flex-1">Translation</span>
-				<span class="w-36 shrink-0">Gender</span>
-				<span class="w-9 shrink-0" aria-hidden="true"></span>
-			</div>
-			<div class="divide-y divide-black/[0.06] dark:divide-white/[0.045]">
-				{#each rows as e (e.id)}
-					<!-- TERM ROW: STACKED CARD ON MOBILE, ALIGNED COLUMNS ON DESKTOP; CHANGES SAVE ON BLUR -->
-					<div
-						class="flex flex-col gap-2 p-2.5 transition-colors hover:bg-black/[0.015] dark:hover:bg-white/[0.015] sm:flex-row sm:items-center sm:gap-3 sm:p-2"
-					>
-						<input
-							bind:value={e.raw}
-							on:change={() => saveRow(e)}
-							placeholder="原文"
-							aria-label="Raw term (Chinese)"
-							class="w-full min-w-0 rounded-md border border-black/10 bg-transparent px-2.5 py-1.5 text-sm outline-none transition-colors hover:border-black/20 focus:border-sky-500 dark:border-white/[0.06] dark:hover:border-white/20 sm:flex-1"
-						/>
-						<input
-							bind:value={e.translation}
-							on:change={() => saveRow(e)}
-							placeholder="Translation"
-							aria-label="English translation"
-							class="w-full min-w-0 rounded-md border border-black/10 bg-transparent px-2.5 py-1.5 text-sm outline-none transition-colors hover:border-black/20 focus:border-sky-500 dark:border-white/[0.06] dark:hover:border-white/20 sm:flex-1"
-						/>
-						<!-- GENDER + DELETE SHARE A ROW ON MOBILE, BECOME ALIGNED COLUMNS ON DESKTOP (sm:contents) -->
-						<div class="flex items-center gap-2 sm:contents">
-							<Select
-								items={GENDER_ITEMS}
-								value={e.gender}
-								on:change={(ev) => setRowGender(e, ev.detail)}
-								class="flex-1 sm:w-36 sm:flex-none"
+				<!-- COLUMN HEADERS — DESKTOP ONLY; ALIGN WITH THE ROW COLUMNS BELOW -->
+				<div
+					class="hidden items-center gap-3 border-b border-black/[0.06] bg-black/[0.02] px-2.5 py-2 text-[11px] font-semibold uppercase tracking-wide opacity-50 dark:border-white/[0.045] dark:bg-white/[0.02] sm:flex"
+				>
+					<span class="flex-1">原文 · Raw</span>
+					<span class="flex-1">Translation</span>
+					<span class="w-36 shrink-0">Gender</span>
+					<span class="w-9 shrink-0" aria-hidden="true"></span>
+				</div>
+				<div class="divide-y divide-black/[0.06] dark:divide-white/[0.045]">
+					{#each rows as e (e.id)}
+						<!-- TERM ROW: STACKED CARD ON MOBILE, ALIGNED COLUMNS ON DESKTOP; CHANGES SAVE ON BLUR -->
+						<div
+							class="flex flex-col gap-2 p-2.5 transition-colors hover:bg-black/[0.015] dark:hover:bg-white/[0.015] sm:flex-row sm:items-center sm:gap-3 sm:p-2"
+						>
+							<input
+								bind:value={e.raw}
+								on:change={() => saveRow(e)}
+								placeholder="原文"
+								aria-label="Raw term (Chinese)"
+								class="w-full min-w-0 rounded-md border border-black/10 bg-transparent px-2.5 py-1.5 text-sm outline-none transition-colors hover:border-black/20 focus:border-sky-500 dark:border-white/[0.06] dark:hover:border-white/20 sm:flex-1"
 							/>
-							<Button variant="danger" size="sm" class="shrink-0" on:click={() => removeRow(e.id)}>
-								<Trash2 size={15} /><span class="sr-only">Delete term</span>
-							</Button>
+							<input
+								bind:value={e.translation}
+								on:change={() => saveRow(e)}
+								placeholder="Translation"
+								aria-label="English translation"
+								class="w-full min-w-0 rounded-md border border-black/10 bg-transparent px-2.5 py-1.5 text-sm outline-none transition-colors hover:border-black/20 focus:border-sky-500 dark:border-white/[0.06] dark:hover:border-white/20 sm:flex-1"
+							/>
+							<!-- GENDER + DELETE SHARE A ROW ON MOBILE, BECOME ALIGNED COLUMNS ON DESKTOP (sm:contents) -->
+							<div class="flex items-center gap-2 sm:contents">
+								<Select
+									items={GENDER_ITEMS}
+									value={e.gender}
+									on:change={(ev) => setRowGender(e, ev.detail)}
+									class="flex-1 sm:w-36 sm:flex-none"
+								/>
+								<Button variant="danger" size="sm" class="shrink-0" on:click={() => removeRow(e.id)}>
+									<Trash2 size={15} /><span class="sr-only">Delete term</span>
+								</Button>
+							</div>
 						</div>
-					</div>
-				{/each}
+					{/each}
+				</div>
 			</div>
-		</div>
+		{/if}
+	</div>
 
-		<!-- PAGINATION: rows-per-page + range on the left, page nav on the right; stacks cleanly on mobile -->
-		<div
-			class="flex flex-col gap-3 border-t border-black/[0.06] pt-3 text-sm dark:border-white/[0.045] sm:flex-row sm:items-center sm:justify-between"
-		>
+	<!-- PAGINATION FOOTER: FIXED (shrink-0) IN A DIALOG, NORMAL FLOW STANDALONE; SHOWN ONLY WHEN ROWS EXIST -->
+	{#if rows.length > 0}
+		<div class={footerClass}>
 			<!-- ROWS PER PAGE + RANGE -->
 			<div class="flex items-center justify-between gap-3 sm:justify-start">
 				<div class="flex items-center gap-2">
@@ -326,7 +346,7 @@
 					{rangeFrom.toLocaleString()}–{rangeTo.toLocaleString()} of {total.toLocaleString()}
 				</span>
 			</div>
-			<!-- PAGE NAV: first / prev / jump / next / last -->
+			<!-- PAGE NAV: FIRST / PREV / JUMP / NEXT / LAST -->
 			<div class="flex items-center justify-center gap-1.5 sm:justify-end">
 				<Button size="sm" class="hidden sm:inline-flex" disabled={page <= 1} on:click={() => gotoPage(1)}>
 					<ChevronsLeft size={16} /><span class="sr-only">First page</span>
