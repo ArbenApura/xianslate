@@ -51,9 +51,8 @@
 		role="dialog"
 		aria-modal="true"
 	>
-		<!-- BACKDROP DISMISS BUTTON -->
+		<!-- BACKDROP DISMISS BUTTON — NO RIPPLE (A FULL-SCREEN DISMISS SHOULDN'T FLASH A RIPPLE ON CLICK) -->
 		<button
-			use:ripple
 			class="absolute inset-0 bg-black/40 backdrop-blur-sm"
 			on:click={cancel}
 			aria-label="Cancel"

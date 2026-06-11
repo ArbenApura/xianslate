@@ -2,9 +2,10 @@
 
 ## Description
 
-A local web app that fetches Chinese web novels, builds a per-book and global glossary, and
-translates them to English with DeepSeek — wrapped in a cutting-edge, fully customizable,
-mobile-responsive reader.
+A local web app that fetches web novels in any supported language, builds a per-book and global
+glossary, and translates them with DeepSeek — wrapped in a cutting-edge, fully customizable,
+mobile-responsive reader. The translation direction is per-book data (source + target language),
+not a fixed Chinese→English assumption.
 
 ## Problem Statement
 
@@ -28,7 +29,12 @@ bilingual side-by-side view and glossaries to study.
 
 ## Scope Notes
 
--   Source language: Traditional Chinese (xianxia/xuanhuan); target: English.
+-   Languages are data, defined in `src/lib/languages.ts` (code, script, romanization, charset hints,
+    Accept-Language, TTS tag, reading speed). Initial set: Traditional/Simplified Chinese, Japanese,
+    Korean, English. Each book stores its own `sourceLang` + `targetLang`; a global default seeds new books.
+-   Prompts, source-script-leak repair, fetch charset/Accept-Language, fonts, TTS, and reading-time all
+    derive their behaviour from the book's language pair rather than a hardcoded Chinese→English direction.
 -   First supported source site: `uukanshu.cc` (fetch title, content, prev/next/index links).
--   Glossary supports CSV import/export; term schema is `raw`, `translation`, `gender`
-    (neuter | masculine | feminine), with per-book and global scopes (book overrides global).
+-   Glossary supports CSV import/export; term schema is `source`, `target`, `gender`
+    (neuter | masculine | feminine) plus `sourceLang`/`targetLang`, with per-book and global scopes (book
+    overrides global; global is partitioned per language pair). Legacy `raw`/`translation` CSV headers still import.

@@ -3,9 +3,10 @@ import type { ImportedBook } from '$lib/types';
 
 // -- CONSTANTS -- //
 
-// CHAPTER HEADING PATTERNS — CHINESE (第N章/節/回/卷...) AND ENGLISH (Chapter N), PLUS COMMON MARKERS
+// CHAPTER HEADING PATTERNS ACROSS LANGUAGES — CHINESE (第N章/節/回/卷…), JAPANESE (第N話, プロローグ…),
+// KOREAN (제N장/화, 프롤로그…), AND ENGLISH (Chapter N), PLUS COMMON SPECIAL-SECTION MARKERS.
 const HEADING =
-	/^\s*(?:第\s*[0-9零一二三四五六七八九十百千万億兩两]+\s*[章節节回卷部篇集]|Chapter\s+\d+|序章|楔子|序言|尾聲|尾声|後記|后记|番外)(?:[\s：:、.\-—].*)?$/i;
+	/^\s*(?:第\s*[0-9零一二三四五六七八九十百千万億兩两]+\s*[章節节回卷部篇集話话]|제\s*[0-9]+\s*[장화권부편]|Chapter\s+\d+|序章|楔子|序言|尾聲|尾声|後記|后记|番外|閑話|プロローグ|エピローグ|あとがき|프롤로그|에필로그|외전)(?:[\s：:、.\-—].*)?$/i;
 
 // -- FUNCTIONS -- //
 
@@ -19,7 +20,7 @@ function buildContent(lines: string[]): string {
 // SPLIT A PLAIN-TEXT NOVEL INTO ORDERED CHAPTERS BY HEADING LINES
 export function importTxt(text: string, fallbackTitle: string): ImportedBook {
 	const lines = text.replace(/\r\n?/g, '\n').split('\n');
-	const chapters: { titleZh: string; contentZh: string }[] = [];
+	const chapters: { titleSource: string; contentSource: string }[] = [];
 
 	let currentTitle: string | null = null;
 	let hadHeading = false; // WHETHER THE CURRENT CHAPTER WAS OPENED BY A REAL HEADING (VS. THE FALLBACK)
@@ -28,7 +29,7 @@ export function importTxt(text: string, fallbackTitle: string): ImportedBook {
 	const flush = () => {
 		const content = buildContent(buf);
 		if (content.length > 0) {
-			chapters.push({ titleZh: (currentTitle ?? fallbackTitle).trim(), contentZh: content });
+			chapters.push({ titleSource: (currentTitle ?? fallbackTitle).trim(), contentSource: content });
 			pending.push({ title: currentTitle, hadHeading });
 		}
 		buf = [];
@@ -58,14 +59,14 @@ export function importTxt(text: string, fallbackTitle: string): ImportedBook {
 			sourceType: 'txt',
 			title: fallbackTitle,
 			author: null,
-			chapters: [{ titleZh: fallbackTitle, contentZh: content }],
+			chapters: [{ titleSource: fallbackTitle, contentSource: content }],
 		};
 	}
 
 	// RE-NUMBER CHAPTERS THAT HAD NO REAL HEADING (THEY OTHERWISE ALL CARRY THE SAME fallbackTitle, WHICH
 	// READS AS DUPLICATES IN THE TOC). CHAPTERS OPENED BY A REAL HEADING KEEP THEIR HEADING TEXT.
 	chapters.forEach((c, i) => {
-		if (!pending[i]?.hadHeading) c.titleZh = `第 ${i + 1} 章`;
+		if (!pending[i]?.hadHeading) c.titleSource = `Chapter ${i + 1}`;
 	});
 
 	return { sourceType: 'txt', title: fallbackTitle, author: null, chapters };

@@ -33,7 +33,6 @@
 		role="button"
 		tabindex="-1"
 		aria-label="Close contents"
-		use:ripple
 		on:click={() => dispatch('close')}
 		on:keydown={(e) => e.key === 'Escape' && dispatch('close')}
 		transition:fade={{ duration: 150 }}

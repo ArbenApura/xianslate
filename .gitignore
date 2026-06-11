@@ -11,9 +11,17 @@ vite.config.ts.timestamp-*
 *.db
 *.db-shm
 *.db-wal
+*.bak-*
+*.recovered-*
 
 # DEV / TEST ARTIFACTS
 *.log
 *.log.err
 sse-test.txt
 sse-cache.txt
+tools/run-fetch-test.mjs
+tools/learned-maps.json
+tools/run-cover-test.mjs
+
+# NPM LOCKFILE — PROJECT USES YARN
+package-lock.json

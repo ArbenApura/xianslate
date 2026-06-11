@@ -3,8 +3,9 @@ import { error, json } from '@sveltejs/kit';
 // IMPORTED TYPES
 import type { RequestHandler } from './$types';
 // IMPORTED MODULES
+import { DEFAULT_SOURCE_LANG, DEFAULT_TARGET_LANG } from '$lib/languages';
 import { parseGlossaryCsv } from '$lib/server/glossary-csv';
-import { mergeGlossary } from '$lib/server/glossary';
+import { bookPair, mergeGlossary } from '$lib/server/glossary';
 import { getBook } from '$lib/server/books';
 import { decodeTextBytes } from '$lib/server/charset';
 import { assertMaxSize, MB } from '$lib/server/uploads';
@@ -23,6 +24,15 @@ export const POST: RequestHandler = async ({ request }) => {
 	// VALIDATE THE TARGET BOOK EXISTS — OTHERWISE BOOK-SCOPE ROWS EITHER ORPHAN OR HIT AN FK 500.
 	if (scope === 'book' && bookId && !(await getBook(bookId))) throw error(404, 'Target book not found.');
 
+	// THE PAIR THESE ROWS BELONG TO: BOOK SCOPE INHERITS THE BOOK'S; GLOBAL USES THE FORM PAIR (DEFAULT).
+	const pair =
+		scope === 'book'
+			? await bookPair(bookId!)
+			: {
+					sourceLang: (form?.get('sourceLang') as string | null) || DEFAULT_SOURCE_LANG,
+					targetLang: (form?.get('targetLang') as string | null) || DEFAULT_TARGET_LANG,
+				};
+
 	// PARSE (CLIENT ERROR → 400) IS SEPARATED FROM THE DB MERGE (SERVER ERROR → 500) SO A DB FAILURE ISN'T
 	// MISREPORTED AS A BAD UPLOAD AND ITS INTERNAL MESSAGE ISN'T LEAKED TO THE CLIENT.
 	let terms;
@@ -32,8 +42,8 @@ export const POST: RequestHandler = async ({ request }) => {
 	} catch (e) {
 		throw error(400, e instanceof Error ? e.message : 'Failed to parse glossary CSV.');
 	}
-	if (terms.length === 0) throw error(400, 'No valid rows found (need raw,translation columns).');
+	if (terms.length === 0) throw error(400, 'No valid rows found (need source,target columns).');
 
-	const result = await mergeGlossary(scope, bookId, terms);
+	const result = await mergeGlossary(scope, bookId, terms, pair);
 	return json({ ...result, parsed: terms.length });
 };

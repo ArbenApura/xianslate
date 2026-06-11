@@ -1,12 +1,13 @@
 // IMPORTED DEP-TYPES
 import type { SQLiteColumn } from 'drizzle-orm/sqlite-core';
 // IMPORTED TYPES
-import type { Gender, GlossaryScope, TermDraft } from '$lib/types';
+import type { Gender, GlossaryScope, LangPair, TermDraft } from '$lib/types';
 // IMPORTED DEP-MODULES
 import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 // IMPORTED MODULES
+import { getLanguage, type Language } from '$lib/languages';
 import { db } from './db';
-import { glossary, type GlossaryEntry } from './db/schema';
+import { books, glossary, type GlossaryEntry } from './db/schema';
 import { deepseek, MODEL, hasApiKey, queued, thinkingParam, withRetry } from './deepseek';
 import { invalidateAll, invalidateBook } from './glossary-match';
 
@@ -14,25 +15,34 @@ import { invalidateAll, invalidateBook } from './glossary-match';
 
 const GENDERS: Gender[] = ['neuter', 'masculine', 'feminine'];
 
-const EXTRACT_SYSTEM = `You build a translation glossary from a passage of a Traditional Chinese web novel (xianxia / xuanhuan / wuxia).
+// PARAMETERIZED EXTRACTION PROMPT — THE DIRECTION (WAS HARDCODED TRADITIONAL CHINESE → ENGLISH) NOW COMES
+// FROM THE BOOK'S LANGUAGE PAIR.
+function extractSystem(src: Language, tgt: Language): string {
+	const roman =
+		tgt.script === 'latin' && src.romanization
+			? ` Romanize personal names with ${src.romanization} (no tone marks).`
+			: '';
+	return `You build a translation glossary from a passage of a ${src.name} web/light novel.
 
 Return ONLY a JSON object of exactly this shape — no markdown, no comments, no extra text:
-{"terms":[{"raw":"<chinese copied verbatim from the passage>","translation":"<natural English>","gender":"neuter|masculine|feminine"}]}
+{"terms":[{"source":"<${src.name} copied verbatim from the passage>","target":"<natural ${tgt.name}>","gender":"neuter|masculine|feminine","context":"<short ${tgt.name} note>"}]}
 
 Capture the recurring PROPER NOUNS and setting-specific TERMS that must stay consistent across the whole book:
 - People: character names and distinctive epithets / forms of address.
-- Places: realms, regions, cities, mountains, palaces, halls, sect locations.
-- Organizations: sects, clans, factions, orders, families.
-- Powers: cultivation techniques, martial / sword / fist arts, skills, spells, bloodlines.
+- Places: realms, regions, cities, mountains, palaces, halls, sect/guild locations.
+- Organizations: sects, clans, factions, orders, guilds, families.
+- Powers: cultivation/martial techniques, arts, skills, spells, bloodlines, classes.
 - Items: artifacts, weapons, pills, treasures, manuals.
-- World terms: cultivation realms / ranks, named creatures, unique concepts.
+- World terms: ranks/realms, named creatures, unique concepts.
 
 Hard rules:
-- "raw" MUST be copied EXACTLY as it appears in the passage — identical characters, no added or removed spaces or punctuation — so it can be found again by exact string match. Prefer the bare name over a name + title combination.
-- "translation" must be natural, idiomatic English that reads smoothly INSIDE a sentence, the way a professional novelist-translator would write it — never a stiff word-for-word gloss. Use Title Case for proper nouns. Romanize personal names with pinyin and NO tone marks (李澈 → "Li Che", 蘇媚 → "Su Mei"). Translate meaningful terms by sense and keep them concise (龍象金剛 → "Dragon-Elephant Vajra", 洞天 → "Cave Heaven", 結丹 → "Core Formation").
-- "gender": masculine or feminine ONLY for an individual person whose gender is clear from the passage; everything else is neuter.
+- "source" MUST be copied EXACTLY as it appears in the passage — identical characters, no added or removed spaces or punctuation — so it can be found again by exact string match. Prefer the bare name over a name + title combination.
+- "target" must be natural, idiomatic ${tgt.name} that reads smoothly INSIDE a sentence, the way a professional novelist-translator would write it — never a stiff word-for-word gloss. Use Title Case for proper nouns where ${tgt.name} uses casing.${roman} Translate meaningful terms by sense and keep them concise.
+- "gender": set "masculine" or "feminine" ONLY when the passage itself makes that person's gender explicit — through gendered pronouns used for them, or gendered honorifics / titles / role or kinship words referring to them (e.g. emperor, king, prince, young master, lord, father, brother, son, husband → masculine; empress, queen, princess, concubine, young miss, lady, mother, sister, daughter, wife → feminine). Do NOT infer gender from the characters, surname, or spelling of the name itself, and do NOT guess from vibes or stereotypes. If the passage gives no explicit gendered reference for that exact person, use "neuter". When in any doubt, use "neuter" — a wrong masculine/feminine tag forces wrong pronouns throughout the translation, so only commit to a gender when the textual evidence is unambiguous. (Non-persons — places, items, organizations, techniques — are ALWAYS "neuter".)
+- "context": a SHORT ${tgt.name} note (a phrase, ≤ 12 words) that helps a translator render this term correctly later — who a character is and their relationships/role, what kind of thing a term is, its tone/register, or a disambiguation from similar terms. Be concrete and specific to THIS book. Omit only when the term is wholly self-explanatory; prefer to fill it in for names and distinctive terms.
 - Skip common words, generic vocabulary, pronouns, numbers, and anything that is not a name or distinctive term. Favor quality and consistency over sheer count.
-- CONSISTENCY: if an "ESTABLISHED GLOSSARY" message is provided, treat those translations as FIXED. Reuse the exact English for any of those terms that appear, and translate any NEW related term to match that wording and style (shared name components, naming conventions) so the book stays consistent. Never contradict an established translation.`;
+- CONSISTENCY: if an "ESTABLISHED GLOSSARY" message is provided, treat those translations as FIXED. Reuse the exact ${tgt.name} for any of those terms that appear, and translate any NEW related term to match that wording and style (shared name components, naming conventions) so the book stays consistent. Never contradict an established translation.`;
+}
 
 const EXTRACT_CHUNK_CHARS = 9000;
 
@@ -52,8 +62,17 @@ function invalidate(scope: GlossaryScope, bookId: string | null): void {
 	else if (bookId) invalidateBook(bookId);
 }
 
-// SPLIT THE WHOLE CHAPTER INTO PARAGRAPH-ALIGNED CHUNKS SO EVERY PART IS SCANNED FOR TERMS — THE OLD
-// SINGLE 12k SLICE MISSED EVERYTHING PAST IT IN LONG CHAPTERS.
+// READ A BOOK'S TRANSLATION DIRECTION — THE PAIR ITS GLOSSARY ROWS BELONG TO.
+export async function bookPair(bookId: string): Promise<LangPair> {
+	const [b] = await db
+		.select({ sourceLang: books.sourceLang, targetLang: books.targetLang })
+		.from(books)
+		.where(eq(books.id, bookId))
+		.limit(1);
+	return { sourceLang: b?.sourceLang ?? 'zh-Hant', targetLang: b?.targetLang ?? 'en' };
+}
+
+// SPLIT THE WHOLE CHAPTER INTO PARAGRAPH-ALIGNED CHUNKS SO EVERY PART IS SCANNED FOR TERMS.
 function chunkForExtraction(content: string): string[] {
 	const paras = content.split(/\n{2,}/).filter((p) => p.trim().length > 0);
 	if (paras.length === 0) return content.trim() ? [content] : [];
@@ -95,30 +114,68 @@ function parseTermObjects(text: string): unknown[] {
 	return objs;
 }
 
-// ROWS FOR A SINGLE SCOPE (EDITOR VIEW)
-export async function getGlossary(scope: GlossaryScope, bookId: string | null): Promise<GlossaryEntry[]> {
-	const where =
-		scope === 'global'
-			? and(eq(glossary.scope, 'global'), isNull(glossary.bookId))
-			: and(eq(glossary.scope, 'book'), eq(glossary.bookId, bookId!));
-	return db.select().from(glossary).where(where).orderBy(glossary.raw);
+// WHERE CLAUSE FOR ONE SCOPE. GLOBAL ROWS ARE FILTERED TO A LANGUAGE PAIR SO A CHINESE GLOSSARY NEVER
+// SHOWS UP WHILE EDITING A JAPANESE ONE; BOOK ROWS ARE IMPLICITLY SINGLE-PAIR (TIED TO THE BOOK).
+function scopeWhere(scope: GlossaryScope, bookId: string | null, pair?: LangPair) {
+	if (scope === 'global') {
+		const base = and(eq(glossary.scope, 'global'), isNull(glossary.bookId));
+		if (!pair) return base;
+		return and(base, eq(glossary.sourceLang, pair.sourceLang), eq(glossary.targetLang, pair.targetLang));
+	}
+	return and(eq(glossary.scope, 'book'), eq(glossary.bookId, bookId!));
 }
 
-// EFFECTIVE GLOSSARY FOR A BOOK = global ∪ book, WITH book OVERRIDING global ON THE SAME raw
+// ROWS FOR A SINGLE SCOPE (EDITOR VIEW)
+export async function getGlossary(
+	scope: GlossaryScope,
+	bookId: string | null,
+	pair?: LangPair,
+): Promise<GlossaryEntry[]> {
+	return db
+		.select()
+		.from(glossary)
+		.where(scopeWhere(scope, bookId, pair))
+		.orderBy(glossary.source);
+}
+
+// EFFECTIVE GLOSSARY FOR A BOOK = global(SAME PAIR) ∪ book, WITH book OVERRIDING global ON THE SAME source.
 export async function getEffectiveGlossary(bookId: string): Promise<TermDraft[]> {
+	const pair = await bookPair(bookId);
 	const globals = await db
 		.select()
 		.from(glossary)
-		.where(and(eq(glossary.scope, 'global'), isNull(glossary.bookId)));
+		.where(
+			and(
+				eq(glossary.scope, 'global'),
+				isNull(glossary.bookId),
+				eq(glossary.sourceLang, pair.sourceLang),
+				eq(glossary.targetLang, pair.targetLang),
+			),
+		);
 	const bookRows = await db
 		.select()
 		.from(glossary)
 		.where(and(eq(glossary.scope, 'book'), eq(glossary.bookId, bookId)));
 
 	const map = new Map<string, TermDraft>();
-	for (const g of globals) map.set(g.raw, { raw: g.raw, translation: g.translation, gender: g.gender, tags: g.tags });
+	for (const g of globals)
+		map.set(g.source, {
+			source: g.source,
+			target: g.target,
+			gender: g.gender,
+			context: g.context,
+			tags: g.tags,
+			createdAt: g.createdAt,
+		});
 	for (const b of bookRows)
-		map.set(b.raw, { raw: b.raw, translation: b.translation, gender: b.gender, tags: b.tags });
+		map.set(b.source, {
+			source: b.source,
+			target: b.target,
+			gender: b.gender,
+			context: b.context,
+			tags: b.tags,
+			createdAt: b.createdAt,
+		});
 	return [...map.values()];
 }
 
@@ -126,22 +183,17 @@ export async function getEffectiveGlossary(bookId: string): Promise<TermDraft[]>
 export async function getGlossaryPage(
 	scope: GlossaryScope,
 	bookId: string | null,
-	opts: { q?: string; limit: number; offset: number },
+	opts: { q?: string; limit: number; offset: number; pair?: LangPair },
 ): Promise<{ rows: GlossaryEntry[]; total: number }> {
-	const scopeWhere =
-		scope === 'global'
-			? and(eq(glossary.scope, 'global'), isNull(glossary.bookId))
-			: and(eq(glossary.scope, 'book'), eq(glossary.bookId, bookId!));
+	const base = scopeWhere(scope, bookId, opts.pair);
 	const q = opts.q?.trim();
-	const where = q
-		? and(scopeWhere, or(likeContains(glossary.raw, q), likeContains(glossary.translation, q)))
-		: scopeWhere;
+	const where = q ? and(base, or(likeContains(glossary.source, q), likeContains(glossary.target, q))) : base;
 
 	const rows = await db
 		.select()
 		.from(glossary)
 		.where(where)
-		.orderBy(glossary.raw)
+		.orderBy(glossary.source)
 		.limit(opts.limit)
 		.offset(opts.offset);
 	const [c] = await db
@@ -151,27 +203,31 @@ export async function getGlossaryPage(
 	return { rows, total: Number(c?.n ?? 0) };
 }
 
-export async function countGlossary(scope: GlossaryScope, bookId: string | null): Promise<number> {
-	const where =
-		scope === 'global'
-			? and(eq(glossary.scope, 'global'), isNull(glossary.bookId))
-			: and(eq(glossary.scope, 'book'), eq(glossary.bookId, bookId!));
+export async function countGlossary(scope: GlossaryScope, bookId: string | null, pair?: LangPair): Promise<number> {
 	const [r] = await db
 		.select({ n: sql<number>`count(*)` })
 		.from(glossary)
-		.where(where);
+		.where(scopeWhere(scope, bookId, pair));
 	return Number(r?.n ?? 0);
 }
 
-export async function addTerm(scope: GlossaryScope, bookId: string | null, draft: TermDraft): Promise<GlossaryEntry> {
+export async function addTerm(
+	scope: GlossaryScope,
+	bookId: string | null,
+	draft: TermDraft,
+	pair: LangPair,
+): Promise<GlossaryEntry> {
 	const [row] = await db
 		.insert(glossary)
 		.values({
 			scope,
 			bookId: scope === 'global' ? null : bookId,
-			raw: draft.raw.trim(),
-			translation: draft.translation.trim(),
+			sourceLang: pair.sourceLang,
+			targetLang: pair.targetLang,
+			source: draft.source.trim(),
+			target: draft.target.trim(),
 			gender: draft.gender,
+			context: draft.context?.trim() || null,
 			tags: draft.tags ?? null,
 		})
 		.returning();
@@ -185,9 +241,11 @@ export async function updateTerm(id: number, patch: Partial<TermDraft>): Promise
 	const [row] = await db
 		.update(glossary)
 		.set({
-			raw: patch.raw?.trim() ?? existing.raw,
-			translation: patch.translation?.trim() ?? existing.translation,
+			source: patch.source?.trim() ?? existing.source,
+			target: patch.target?.trim() ?? existing.target,
 			gender: patch.gender ?? existing.gender,
+			// UNDEFINED = LEAVE AS-IS; AN EMPTY STRING CLEARS THE NOTE (→ null)
+			context: patch.context === undefined ? existing.context : patch.context?.trim() || null,
 			tags: patch.tags === undefined ? existing.tags : patch.tags,
 			updatedAt: Date.now(),
 		})
@@ -209,35 +267,40 @@ export async function mergeGlossary(
 	scope: GlossaryScope,
 	bookId: string | null,
 	terms: TermDraft[],
+	pair: LangPair,
 ): Promise<{ added: number; updated: number }> {
 	if (terms.length === 0) return { added: 0, updated: 0 };
 	const effBookId = scope === 'global' ? null : bookId;
 
-	// DE-DUPE BY raw (LAST-WINS) BEFORE BATCHING: TWO ROWS WITH THE SAME raw IN ONE INSERT THROW SQLite's
-	// "ON CONFLICT ... cannot affect row a second time" AND 400 THE WHOLE IMPORT.
+	// DE-DUPE BY source (LAST-WINS) BEFORE BATCHING: TWO ROWS WITH THE SAME source IN ONE INSERT THROW
+	// SQLite's "ON CONFLICT ... cannot affect row a second time" AND 400 THE WHOLE IMPORT.
 	const now = Date.now();
-	const byRaw = new Map<string, typeof glossary.$inferInsert>();
+	const bySource = new Map<string, typeof glossary.$inferInsert>();
 	for (const t of terms) {
-		const raw = t.raw.trim();
-		const translation = t.translation.trim();
-		if (!raw || !translation) continue;
-		byRaw.set(raw, {
+		const source = t.source.trim();
+		const target = t.target.trim();
+		if (!source || !target) continue;
+		bySource.set(source, {
 			scope,
 			bookId: effBookId,
-			raw,
-			translation,
+			sourceLang: pair.sourceLang,
+			targetLang: pair.targetLang,
+			source,
+			target,
 			gender: t.gender,
+			context: t.context?.trim() || null,
 			tags: t.tags ?? null,
 			createdAt: now,
 			updatedAt: now,
 		});
 	}
-	const rows = [...byRaw.values()];
+	const rows = [...bySource.values()];
 	if (rows.length === 0) return { added: 0, updated: 0 };
 
 	const set = {
-		translation: sql`excluded.translation`,
+		target: sql`excluded.target`,
 		gender: sql`excluded.gender`,
+		context: sql`excluded.context`,
 		tags: sql`excluded.tags`,
 		updatedAt: sql`excluded.updated_at`,
 	};
@@ -247,14 +310,11 @@ export async function mergeGlossary(
 	// THE added/updated ACCOUNTING.
 	const CHUNK = 200;
 	const counts = await db.transaction(async (tx) => {
-		const scopeWhere =
-			scope === 'global'
-				? and(eq(glossary.scope, 'global'), isNull(glossary.bookId))
-				: and(eq(glossary.scope, 'book'), eq(glossary.bookId, bookId!));
+		const where = scopeWhere(scope, bookId, scope === 'global' ? pair : undefined);
 		const [b] = await tx
 			.select({ n: sql<number>`count(*)` })
 			.from(glossary)
-			.where(scopeWhere);
+			.where(where);
 		const before = Number(b?.n ?? 0);
 
 		for (let i = 0; i < rows.length; i += CHUNK) {
@@ -263,13 +323,17 @@ export async function mergeGlossary(
 				await tx
 					.insert(glossary)
 					.values(slice)
-					.onConflictDoUpdate({ target: glossary.raw, targetWhere: sql`${glossary.scope} = 'global'`, set });
+					.onConflictDoUpdate({
+						target: [glossary.sourceLang, glossary.targetLang, glossary.source],
+						targetWhere: sql`${glossary.scope} = 'global'`,
+						set,
+					});
 			} else {
 				await tx
 					.insert(glossary)
 					.values(slice)
 					.onConflictDoUpdate({
-						target: [glossary.bookId, glossary.raw],
+						target: [glossary.bookId, glossary.source],
 						targetWhere: sql`${glossary.scope} = 'book'`,
 						set,
 					});
@@ -279,7 +343,7 @@ export async function mergeGlossary(
 		const [a] = await tx
 			.select({ n: sql<number>`count(*)` })
 			.from(glossary)
-			.where(scopeWhere);
+			.where(where);
 		return { before, after: Number(a?.n ?? 0) };
 	});
 
@@ -287,31 +351,37 @@ export async function mergeGlossary(
 	return { added, updated: rows.length - added };
 }
 
-// SAVE ONLY *NEW* TERMS INTO A BOOK'S GLOSSARY — TERMS WHOSE raw ALREADY EXISTS IN THE EFFECTIVE
-// GLOSSARY (BOOK ∪ GLOBAL) ARE SKIPPED, NEVER OVERWRITTEN. THIS KEEPS ESTABLISHED TRANSLATIONS STABLE
-// SO EXTRACTION CAN'T "TAMPER" A TERM YOU ALREADY HAVE; IT ONLY ADDS WHAT'S GENUINELY MISSING.
+// SAVE ONLY *NEW* TERMS INTO A BOOK'S GLOSSARY — TERMS WHOSE source ALREADY EXISTS IN THE EFFECTIVE
+// GLOSSARY (BOOK ∪ GLOBAL OF THE SAME PAIR) ARE SKIPPED, NEVER OVERWRITTEN. KEEPS ESTABLISHED
+// TRANSLATIONS STABLE SO EXTRACTION CAN'T "TAMPER" A TERM YOU ALREADY HAVE; IT ONLY ADDS WHAT'S MISSING.
 export async function addNewTerms(bookId: string, terms: TermDraft[]): Promise<{ added: number; skipped: number }> {
 	if (terms.length === 0) return { added: 0, skipped: 0 };
-	// LOOK UP ONLY THE raws WE'RE ABOUT TO ADD (BOOK ∪ GLOBAL), NOT THE WHOLE 7000-TERM GLOSSARY.
-	const rawList = [...new Set(terms.map((t) => t.raw.trim()).filter(Boolean))];
-	const existing = rawList.length
+	const pair = await bookPair(bookId);
+	// LOOK UP ONLY THE sources WE'RE ABOUT TO ADD (BOOK ∪ GLOBAL-OF-PAIR), NOT THE WHOLE GLOSSARY.
+	const sourceList = [...new Set(terms.map((t) => t.source.trim()).filter(Boolean))];
+	const existing = sourceList.length
 		? await db
-				.select({ raw: glossary.raw })
+				.select({ source: glossary.source })
 				.from(glossary)
 				.where(
 					and(
-						inArray(glossary.raw, rawList),
+						inArray(glossary.source, sourceList),
 						or(
-							and(eq(glossary.scope, 'global'), isNull(glossary.bookId)),
+							and(
+								eq(glossary.scope, 'global'),
+								isNull(glossary.bookId),
+								eq(glossary.sourceLang, pair.sourceLang),
+								eq(glossary.targetLang, pair.targetLang),
+							),
 							and(eq(glossary.scope, 'book'), eq(glossary.bookId, bookId)),
 						),
 					),
 				)
 		: [];
-	const known = new Set(existing.map((e) => e.raw));
-	const fresh = terms.filter((t) => !known.has(t.raw.trim()));
+	const known = new Set(existing.map((e) => e.source));
+	const fresh = terms.filter((t) => !known.has(t.source.trim()));
 	const skipped = terms.length - fresh.length;
-	const { added } = await mergeGlossary('book', bookId, fresh);
+	const { added } = await mergeGlossary('book', bookId, fresh, pair);
 	return { added, skipped };
 }
 
@@ -319,67 +389,93 @@ export async function addNewTerms(bookId: string, terms: TermDraft[]): Promise<{
 // `known` = THE BOOK'S EXISTING EFFECTIVE GLOSSARY; THE TERMS AMONG IT THAT APPEAR IN EACH CHUNK ARE
 // FED TO THE MODEL AS AN "ESTABLISHED GLOSSARY" SO NEW TERMS ARE TRANSLATED CONSISTENTLY WITH THEM.
 export async function extractTerms(
-	contentZh: string,
+	contentSource: string,
+	pair: LangPair,
 	known: TermDraft[] = [],
 	signal?: AbortSignal,
+	// PROGRESS CALLBACK — FIRED AFTER EACH CHUNK SO THE READER CAN SHOW "scanned 2/5 · 14 terms".
+	onProgress?: (done: number, total: number, terms: number) => void,
 ): Promise<TermDraft[]> {
 	if (!hasApiKey()) throw new Error('DEEPSEEK_API_KEY is not configured.');
-	const chunks = chunkForExtraction(contentZh);
-	const byRaw = new Map<string, TermDraft>();
+	const src = getLanguage(pair.sourceLang);
+	const tgt = getLanguage(pair.targetLang);
+	const system = extractSystem(src, tgt);
+	const chunks = chunkForExtraction(contentSource);
+	const bySource = new Map<string, TermDraft>();
+	// ANNOUNCE THE TOTAL WORK UP FRONT (0 DONE) SO THE READER CAN SHOW THE FULL SCOPE IMMEDIATELY.
+	onProgress?.(0, chunks.length, 0);
 
-	for (const chunk of chunks) {
+	for (let i = 0; i < chunks.length; i++) {
+		const chunk = chunks[i];
 		// CONNECTED CONTEXT = THE DB GLOSSARY *PLUS* TERMS ALREADY EXTRACTED IN EARLIER CHUNKS OF THIS
-		// RUN, FILTERED TO THOSE APPEARING IN THIS CHUNK. THIS KEEPS LATER CHUNKS CONSISTENT WITH EARLIER
-		// ONES (NO SAME-TERM DRIFT ACROSS CHUNKS) AND WITH WHAT'S ALREADY SAVED.
+		// RUN, FILTERED TO THOSE APPEARING IN THIS CHUNK. KEEPS LATER CHUNKS CONSISTENT WITH EARLIER ONES.
 		const established = new Map<string, TermDraft>();
-		for (const t of byRaw.values()) established.set(t.raw, t); // THIS RUN'S EARLIER CHUNKS
-		for (const t of known) established.set(t.raw, t); // DB-FIXED TERMS TAKE PRECEDENCE
-		const ctx = [...established.values()].filter((t) => t.raw && chunk.includes(t.raw)).slice(0, MAX_CONTEXT_TERMS);
-		const messages: { role: 'system' | 'user'; content: string }[] = [{ role: 'system', content: EXTRACT_SYSTEM }];
+		for (const t of bySource.values()) established.set(t.source, t); // THIS RUN'S EARLIER CHUNKS
+		for (const t of known) established.set(t.source, t); // DB-FIXED TERMS TAKE PRECEDENCE
+		const ctx = [...established.values()]
+			.filter((t) => t.source && chunk.includes(t.source))
+			.slice(0, MAX_CONTEXT_TERMS);
+		const messages: { role: 'system' | 'user'; content: string }[] = [{ role: 'system', content: system }];
 		if (ctx.length) {
 			messages.push({
 				role: 'system',
 				content:
 					'ESTABLISHED GLOSSARY (already saved — keep these EXACT and stay consistent with them):\n' +
-					ctx.map((t) => `${t.raw} = ${t.translation}`).join('\n'),
+					ctx.map((t) => `${t.source} = ${t.target}`).join('\n'),
 			});
 		}
 		messages.push({ role: 'user', content: chunk });
 
 		let text = '{}';
 		try {
-			const res = await queued(() =>
-				withRetry(() =>
+			// STREAM THE EXTRACTION SO THE READER SEES TERMS TICK UP LIVE — A SINGLE NON-STREAMED CALL LEAVES
+			// THE UI "STUCK" ON Scanning… FOR THE WHOLE CALL (ESPECIALLY ON A ONE-CHUNK CHAPTER). WE COUNT
+			// "source" KEYS AS THEY ARRIVE FOR A RUNNING FOUND-COUNT; THE DEDUPED COUNT IS REPORTED AFTER THE
+			// FINAL PARSE BELOW.
+			let acc = '';
+			await queued(async () => {
+				const stream = await withRetry(() =>
 					deepseek.chat.completions.create(
 						{
 							model: MODEL,
 							temperature: 0,
 							max_tokens: 4096,
 							response_format: { type: 'json_object' },
+							stream: true,
 							messages,
 							...thinkingParam(),
 						},
 						{ signal },
 					),
-				),
-			);
-			text = res.choices[0]?.message?.content ?? '{}';
+				);
+				for await (const part of stream) {
+					const d = part.choices[0]?.delta?.content ?? '';
+					if (!d) continue;
+					acc += d;
+					const live = bySource.size + (acc.match(/"source"\s*:/g)?.length ?? 0);
+					onProgress?.(i, chunks.length, live);
+				}
+			});
+			text = acc || '{}';
 		} catch {
-			// ONE CHUNK FAILING MUST NOT LOSE THE TERMS FROM THE REST OF THE CHAPTER
-			continue;
+			// ONE CHUNK FAILING MUST NOT LOSE THE TERMS FROM THE REST OF THE CHAPTER — text STAYS '{}'
+			// (NO TERMS FROM THIS CHUNK) AND WE STILL REPORT PROGRESS BELOW.
+			text = '{}';
 		}
 		for (const item of parseTermObjects(text)) {
-			const t = item as { raw?: unknown; translation?: unknown; gender?: unknown };
-			const rawTerm = String(t?.raw ?? '').trim();
-			const translation = String(t?.translation ?? '').trim();
-			if (!rawTerm || !translation) continue;
-			// ONLY KEEP TERMS WHOSE raw ACTUALLY APPEARS IN THE CHAPTER — OTHERWISE AHO-CORASICK CAN
+			const t = item as { source?: unknown; target?: unknown; gender?: unknown; context?: unknown };
+			const sourceTerm = String(t?.source ?? '').trim();
+			const target = String(t?.target ?? '').trim();
+			if (!sourceTerm || !target) continue;
+			// ONLY KEEP TERMS WHOSE source ACTUALLY APPEARS IN THE CHAPTER — OTHERWISE AHO-CORASICK CAN
 			// NEVER MATCH THEM (THE MODEL SOMETIMES NORMALIZES OR INVENTS A VARIANT FORM).
-			if (!contentZh.includes(rawTerm)) continue;
-			if (byRaw.has(rawTerm)) continue; // FIRST OCCURRENCE WINS (STABLE)
+			if (!contentSource.includes(sourceTerm)) continue;
+			if (bySource.has(sourceTerm)) continue; // FIRST OCCURRENCE WINS (STABLE)
 			const gender = (GENDERS.includes(t?.gender as Gender) ? t.gender : 'neuter') as Gender;
-			byRaw.set(rawTerm, { raw: rawTerm, translation, gender });
+			const context = String(t?.context ?? '').trim() || null;
+			bySource.set(sourceTerm, { source: sourceTerm, target, gender, context });
 		}
+		onProgress?.(i + 1, chunks.length, bySource.size);
 	}
-	return [...byRaw.values()];
+	return [...bySource.values()];
 }

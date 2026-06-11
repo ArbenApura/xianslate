@@ -16,24 +16,37 @@ export const load: PageServerLoad = async ({ params }) => {
 
 	const list = await db
 		.select({
+			id: chapters.id,
 			uuid: chapters.uuid,
 			seq: chapters.seq,
-			titleZh: chapters.titleZh,
-			titleEn: chapters.titleEn,
-			contentEn: chapters.contentEn,
+			titleSource: chapters.titleSource,
+			titleTarget: chapters.titleTarget,
+			contentTarget: chapters.contentTarget,
+			readProgress: chapters.readProgress,
 		})
 		.from(chapters)
 		.where(eq(chapters.bookId, book.id))
 		.orderBy(asc(chapters.seq));
 
+	// THE RESUME POINT (BOOK'S lastChapterId) → ITS uuid, SO THE LISTING CAN MARK READING PROGRESS LIKE THE READER
+	const resumeUuid = list.find((c) => c.id === book.lastChapterId)?.uuid ?? null;
+
 	return {
-		book: { id: book.id, title: book.titleEn ?? book.title, sourceType: book.sourceType },
+		book: {
+			id: book.id,
+			title: book.titleTarget ?? book.title,
+			sourceType: book.sourceType,
+			sourceLang: book.sourceLang,
+			targetLang: book.targetLang,
+		},
+		resumeUuid,
 		chapters: list.map((c) => ({
 			uuid: c.uuid!,
 			seq: c.seq,
-			titleZh: c.titleZh,
-			titleEn: c.titleEn,
-			hasEn: c.contentEn != null,
+			titleSource: c.titleSource,
+			titleTarget: c.titleTarget,
+			hasTarget: c.contentTarget != null,
+			readProgress: c.readProgress ?? 0,
 		})),
 	};
 };

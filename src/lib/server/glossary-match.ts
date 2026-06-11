@@ -1,7 +1,8 @@
 // IMPORTED DEP-MODULES
 import AhoCorasick from 'ahocorasick';
 // IMPORTED MODULES
-import { getEffectiveGlossary } from './glossary';
+import { getLanguage } from '$lib/languages';
+import { bookPair, getEffectiveGlossary } from './glossary';
 // IMPORTED TYPES
 import type { TermDraft } from '$lib/types';
 
@@ -9,16 +10,21 @@ import type { TermDraft } from '$lib/types';
 
 interface Built {
 	ac: AhoCorasick;
-	byRaw: Map<string, TermDraft>;
+	bySource: Map<string, TermDraft>;
+	// WHEN TRUE (SPACE-DELIMITED SOURCE LANGUAGE), A MATCH ONLY COUNTS AT A WORD BOUNDARY SO "art" ISN'T
+	// MATCHED INSIDE "start". FALSE FOR CJK (SCRIPTURA CONTINUA — SUBSTRING MATCHING IS CORRECT THERE).
+	wordDelimited: boolean;
 }
 
 // -- CONSTANTS -- //
 
-// PER-BOOK AUTOMATON CACHE (L1), LRU-BOUNDED. REBUILT WHEN THE BOOK OR GLOBAL GLOSSARY CHANGES. EACH
-// BUILT AUTOMATON CAN HOLD THOUSANDS OF TERMS, SO AN UNBOUNDED MAP WOULD GROW WITHOUT LIMIT IN A
-// LONG-LIVED PROCESS THAT TOUCHES MANY BOOKS — CAP IT AND EVICT THE LEAST-RECENTLY-USED ENTRY.
+// PER-BOOK AUTOMATON CACHE (L1), LRU-BOUNDED. REBUILT WHEN THE BOOK OR GLOBAL GLOSSARY CHANGES.
 const MAX_CACHED_BOOKS = 32;
 const cache = new Map<string, Built>();
+
+// A "WORD" CHARACTER FOR BOUNDARY DETECTION — LATIN/CYRILLIC LETTERS, DIGITS, AND THE COMBINING MARKS
+// THAT RIDE ON THEM. A MATCH IS WORD-BOUNDED WHEN NEITHER NEIGHBOUR IS ONE OF THESE.
+const WORD_CHAR = /[\p{L}\p{N}\p{M}]/u;
 
 // -- FUNCTIONS -- //
 
@@ -39,11 +45,11 @@ async function build(bookId: string): Promise<Built> {
 		cache.set(bookId, cached);
 		return cached;
 	}
-	const terms = await getEffectiveGlossary(bookId);
-	const byRaw = new Map<string, TermDraft>();
-	for (const t of terms) byRaw.set(t.raw, t);
-	const ac = new AhoCorasick([...byRaw.keys()]);
-	const built: Built = { ac, byRaw };
+	const [terms, pair] = await Promise.all([getEffectiveGlossary(bookId), bookPair(bookId)]);
+	const bySource = new Map<string, TermDraft>();
+	for (const t of terms) bySource.set(t.source, t);
+	const ac = new AhoCorasick([...bySource.keys()]);
+	const built: Built = { ac, bySource, wordDelimited: getLanguage(pair.sourceLang).wordDelimited };
 	cache.set(bookId, built);
 	// EVICT THE OLDEST ENTRY (FIRST IN ITERATION ORDER) ONCE OVER CAPACITY.
 	if (cache.size > MAX_CACHED_BOOKS) {
@@ -53,24 +59,39 @@ async function build(bookId: string): Promise<Built> {
 	return built;
 }
 
+// TRUE IF THE MATCH SPANNING [start, end] IN `content` SITS AT A WORD BOUNDARY ON BOTH SIDES.
+function wordBounded(content: string, start: number, end: number): boolean {
+	const before = start > 0 ? content[start - 1] : '';
+	const after = end + 1 < content.length ? content[end + 1] : '';
+	return !WORD_CHAR.test(before) && !WORD_CHAR.test(after);
+}
+
 // RETURN ONLY THE EFFECTIVE-GLOSSARY TERMS PRESENT IN THIS CHAPTER.
 // LONGEST MATCH WINS: A TERM THAT IS A STRICT SUBSTRING OF ANOTHER MATCHED TERM IS DROPPED.
 export async function matchTerms(bookId: string, content: string): Promise<TermDraft[]> {
-	const { ac, byRaw } = await build(bookId);
-	if (byRaw.size === 0) return [];
+	const { ac, bySource, wordDelimited } = await build(bookId);
+	if (bySource.size === 0) return [];
 
+	// ahocorasick.search() RETURNS [endIndex, [keywords]] PER MATCH POSITION. FOR WORD-DELIMITED SOURCE
+	// LANGUAGES, KEEP A KEYWORD ONLY IF AT LEAST ONE OCCURRENCE IS WORD-BOUNDED; FOR CJK, ANY HIT COUNTS.
 	const found = new Set<string>();
-	for (const [, keywords] of ac.search(content)) {
-		for (const k of keywords) found.add(k);
+	for (const [endIndex, keywords] of ac.search(content) as [number, string[]][]) {
+		for (const k of keywords) {
+			if (!wordDelimited) {
+				found.add(k);
+				continue;
+			}
+			const start = endIndex - k.length + 1;
+			if (wordBounded(content, start, endIndex)) found.add(k);
+		}
 	}
 	if (found.size === 0) return [];
 
 	const matched = [...found];
 	const kept = matched.filter((term) => !matched.some((other) => other !== term && other.includes(term)));
-	// SORT BY FIRST APPEARANCE FOR STABLE, READABLE PROMPTS — PRECOMPUTE EACH indexOf ONCE (NOT PER
-	// COMPARISON), SO A LARGE CHAPTER ISN'T RE-SCANNED O(n log n) TIMES.
+	// SORT BY FIRST APPEARANCE FOR STABLE, READABLE PROMPTS — PRECOMPUTE EACH indexOf ONCE.
 	const firstAt = new Map<string, number>();
 	for (const term of kept) firstAt.set(term, content.indexOf(term));
 	kept.sort((a, b) => firstAt.get(a)! - firstAt.get(b)!);
-	return kept.map((raw) => byRaw.get(raw)!).filter(Boolean);
+	return kept.map((source) => bySource.get(source)!).filter(Boolean);
 }

@@ -1,11 +1,19 @@
+// IMPORTED TYPES
+import type { ParsedChapter } from '$lib/types';
 // IMPORTED DEP-MODULES
 import { execFile } from 'node:child_process';
 import { lookup } from 'node:dns/promises';
 import { existsSync } from 'node:fs';
 import { promisify } from 'node:util';
-import { parse } from 'node-html-parser';
-// IMPORTED TYPES
-import type { ParsedChapter } from '$lib/types';
+// IMPORTED MODULES
+import { getLanguage } from '$lib/languages';
+import { decodeTextBytes } from './charset';
+import { FetchError } from './fetch-error';
+import { renderHtml } from './headless';
+import { extractCover } from './site-parser';
+import { learnCover } from './site-adapter';
+import { parseChapter } from './site-adapter';
+import { recordFetchError, recordFetchOk } from './site-stats';
 
 // -- CONSTANTS -- //
 
@@ -30,36 +38,22 @@ const FETCH_TIMEOUT_MS = 30_000;
 const BROWSER_UA =
 	'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
-const BROWSER_HEADERS: Record<string, string> = {
-	'User-Agent': BROWSER_UA,
-	Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-	'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-	'Upgrade-Insecure-Requests': '1',
-	'sec-ch-ua': '"Chromium";v="120", "Not(A:Brand";v="24", "Google Chrome";v="120"',
-	'sec-ch-ua-mobile': '?0',
-	'sec-ch-ua-platform': '"Windows"',
-	'Sec-Fetch-Dest': 'document',
-	'Sec-Fetch-Mode': 'navigate',
-	'Sec-Fetch-Site': 'none',
-	'Sec-Fetch-User': '?1',
-};
-
-const ENTITIES: Record<string, string> = {
-	'&emsp;': '　',
-	'&ensp;': ' ',
-	'&nbsp;': ' ',
-	'&amp;': '&',
-	'&lt;': '<',
-	'&gt;': '>',
-	'&quot;': '"',
-	'&#39;': "'",
-	'&apos;': "'",
-	'&ldquo;': '"',
-	'&rdquo;': '"',
-};
-
-// CONSTRUCTED FROM AN ESCAPE (NOT A LITERAL U+3000) TO AVOID A no-irregular-whitespace LINT ERROR.
-const IDEOGRAPHIC_SPACE_RE = new RegExp('\\u3000', 'g');
+// BUILD THE BROWSER HEADER SET FOR A FETCH IN A GIVEN SOURCE LANGUAGE — ONLY Accept-Language VARIES.
+function browserHeaders(acceptLanguage: string): Record<string, string> {
+	return {
+		'User-Agent': BROWSER_UA,
+		Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+		'Accept-Language': acceptLanguage,
+		'Upgrade-Insecure-Requests': '1',
+		'sec-ch-ua': '"Chromium";v="120", "Not(A:Brand";v="24", "Google Chrome";v="120"',
+		'sec-ch-ua-mobile': '?0',
+		'sec-ch-ua-platform': '"Windows"',
+		'Sec-Fetch-Dest': 'document',
+		'Sec-Fetch-Mode': 'navigate',
+		'Sec-Fetch-Site': 'none',
+		'Sec-Fetch-User': '?1',
+	};
+}
 
 // -- FUNCTIONS -- //
 
@@ -100,21 +94,35 @@ async function assertPublicUrl(raw: string): Promise<{ url: URL; address: string
 	try {
 		u = new URL(raw);
 	} catch {
-		throw new Error('Invalid URL.');
+		throw new FetchError('invalid_url', 'That link doesn’t look right. Paste the full address of a chapter page.');
 	}
-	if (u.protocol !== 'http:' && u.protocol !== 'https:') throw new Error('Only http(s) URLs are allowed.');
+	if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+		throw new FetchError('invalid_url', 'That link doesn’t look right. It should start with http:// or https://.');
+	}
 	const host = u.hostname.toLowerCase();
 	if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local')) {
-		throw new Error('Refusing to fetch a private/loopback address.');
+		throw new FetchError(
+			'blocked_private',
+			'That link points somewhere we can’t open. Paste a public chapter page link.',
+			host,
+		);
 	}
 	let addrs: { address: string; family: number }[];
 	try {
 		addrs = await lookup(host, { all: true });
 	} catch {
-		throw new Error('Could not resolve host.');
+		throw new FetchError(
+			'unresolvable',
+			`We couldn’t find the site “${host}”. Check the link and try again.`,
+			host,
+		);
 	}
 	if (addrs.length === 0 || addrs.some((a) => isPrivateIp(a.address))) {
-		throw new Error('Refusing to fetch a private/internal address.');
+		throw new FetchError(
+			'blocked_private',
+			'That link points somewhere we can’t open. Paste a public chapter page link.',
+			host,
+		);
 	}
 	return { url: u, address: addrs[0].address, family: addrs[0].family };
 }
@@ -134,192 +142,187 @@ function detectCharset(bytes: Uint8Array, contentType: string | null): string {
 	return (meta ?? 'utf-8').toLowerCase();
 }
 
-function decodeHtmlBytes(bytes: Uint8Array, contentType: string | null): string {
-	const label = detectCharset(bytes, contentType);
-	try {
-		return new TextDecoder(label).decode(bytes);
-	} catch {
-		// UNKNOWN/UNSUPPORTED LABEL → FALL BACK TO UTF-8 RATHER THAN THROWING
-		return new TextDecoder('utf-8').decode(bytes);
+function decodeHtmlBytes(bytes: Uint8Array, contentType: string | null, hints: string[] = []): string {
+	const declared = detectCharset(bytes, contentType);
+	// A DECLARED/SNIFFED CHARSET WINS; OTHERWISE TRY THE SOURCE LANGUAGE'S LEGACY CANDIDATES BY SCORE
+	// (decodeTextBytes HANDLES BOM/UTF-8/LEGACY DETECTION) SO JP/KR PAGES WITHOUT A DECLARATION DECODE TOO.
+	if (declared && declared !== 'utf-8') {
+		try {
+			return new TextDecoder(declared).decode(bytes);
+		} catch {
+			// FALL THROUGH TO HINT-BASED DETECTION
+		}
 	}
+	return decodeTextBytes(bytes, true, hints);
 }
 
 // CURL FALLBACK — PROVEN TO PASS THE SITE'S BOT CHECK ON THIS HOST. `pin` IS THE PRE-VALIDATED IP.
-async function curlFetch(u: URL, pin: { address: string; family: number }): Promise<string> {
+async function curlFetch(
+	u: URL,
+	pin: { address: string; family: number },
+	acceptLanguage: string,
+	hints: string[],
+): Promise<string> {
 	const port = u.port || (u.protocol === 'https:' ? '443' : '80');
-	const { stdout } = await execFileAsync(
-		CURL_BIN,
-		[
-			'-s',
-			'--compressed',
-			// HARDENING: NO REDIRECT FOLLOWING (THE CALLER VALIDATED THIS EXACT URL), ONLY http/https,
-			// PIN DNS TO THE ALREADY-VALIDATED IP (BLOCKS DNS-REBINDING), AND BOUND THE REQUEST TIME.
-			'--max-redirs',
-			'0',
-			'--proto',
-			'=http,https',
-			'--resolve',
-			`${u.hostname}:${port}:${pin.address}`,
-			'--connect-timeout',
-			'10',
-			'--max-time',
-			'30',
-			'-A',
-			BROWSER_UA,
-			'-H',
-			'Accept-Language: zh-CN,zh;q=0.9',
-			u.href,
-		],
-		// CAPTURE RAW BYTES (NOT utf8) SO CHARSET DETECTION CAN RUN ON THE ORIGINAL ENCODING.
-		{ maxBuffer: 32 * 1024 * 1024, encoding: 'buffer' },
-	);
+	let stdout: string | Buffer;
+	try {
+		({ stdout } = await execFileAsync(
+			CURL_BIN,
+			[
+				'-s',
+				'--compressed',
+				// HARDENING: NO REDIRECT FOLLOWING (THE CALLER VALIDATED THIS EXACT URL), ONLY http/https,
+				// PIN DNS TO THE ALREADY-VALIDATED IP (BLOCKS DNS-REBINDING), AND BOUND THE REQUEST TIME.
+				'--max-redirs',
+				'0',
+				'--proto',
+				'=http,https',
+				'--resolve',
+				`${u.hostname}:${port}:${pin.address}`,
+				'--connect-timeout',
+				'10',
+				'--max-time',
+				'30',
+				'-A',
+				BROWSER_UA,
+				'-H',
+				`Accept-Language: ${acceptLanguage}`,
+				u.href,
+			],
+			// CAPTURE RAW BYTES (NOT utf8) SO CHARSET DETECTION CAN RUN ON THE ORIGINAL ENCODING.
+			{ maxBuffer: 32 * 1024 * 1024, encoding: 'buffer' },
+		));
+	} catch {
+		// curl SPAWN FAILURE / CONNECT TIMEOUT / TOO-LARGE BODY — A TRANSPORT FAILURE, NOT A PARSE ISSUE.
+		throw new FetchError(
+			'network',
+			`We couldn’t reach “${u.hostname}”. It may be down — please try again in a moment.`,
+			u.hostname,
+		);
+	}
 	const buf = stdout as unknown as Buffer;
-	if (!buf || buf.length < 100) throw new Error('Empty response from curl fallback.');
-	return decodeHtmlBytes(buf, null);
+	// AN EMPTY BODY HERE MEANS THE BOT WALL WON (curl IS ALREADY OUR ANTI-BLOCK FALLBACK).
+	if (!buf || buf.length < 100) {
+		throw new FetchError(
+			'blocked_bot',
+			`“${u.hostname}” won’t let us open its pages, so its chapters can’t be loaded.`,
+			u.hostname,
+		);
+	}
+	return decodeHtmlBytes(buf, null, hints);
 }
 
 // FETCH HTML, FALLING BACK TO SYSTEM curl WHEN THE NODE CLIENT IS BLOCKED (CLOUDFLARE 403).
 // REDIRECTS ARE FOLLOWED *MANUALLY* SO EVERY HOP IS RE-VALIDATED BY THE SSRF GUARD — A PUBLIC URL THAT
 // 30x-REDIRECTS TO 127.0.0.1 / 169.254.169.254 / AN INTERNAL HOST IS REJECTED INSTEAD OF FOLLOWED.
-async function fetchHtml(url: string): Promise<string> {
+async function fetchHtml(url: string, acceptLanguage: string, hints: string[]): Promise<string> {
+	const headers = browserHeaders(acceptLanguage);
 	let current = url;
 	for (let hop = 0; hop < MAX_REDIRECTS; hop++) {
 		const pin = await assertPublicUrl(current);
 		let res: Response;
 		try {
 			res = await fetch(current, {
-				headers: BROWSER_HEADERS,
+				headers,
 				redirect: 'manual', // WE RESOLVE REDIRECTS OURSELVES AND RE-VALIDATE EACH TARGET
 				signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
 			});
 		} catch {
 			// NETWORK ERROR / TIMEOUT → TRY THE curl FALLBACK ON THIS VALIDATED, PINNED URL
-			return await curlFetch(pin.url, pin);
+			return await curlFetch(pin.url, pin, acceptLanguage, hints);
 		}
 		if (res.status >= 300 && res.status < 400) {
 			const loc = res.headers.get('location');
-			if (!loc) throw new Error(`HTTP ${res.status} (redirect with no Location).`);
+			if (!loc)
+				throw new FetchError('http_error', 'This page didn’t load correctly. Please try again in a moment.');
 			current = new URL(loc, current).href; // LOOP RE-VALIDATES IT
 			continue;
 		}
-		if (res.ok) return decodeHtmlBytes(new Uint8Array(await res.arrayBuffer()), res.headers.get('content-type'));
+		if (res.ok)
+			return decodeHtmlBytes(new Uint8Array(await res.arrayBuffer()), res.headers.get('content-type'), hints);
 		// CLOUDFLARE / BOT-CHECK BLOCK → curl FALLBACK ON THE SAME VALIDATED URL; ANYTHING ELSE IS FATAL
-		if (res.status === 403 || res.status === 503) return await curlFetch(pin.url, pin);
-		throw new Error(`HTTP ${res.status}`);
+		if (res.status === 403 || res.status === 503) return await curlFetch(pin.url, pin, acceptLanguage, hints);
+		if (res.status === 404)
+			throw new FetchError(
+				'not_found',
+				'That chapter page couldn’t be found. The link may be wrong or the page was removed.',
+			);
+		throw new FetchError('http_error', 'This site isn’t responding properly right now. Please try again later.');
 	}
-	throw new Error('Too many redirects.');
+	throw new FetchError('http_error', 'This page kept redirecting and couldn’t be opened.');
 }
 
-// SAFELY TURN A NUMERIC CODEPOINT INTO A CHAR — A MALFORMED &#1114112; (> 0x10FFFF) WOULD OTHERWISE
-// THROW RangeError AND ABORT THE WHOLE PARSE; FALL BACK TO THE LITERAL ENTITY INSTEAD.
-function codePointOr(cp: number, literal: string): string {
-	if (!Number.isFinite(cp) || cp < 0 || cp > 0x10ffff) return literal;
+// APPROX VISIBLE-TEXT LENGTH OF A PAGE (TAGS/SCRIPTS STRIPPED) — TINY VALUES MEAN A CLIENT-RENDERED SHELL.
+function visibleTextLen(html: string): number {
+	return html
+		.replace(/<(script|style)[\s\S]*?<\/\1>/gi, '')
+		.replace(/<[^>]+>/g, ' ')
+		.replace(/\s+/g, ' ')
+		.trim().length;
+}
+
+// RENDER A JS-BUILT PAGE IN HEADLESS CHROMIUM AND RETURN ITS HTML — SSRF-GUARDED (WE VALIDATE THE HOST
+// IS PUBLIC BEFORE NAVIGATING) AND BEST-EFFORT (null IF RENDERING IS UNAVAILABLE OR FAILS).
+async function tryRender(url: string, acceptLanguage: string): Promise<string | null> {
 	try {
-		return String.fromCodePoint(cp);
-	} catch {
-		return literal;
-	}
-}
-
-function decodeEntities(s: string): string {
-	const out = s.replace(/&[a-zA-Z]+;|&#\d+;|&#x[0-9a-fA-F]+;/g, (m) => {
-		if (ENTITIES[m]) return ENTITIES[m];
-		const dec = /^&#(\d+);$/.exec(m);
-		if (dec) return codePointOr(Number(dec[1]), m);
-		const hex = /^&#x([0-9a-fA-F]+);$/.exec(m);
-		if (hex) return codePointOr(parseInt(hex[1], 16), m);
-		return m;
-	});
-	return out;
-}
-
-// TURN A CONTENT-DIV innerHTML INTO CLEAN PARAGRAPH TEXT
-function htmlToParagraphs(html: string): string {
-	const noScripts = html
-		.replace(/<script[\s\S]*?<\/script>/gi, '')
-		.replace(/<ins[\s\S]*?<\/ins>/gi, '')
-		.replace(/<style[\s\S]*?<\/style>/gi, '');
-	const withBreaks = noScripts.replace(/<br\s*\/?>/gi, '\n').replace(/<\/p>/gi, '\n');
-	const noTags = withBreaks.replace(/<[^>]+>/g, '');
-	const decoded = decodeEntities(noTags);
-	return decoded
-		.split('\n')
-		.map((l) => l.replace(IDEOGRAPHIC_SPACE_RE, ' ').trim())
-		.filter((l) => l.length > 0)
-		.join('\n\n');
-}
-
-function abs(href: string | undefined, base: string): string | null {
-	if (!href) return null;
-	try {
-		return new URL(href, base).href;
+		await assertPublicUrl(url);
+		return await renderHtml(url, acceptLanguage);
 	} catch {
 		return null;
 	}
 }
 
-// FETCH + PARSE A uukanshu.cc CHAPTER PAGE
-export async function fetchChapter(url: string): Promise<ParsedChapter> {
-	const html = await fetchHtml(url);
-	const root = parse(html);
+// ONLY A PARSE-STAGE FAILURE (NO CHAPTER FOUND IN STATIC HTML) IS WORTH A RENDER RETRY — NOT A TRANSPORT
+// OR CONFIG FAILURE (BLOCKED / NOT FOUND / NO API KEY): RENDERING THOSE WOULD FAIL THE SAME WAY.
+function isRenderableFailure(e: unknown): boolean {
+	return e instanceof FetchError && (e.kind === 'unsupported_site' || e.kind === 'parse_failed');
+}
 
-	const title = root.querySelector('h1.pt10')?.text?.trim() ?? root.querySelector('h1')?.text?.trim() ?? '';
-	const contentEl = root.querySelector('.readcotent');
-	if (!title || !contentEl) {
-		throw new Error('Could not parse chapter (title/content not found). Is this a uukanshu.cc chapter URL?');
-	}
-	const contentZh = htmlToParagraphs(contentEl.innerHTML);
+// FETCH A CHAPTER PAGE FROM ANY SUPPORTED HOST. TRANSPORT LIVES HERE; THE SITE-SPECIFIC PARSING IS
+// DELEGATED TO THE AI-LEARNED, SELF-HEALING ADAPTER. `sourceLang` TUNES Accept-Language AND THE LEGACY
+// CHARSET CANDIDATES (zh→Big5/GBK, ja→Shift_JIS/EUC-JP, ko→EUC-KR). FOR JS-RENDERED (SPA) PAGES WHERE THE
+// STATIC HTML HAS NO CHAPTER, IT FALLS BACK TO A HEADLESS RENDER AND PARSES THAT INSTEAD. EVERY FAILURE
+// SURFACES AS A TYPED FetchError SO THE API CAN REPORT EXACTLY WHY.
+export async function fetchChapter(url: string, sourceLang?: string): Promise<ParsedChapter> {
+	const lang = getLanguage(sourceLang);
+	try {
+		const html = await fetchHtml(url, lang.acceptLanguage, lang.charsetHints);
 
-	// NAV LINKS BY ANCHOR TEXT (上一章 / 下一章 / 目錄)
-	let prevUrl: string | null = null;
-	let nextUrl: string | null = null;
-	let indexUrl: string | null = null;
-	for (const a of root.querySelectorAll('a')) {
-		const t = a.text.trim();
-		const href = a.getAttribute('href');
-		if (t === '上一章') prevUrl = abs(href, url);
-		else if (t === '下一章') nextUrl = abs(href, url);
-		else if (t === '目錄' || t === '目录') indexUrl = abs(href, url);
-	}
-
-	// IDS FROM THE URL PATH: /book/<bookId>/<chapterId>.html
-	const m = /\/book\/(\d+)\/(\d+)\.html/.exec(url);
-	const bookId = m?.[1] ?? null;
-	const siteChapterId = m?.[2] ?? null;
-
-	// IF prev/next POINT AT THE INDEX, TREAT AS START/END (NO NEIGHBOUR)
-	if (prevUrl && indexUrl && prevUrl === indexUrl) prevUrl = null;
-	if (nextUrl && indexUrl && nextUrl === indexUrl) nextUrl = null;
-
-	// BOOK TITLE FROM THE BREADCRUMB ANCHOR THAT LINKS TO THE INDEX
-	let bookTitle: string | null = null;
-	if (indexUrl) {
-		for (const a of root.querySelectorAll('a')) {
-			if (abs(a.getAttribute('href'), url) === indexUrl && a.text.trim() && a.text.trim() !== '目錄') {
-				bookTitle = a.text.trim();
-				break;
+		// PRE-CHECK: AN OBVIOUS SPA SHELL (ALMOST NO VISIBLE TEXT) → RENDER FIRST, SO WE DON'T SPEND AN AI
+		// MAPPING CALL ON EMPTY HTML. OTHERWISE PARSE THE STATIC HTML AND RENDER ONLY IF IT CAN'T BE PARSED.
+		let chapter: ParsedChapter;
+		if (visibleTextLen(html) < 600) {
+			const rendered = await tryRender(url, lang.acceptLanguage);
+			chapter = await parseChapter(rendered ?? html, url);
+		} else {
+			try {
+				chapter = await parseChapter(html, url);
+			} catch (e) {
+				if (!isRenderableFailure(e)) throw e;
+				const rendered = await tryRender(url, lang.acceptLanguage);
+				if (!rendered || rendered === html) throw e;
+				chapter = await parseChapter(rendered, url);
 			}
 		}
-	}
 
-	// AUTHOR FROM THE LastRead SCRIPT, IF PRESENT
-	let author: string | null = null;
-	const lr = /lastread\.set\(([^)]*)\)/.exec(html);
-	if (lr) {
-		const parts = lr[1].split(',').map((p) => p.trim().replace(/^["']|["']$/g, ''));
-		if (parts.length >= 5 && parts[4]) author = parts[4];
+		// RECORD THE OUTCOME FOR THE /admin DASHBOARD (BEST-EFFORT, NEVER BLOCKS THE FETCH).
+		void recordFetchOk(url);
+		return chapter;
+	} catch (e) {
+		void recordFetchError(url, e);
+		throw e;
 	}
+}
 
-	return {
-		titleZh: title,
-		contentZh,
-		siteChapterId,
-		chapterUrl: url,
-		prevUrl,
-		nextUrl,
-		indexUrl,
-		bookId,
-		bookTitle,
-		author,
-	};
+// FETCH A BOOK'S COVER IMAGE FROM ITS INDEX/BOOK PAGE. SSRF-GUARDED, BEST-EFFORT (null ON ANY FAILURE).
+// TRIES og:image / scored <img> DETERMINISTICALLY, THEN AN AI PICK FROM THE PAGE'S IMAGES AS A FALLBACK.
+export async function fetchBookCover(indexUrl: string, sourceLang?: string): Promise<string | null> {
+	try {
+		await assertPublicUrl(indexUrl);
+		const lang = getLanguage(sourceLang);
+		const html = await fetchHtml(indexUrl, lang.acceptLanguage, lang.charsetHints);
+		return extractCover(html, indexUrl) ?? (await learnCover(html, indexUrl));
+	} catch {
+		return null;
+	}
 }

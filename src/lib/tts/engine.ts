@@ -24,7 +24,9 @@ import { analyzeParagraph } from './text';
 // -- TYPES -- //
 
 export type TtsStatus = 'idle' | 'playing' | 'paused';
-export type TtsLang = 'en' | 'zh';
+// A BCP-47-ISH VOICE LANGUAGE TAG (e.g. 'en-US', 'zh-TW', 'ja-JP', 'ko-KR'). WAS 'en' | 'zh' BEFORE THE
+// READER BECAME LANGUAGE-AGNOSTIC; VOICE SELECTION NOW MATCHES BY THE TWO-LETTER PREFIX.
+export type TtsLang = string;
 
 export interface TtsState {
 	status: TtsStatus;
@@ -47,7 +49,7 @@ interface Block {
 
 const IDLE: TtsState = {
 	status: 'idle',
-	lang: 'en',
+	lang: 'en-US',
 	paraIndex: -1,
 	sentIndex: 0,
 	sentStart: -1,
@@ -65,7 +67,7 @@ function createEngine() {
 	const state = writable<TtsState>({ ...IDLE });
 
 	let blocks: Block[] = [];
-	let lang: TtsLang = 'en';
+	let lang: TtsLang = 'en-US';
 	let loadedRef: string[] | null = null; // IDENTITY OF THE LAST-LOADED PARAGRAPH ARRAY
 	let loadedLang: TtsLang | null = null;
 	let gen = 0; // BUMPED ON EVERY INTERRUPT SO STALE UTTERANCE CALLBACKS ARE IGNORED
@@ -114,12 +116,13 @@ function createEngine() {
 		if (!supported()) return null;
 		const all = window.speechSynthesis.getVoices();
 		const s = get(ttsSettings);
-		const uri = lang === 'en' ? s.enVoiceURI : s.zhVoiceURI;
+		// THE TWO SAVED-VOICE SLOTS STILL COVER en/zh; OTHER LANGUAGES AUTO-PICK A MATCHING SYSTEM VOICE.
+		const prefix = lang.slice(0, 2).toLowerCase();
+		const uri = prefix === 'en' ? s.enVoiceURI : prefix === 'zh' ? s.zhVoiceURI : '';
 		if (uri) {
 			const exact = all.find((v) => v.voiceURI === uri);
 			if (exact) return exact;
 		}
-		const prefix = lang === 'en' ? 'en' : 'zh';
 		return all.find((v) => v.lang?.toLowerCase().startsWith(prefix)) ?? null;
 	}
 
@@ -185,7 +188,8 @@ function createEngine() {
 			u.voice = voice;
 			u.lang = voice.lang;
 		} else {
-			u.lang = lang === 'en' ? 'en-US' : 'zh-TW';
+			// NO MATCHING SYSTEM VOICE — HAND THE BROWSER THE LANGUAGE TAG DIRECTLY (e.g. 'ja-JP').
+			u.lang = lang;
 		}
 
 		// TRACK BOUNDARY SUPPORT SO WE CAN TELL THE SETTINGS DIALOG WHETHER WORD HIGHLIGHTING IS POSSIBLE

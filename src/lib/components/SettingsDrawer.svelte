@@ -3,7 +3,9 @@
 	import { createEventDispatcher } from 'svelte';
 	// IMPORTED MODULES
 	import { CJK_FONTS, LATIN_FONTS } from '$lib/fonts';
+	import { languageOptions } from '$lib/languages';
 	import { resetSettings, settings, type LayoutMode, type Theme } from '$lib/stores/settings';
+	import { isMobile } from '$lib/stores/viewport';
 	import { cn } from '$lib/utils/cn';
 	import { ripple } from '$lib/actions/ripple';
 	// IMPORTED DEP-COMPONENTS
@@ -30,13 +32,20 @@
 		{ key: 'contrast', label: 'Contrast', swatch: 'bg-black border-white' },
 	];
 	const LAYOUTS: { key: LayoutMode; label: string }[] = [
-		{ key: 'en', label: 'English' },
+		{ key: 'target', label: 'Translation' },
 		{ key: 'sidebyside', label: 'Bilingual' },
 		{ key: 'interleaved', label: 'Stacked' },
-		{ key: 'zh', label: '中文' },
+		{ key: 'source', label: 'Original' },
 	];
 	const latinOptions = LATIN_FONTS.map((f) => ({ value: f.key, label: f.label }));
 	const cjkOptions = CJK_FONTS.map((f) => ({ value: f.key, label: f.label }));
+	// SOURCE/TARGET LANGUAGE OPTIONS FOR THE "NEW BOOK DEFAULT DIRECTION" PICKERS.
+	const langItems = languageOptions();
+
+	// -- REACTIVE STATES -- //
+
+	// HIDE BILINGUAL ON MOBILE — TWO COLUMNS DON'T FIT A PHONE; STACKED IS THE EQUIVALENT THERE
+	$: visibleLayouts = $isMobile ? LAYOUTS.filter((l) => l.key !== 'sidebyside') : LAYOUTS;
 </script>
 
 <Modal {open} title="Reading settings" size="md" on:close={() => dispatch('close')}>
@@ -44,8 +53,8 @@
 		<!-- LAYOUT -->
 		<div>
 			<span class="mb-1.5 block text-xs font-medium opacity-60">Layout</span>
-			<div class="grid grid-cols-4 gap-1.5">
-				{#each LAYOUTS as l (l.key)}
+			<div class={cn('grid gap-1.5', $isMobile ? 'grid-cols-3' : 'grid-cols-4')}>
+				{#each visibleLayouts as l (l.key)}
 					<button
 						use:ripple
 						on:click={() => ($settings.layout = l.key)}
@@ -87,10 +96,10 @@
 			</div>
 		</div>
 
-		<!-- FONTS -->
+		<!-- FONTS — ONE STACK FOR LATIN-SCRIPT TEXT, ONE FOR CJK; THE READER PICKS PER LANGUAGE -->
 		<div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
 			<div>
-				<span class="mb-1 block text-xs font-medium opacity-60">English font</span>
+				<span class="mb-1 block text-xs font-medium opacity-60">Latin font</span>
 				<Select
 					items={latinOptions}
 					value={$settings.latinFont}
@@ -98,13 +107,37 @@
 				/>
 			</div>
 			<div>
-				<span class="mb-1 block text-xs font-medium opacity-60">Chinese font</span>
+				<span class="mb-1 block text-xs font-medium opacity-60">CJK font</span>
 				<Select
 					items={cjkOptions}
 					value={$settings.cjkFont}
 					on:change={(e) => ($settings.cjkFont = e.detail)}
 				/>
 			</div>
+		</div>
+
+		<!-- DEFAULT TRANSLATION DIRECTION FOR NEW BOOKS (PER-BOOK OVERRIDES AT FETCH/IMPORT TIME) -->
+		<div>
+			<span class="mb-1.5 block text-xs font-medium opacity-60">New book languages</span>
+			<div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+				<div class="min-w-0">
+					<span class="mb-1 block text-xs opacity-50">Source (original)</span>
+					<Select
+						items={langItems}
+						value={$settings.newBookSourceLang}
+						on:change={(e) => ($settings.newBookSourceLang = e.detail)}
+					/>
+				</div>
+				<div class="min-w-0">
+					<span class="mb-1 block text-xs opacity-50">Target (translation)</span>
+					<Select
+						items={langItems}
+						value={$settings.newBookTargetLang}
+						on:change={(e) => ($settings.newBookTargetLang = e.detail)}
+					/>
+				</div>
+			</div>
+			<p class="mt-1 text-xs opacity-50">The default direction applied to books you fetch or import next.</p>
 		</div>
 
 		<!-- SLIDERS -->

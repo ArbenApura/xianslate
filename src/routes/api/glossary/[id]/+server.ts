@@ -9,9 +9,11 @@ import { deleteTerm, updateTerm } from '$lib/server/glossary';
 // -- CONSTANTS -- //
 
 const PutBody = z.object({
-	raw: z.string().min(1).optional(),
-	translation: z.string().min(1).optional(),
+	source: z.string().min(1).optional(),
+	target: z.string().min(1).optional(),
 	gender: z.enum(['neuter', 'masculine', 'feminine']).optional(),
+	// AN EMPTY STRING CLEARS THE NOTE; OMITTING THE FIELD LEAVES IT UNCHANGED
+	context: z.string().nullable().optional(),
 	tags: z.string().nullable().optional(),
 });
 

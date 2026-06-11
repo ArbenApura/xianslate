@@ -24,8 +24,14 @@
 	// -- OPTIONAL PROPS -- //
 
 	export let open = false;
-	// WHICH LANGUAGE IS CURRENTLY BEING READ — USED TO SURFACE THAT VOICE PICKER FIRST.
-	export let lang: 'en' | 'zh' = 'en';
+	// THE BCP-47 LANGUAGE TAG CURRENTLY BEING READ (e.g. 'en-US', 'zh-TW') — SURFACES THAT VOICE PICKER
+	// FIRST. THE TWO SAVED-VOICE SLOTS COVER en/zh; OTHER LANGUAGES FALL BACK TO AN AUTO-PICKED VOICE.
+	export let lang = 'en-US';
+
+	// -- REACTIVE STATES -- //
+
+	// TRUE WHEN READING A CHINESE (HAN) TARGET/SOURCE — ORDERS THE zh VOICE PICKER FIRST.
+	$: isZh = lang.toLowerCase().startsWith('zh');
 
 	// -- CONSTANTS -- //
 
@@ -44,15 +50,15 @@
 	// THE VOICE THAT WILL ACTUALLY BE USED FOR THE LANGUAGE CURRENTLY BEING READ, AND WHETHER IT CAN
 	// DRIVE WORD-LEVEL HIGHLIGHTING (NETWORK VOICES LIKE GOOGLE'S ONLY FIRE start/end EVENTS).
 	$: activeVoice = (() => {
-		const uri = lang === 'zh' ? $ttsSettings.zhVoiceURI : $ttsSettings.enVoiceURI;
-		const pool = lang === 'zh' ? zhVoices : enVoices;
+		const uri = isZh ? $ttsSettings.zhVoiceURI : $ttsSettings.enVoiceURI;
+		const pool = isZh ? zhVoices : enVoices;
 		return (uri ? pool.find((v) => v.voiceURI === uri) : null) ?? pool[0] ?? null;
 	})();
 	$: wordTimingOk = voiceHasWordTiming(activeVoice, $wordTimingSupport);
 
 	// ORDER THE TWO VOICE PICKERS SO THE LANGUAGE BEING READ SHOWS FIRST.
 	$: voiceBlocks =
-		lang === 'zh'
+		isZh
 			? ([
 					{ key: 'zh', label: 'Chinese voice', opts: toOptions(zhVoices), empty: zhVoices.length === 0 },
 					{ key: 'en', label: 'English voice', opts: toOptions(enVoices), empty: enVoices.length === 0 },

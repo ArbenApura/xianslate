@@ -1,9 +1,12 @@
 <script lang="ts">
 	// IMPORTED DEP-TYPES
 	import type { PageData } from './$types';
+	// IMPORTED TYPES
+	import type { MenuAction } from '$lib/components/ui/ActionMenu.svelte';
 	// IMPORTED DEP-MODULES
 	import { toast } from 'svelte-sonner';
 	// IMPORTED MODULES
+	import { goto } from '$app/navigation';
 	import { chapterLabel, stripChapterPrefix } from '$lib/chapter-label';
 	import { cn } from '$lib/utils/cn';
 	import { ripple } from '$lib/actions/ripple';
@@ -13,16 +16,20 @@
 	import Check from 'lucide-svelte/icons/check';
 	import ChevronDown from 'lucide-svelte/icons/chevron-down';
 	import ChevronUp from 'lucide-svelte/icons/chevron-up';
+	import Circle from 'lucide-svelte/icons/circle';
 	import GripVertical from 'lucide-svelte/icons/grip-vertical';
 	import Languages from 'lucide-svelte/icons/languages';
+	import ListChecks from 'lucide-svelte/icons/list-checks';
+	import ListX from 'lucide-svelte/icons/list-x';
 	import Pencil from 'lucide-svelte/icons/pencil';
 	import Plus from 'lucide-svelte/icons/plus';
 	import Trash2 from 'lucide-svelte/icons/trash-2';
-	import X from 'lucide-svelte/icons/x';
 	// IMPORTED COMPONENTS
+	import ActionMenu from '$lib/components/ui/ActionMenu.svelte';
 	import Badge from '$lib/components/ui/Badge.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
 	import ConfirmDialog from '$lib/components/ui/ConfirmDialog.svelte';
+	import GlossaryPanel from '$lib/components/GlossaryPanel.svelte';
 	import Modal from '$lib/components/ui/Modal.svelte';
 
 	// -- REQUIRED PROPS -- //
@@ -31,7 +38,15 @@
 
 	// -- TYPES -- //
 
-	type Item = { uuid: string; seq: number; titleZh: string; titleEn: string | null; hasEn: boolean };
+	type Item = {
+		uuid: string;
+		seq: number;
+		titleSource: string;
+		titleTarget: string | null;
+		hasTarget: boolean;
+		// 0..1 FRACTION ACTUALLY READ — DRIVES THE ✓ (DONE) AND THE IN-PROGRESS BAR
+		readProgress: number;
+	};
 	type AddMode = 'paste' | 'url' | 'file';
 
 	// -- CONSTANTS -- //
@@ -42,6 +57,8 @@
 		{ id: 'url', label: 'From URL' },
 		{ id: 'file', label: 'EPUB / TXT' },
 	];
+	// A CHAPTER IS "READ" ONLY ONCE SCROLLED ~TO THE END (0.9 TOLERATES THE FOOTER BELOW THE PROSE).
+	const READ_DONE = 0.9;
 
 	// -- STATES -- //
 
@@ -55,8 +72,13 @@
 	let epubInput: HTMLInputElement;
 	let txtInput: HTMLInputElement;
 
-	let editingUuid: string | null = null;
+	let glossaryOpen = false;
+	// EDIT-TITLE DIALOG: THE CHAPTER BEING RENAMED (null = CLOSED) + ITS WORKING SOURCE/TARGET TITLES
+	let editItem: Item | null = null;
 	let editTitle = '';
+	let editTitleTarget = '';
+	// TRUE WHILE THE EDIT DIALOG'S "Translate" HELPER IS FILLING THE TARGET TITLE FROM THE SOURCE ONE
+	let translatingTitle = false;
 	let pendingDelete: Item | null = null;
 	let dragIndex: number | null = null;
 	let dragOverIndex: number | null = null;
@@ -80,7 +102,7 @@
 			const res = await fetch(`/api/books/${book.id}/chapters`, {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ kind: 'manual', titleZh: pasteTitle.trim(), contentZh: pasteContent.trim() }),
+				body: JSON.stringify({ kind: 'manual', titleSource: pasteTitle.trim(), contentSource: pasteContent.trim() }),
 			});
 			if (!res.ok) throw new Error((await res.json().catch(() => ({}))).message ?? 'Failed to add chapter');
 			pasteTitle = '';
@@ -137,30 +159,110 @@
 		}
 	}
 
+	// PER-ROW KEBAB ITEMS — THE READ/UNREAD ITEM FLIPS BASED ON WHETHER THE CHAPTER IS ALREADY FINISHED.
+	function rowActions(it: Item): MenuAction[] {
+		const done = it.readProgress >= READ_DONE;
+		return [
+			{ value: 'open', label: 'Open in reader', icon: BookOpen },
+			{ value: 'edit', label: 'Edit title', icon: Pencil },
+			done
+				? { value: 'unread', label: 'Mark unread', icon: Circle }
+				: { value: 'read', label: 'Mark read', icon: Check },
+			{ value: 'prev-read', label: 'Mark previous read', icon: ListChecks },
+			{ value: 'prev-unread', label: 'Mark previous unread', icon: ListX },
+			{ value: 'delete', label: 'Delete', icon: Trash2, danger: true },
+		];
+	}
+
+	// KEBAB MENU ROUTER — MAPS A CHOSEN ACTION TO ITS HANDLER FOR THIS ROW
+	function onAction(it: Item, action: string) {
+		if (action === 'open') goto(`/book/${book.id}/${it.uuid}/`);
+		else if (action === 'edit') startEdit(it);
+		else if (action === 'delete') pendingDelete = it;
+		else if (action === 'read') setReadStatus(it, 'this', true);
+		else if (action === 'unread') setReadStatus(it, 'this', false);
+		else if (action === 'prev-read') setReadStatus(it, 'previous', true);
+		else if (action === 'prev-unread') setReadStatus(it, 'previous', false);
+	}
+
+	// APPLY A READ/UNREAD CHANGE OPTIMISTICALLY (INSTANT ✓ / BAR UPDATE), THEN PERSIST IT SERVER-SIDE.
+	async function setReadStatus(it: Item, scope: 'this' | 'previous' | 'all', read: boolean) {
+		const value = read ? 1 : 0;
+		items = items.map((x) => {
+			const hit =
+				scope === 'all' ||
+				(scope === 'this' && x.uuid === it.uuid) ||
+				(scope === 'previous' && x.seq < it.seq);
+			return hit ? { ...x, readProgress: value } : x;
+		});
+		try {
+			const res = await fetch(`/api/books/${book.id}/read`, {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ uuid: it.uuid, scope, read }),
+			});
+			if (!res.ok) throw new Error();
+		} catch {
+			toast.error('Could not update read status.');
+			await refresh();
+		}
+	}
+
 	function startEdit(it: Item) {
-		editingUuid = it.uuid;
-		editTitle = it.titleZh;
+		editItem = it;
+		editTitle = it.titleSource;
+		editTitleTarget = it.titleTarget ?? '';
+	}
+
+	// AI-FILL THE TARGET-LANGUAGE TITLE FROM THE SOURCE TITLE — GLOSSARY-AWARE FOR THIS BOOK
+	async function translateEditTitle() {
+		const source = editTitle.trim();
+		if (!source || translatingTitle) return;
+		translatingTitle = true;
+		try {
+			const res = await fetch('/api/translate-text', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ text: source, kind: 'title', bookId: book.id }),
+			});
+			const d = await res.json();
+			if (!res.ok) throw new Error(d.message ?? 'Translation failed');
+			editTitleTarget = d.text;
+		} catch (e) {
+			toast.error(e instanceof Error ? e.message : 'Could not translate the title.');
+		} finally {
+			translatingTitle = false;
+		}
 	}
 
 	function cancelEdit() {
-		editingUuid = null;
+		editItem = null;
 		editTitle = '';
+		editTitleTarget = '';
 	}
 
-	async function saveEdit(it: Item) {
-		const title = editTitle.trim();
-		if (!title || title === it.titleZh) return cancelEdit();
+	async function saveEdit() {
+		const it = editItem;
+		if (!it) return;
+		const titleSource = editTitle.trim();
+		const titleTarget = editTitleTarget.trim();
+		if (!titleSource) {
+			toast.error('The source title cannot be empty.');
+			return;
+		}
+		// NOTHING CHANGED — JUST CLOSE
+		if (titleSource === it.titleSource && titleTarget === (it.titleTarget ?? '')) return cancelEdit();
 		try {
 			const res = await fetch(`/api/chapters/${it.uuid}`, {
 				method: 'PATCH',
 				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ titleZh: title }),
+				body: JSON.stringify({ titleSource, titleTarget: titleTarget || null }),
 			});
 			if (!res.ok) throw new Error();
-			items = items.map((x) => (x.uuid === it.uuid ? { ...x, titleZh: title } : x));
+			items = items.map((x) => (x.uuid === it.uuid ? { ...x, titleSource, titleTarget: titleTarget || null } : x));
 			cancelEdit();
 		} catch {
-			toast.error('Could not rename chapter.');
+			toast.error('Could not save the chapter title.');
 		}
 	}
 
@@ -220,8 +322,13 @@
 <div class="mx-auto min-h-full w-full max-w-4xl px-4 py-8 sm:px-6">
 	<!-- HEADER -->
 	<div class="mb-6 flex flex-wrap items-center justify-between gap-3">
-		<a use:ripple href="/" class="inline-flex items-center gap-1.5 text-sm opacity-70 hover:opacity-100">
-			<ArrowLeft size={15} /> Library
+		<!-- BACK TO THE READER (THE BOOK'S RESUME CHAPTER), NOT THE LIBRARY -->
+		<a
+			use:ripple
+			href="/book/{book.id}/"
+			class="inline-flex items-center gap-1.5 text-sm opacity-70 hover:opacity-100"
+		>
+			<ArrowLeft size={15} /> Back to reading
 		</a>
 		<div class="flex items-center gap-2">
 			<!-- OPENS THE ADD-CHAPTER DIALOG -->
@@ -229,7 +336,7 @@
 			{#if items.length}
 				<Button href="/book/{book.id}/" size="sm"><BookOpen size={14} /> Read</Button>
 			{/if}
-			<Button href="/book/{book.id}/glossary/" size="sm"><Languages size={14} /> Glossary</Button>
+			<Button on:click={() => (glossaryOpen = true)} size="sm"><Languages size={14} /> Glossary</Button>
 		</div>
 	</div>
 
@@ -327,7 +434,12 @@
 		<div class="rounded-xl border border-dashed border-black/10 p-10 text-center text-sm opacity-60 dark:border-white/[0.06]">
 			<p>No chapters yet.</p>
 			<p class="mt-1">
-				Paste, fetch, or import one — or <a href="/book/{book.id}/glossary/" class="text-sky-600 hover:underline">set up the glossary</a> first.
+				Paste, fetch, or import one — or <button
+					use:ripple
+					type="button"
+					on:click={() => (glossaryOpen = true)}
+					class="text-sky-600 hover:underline">set up the glossary</button
+				> first.
 			</p>
 			<!-- PRIMARY EMPTY-STATE CTA: OPENS THE ADD-CHAPTER DIALOG -->
 			<div class="mt-4 flex justify-center">
@@ -338,9 +450,13 @@
 		<!-- CHAPTER ROWS -->
 		<ul class="divide-y divide-black/[0.06] overflow-hidden rounded-xl border border-black/[0.06] dark:divide-white/[0.045] dark:border-white/[0.045]">
 			{#each items as it, i (it.uuid)}
-				{@const lbl = chapterLabel(it.titleZh, it.titleEn)}
+				{@const lbl = chapterLabel(it.titleSource, it.titleTarget)}
+				{@const isResume = it.uuid === data.resumeUuid}
+				<!-- DONE = ACTUALLY SCROLLED ~TO THE END (NOT JUST POSITIONED BEFORE THE RESUME POINT) -->
+				{@const isRead = !isResume && it.readProgress >= READ_DONE}
+				{@const partial = !isResume && it.readProgress > 0.02 && it.readProgress < READ_DONE}
 				<li
-					draggable={editingUuid === null}
+					draggable={editItem === null}
 					on:dragstart={() => (dragIndex = i)}
 					on:dragover|preventDefault={() => (dragOverIndex = i)}
 					on:dragend={() => {
@@ -380,40 +496,32 @@
 						>{lbl.kind === 'chapter' ? lbl.number : '·'}</span
 					>
 
-					<!-- TITLE / RENAME -->
-					{#if editingUuid === it.uuid}
-						<!-- INLINE RENAME FORM -->
-						<input
-							bind:value={editTitle}
-							on:keydown={(e) => {
-								if (e.key === 'Enter') saveEdit(it);
-								else if (e.key === 'Escape') cancelEdit();
-							}}
-							class="min-w-0 flex-1 rounded-md border border-sky-500 bg-transparent px-2 py-1 text-sm outline-none"
-						/>
-						<button use:ripple on:click={() => saveEdit(it)} class="text-emerald-600 hover:opacity-100" aria-label="Save"
-							><Check size={16} /></button
-						>
-						<button use:ripple on:click={cancelEdit} class="opacity-60 hover:opacity-100" aria-label="Cancel"
-							><X size={16} /></button
-						>
-					{:else}
-						<!-- CHAPTER LINK AND ACTION BUTTONS -->
-						<a href="/book/{book.id}/{it.uuid}/" class="min-w-0 flex-1 truncate text-sm hover:text-sky-600"
-							>{stripChapterPrefix(it.titleEn || it.titleZh)}</a
-						>
-						{#if lbl.kind === 'special'}<Badge variant="neutral" class="shrink-0">{lbl.tag}</Badge>{/if}
-						{#if it.hasEn}<Badge variant="emerald" class="shrink-0">EN</Badge>{/if}
-						<button use:ripple on:click={() => startEdit(it)} class="shrink-0 opacity-50 hover:opacity-100" aria-label="Rename"
-							><Pencil size={14} /></button
-						>
-						<button
-							use:ripple
-							on:click={() => (pendingDelete = it)}
-							class="shrink-0 text-red-500/70 hover:text-red-500"
-							aria-label="Delete chapter"><Trash2 size={14} /></button
+					<!-- READING STATE: ✓ ONLY WHEN ACTUALLY FINISHED; A SMALL % FOR A PARTIALLY-READ CHAPTER -->
+					{#if isRead}
+						<Check size={14} class="shrink-0 text-emerald-500 opacity-90" />
+					{:else if partial}
+						<span class="shrink-0 text-[10px] font-semibold tabular-nums text-emerald-600 dark:text-emerald-400"
+							>{Math.round(it.readProgress * 100)}%</span
 						>
 					{/if}
+
+					<!-- CHAPTER LINK + BADGES + KEBAB MENU (EDIT / DELETE / OPEN) -->
+					<a
+						href="/book/{book.id}/{it.uuid}/"
+						class={cn(
+							'min-w-0 flex-1 truncate text-sm hover:text-sky-600',
+							isResume && 'font-medium text-sky-600 dark:text-sky-300',
+							isRead && 'opacity-55',
+						)}>{stripChapterPrefix(it.titleTarget || it.titleSource)}</a
+					>
+					{#if isResume}<Badge variant="sky" class="shrink-0">Reading</Badge>{/if}
+					{#if lbl.kind === 'special'}<Badge variant="neutral" class="shrink-0">{lbl.tag}</Badge>{/if}
+					<ActionMenu
+						class="shrink-0"
+						label="Chapter actions"
+						items={rowActions(it)}
+						on:select={(e) => onAction(it, e.detail)}
+					/>
 				</li>
 			{/each}
 		</ul>
@@ -424,8 +532,67 @@
 <ConfirmDialog
 	open={!!pendingDelete}
 	title="Delete chapter?"
-	message={pendingDelete ? `"${pendingDelete.titleZh}" and its translation will be permanently removed.` : ''}
+	message={pendingDelete ? `"${pendingDelete.titleSource}" and its translation will be permanently removed.` : ''}
 	confirmLabel="Delete"
 	on:confirm={confirmDelete}
 	on:cancel={() => (pendingDelete = null)}
 />
+
+<!-- EDIT CHAPTER TITLE DIALOG — BOTH THE TARGET AND THE SOURCE TITLE -->
+<Modal open={editItem !== null} title="Edit chapter title" size="sm" on:close={cancelEdit}>
+	<form class="flex flex-col gap-4" on:submit|preventDefault={saveEdit}>
+		<!-- TARGET-LANGUAGE TITLE (WHAT THE LISTING + READER SHOW; EMPTY = FALL BACK TO THE SOURCE TITLE) -->
+		<div class="block">
+			<div class="mb-1 flex items-center justify-between gap-2">
+				<span class="text-xs font-medium opacity-60">Translated title</span>
+				<!-- AI-FILL FROM THE SOURCE TITLE -->
+				<button
+					use:ripple
+					type="button"
+					on:click={translateEditTitle}
+					disabled={translatingTitle || !editTitle.trim()}
+					class="inline-flex items-center gap-1 text-xs text-sky-600 hover:underline disabled:opacity-40 dark:text-sky-300"
+				>
+					<Languages size={12} /> {translatingTitle ? 'Translating…' : 'Translate'}
+				</button>
+			</div>
+			<input
+				bind:value={editTitleTarget}
+				on:keydown={(e) => {
+					if (e.key === 'Escape') cancelEdit();
+				}}
+				placeholder="Not translated yet"
+				class="w-full rounded-md border border-black/10 bg-transparent px-2.5 py-2 text-sm outline-none focus:border-sky-500 dark:border-white/[0.06]"
+			/>
+		</div>
+		<!-- SOURCE TITLE — THE ORIGINAL TITLE AS WRITTEN IN THE SOURCE LANGUAGE -->
+		<label class="block">
+			<span class="mb-1 block text-xs font-medium opacity-60">Source title</span>
+			<input
+				bind:value={editTitle}
+				on:keydown={(e) => {
+					if (e.key === 'Escape') cancelEdit();
+				}}
+				placeholder="Chapter title…"
+				class="w-full rounded-md border border-black/10 bg-transparent px-2.5 py-2 text-sm outline-none focus:border-sky-500 dark:border-white/[0.06]"
+			/>
+		</label>
+		<!-- HIDDEN SUBMIT SO ENTER SAVES; THE VISIBLE ACTIONS LIVE IN THE FOOTER -->
+		<button type="submit" class="hidden" aria-hidden="true"></button>
+	</form>
+	<svelte:fragment slot="footer">
+		<Button on:click={cancelEdit}>Cancel</Button>
+		<Button variant="primary" on:click={saveEdit}>Save</Button>
+	</svelte:fragment>
+</Modal>
+
+<!-- BOOK GLOSSARY DIALOG — REPLACES THE OLD STANDALONE /glossary/ PAGE -->
+<Modal
+	open={glossaryOpen}
+	title="Book glossary"
+	size="xl"
+	bodyClass="flex min-h-0 flex-col overflow-hidden px-5 py-0"
+	on:close={() => (glossaryOpen = false)}
+>
+	<GlossaryPanel scope="book" bookId={book.id} bookTitle={book.title} surface="bg-white dark:bg-slate-900" />
+</Modal>

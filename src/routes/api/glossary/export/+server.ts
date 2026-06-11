@@ -4,6 +4,7 @@ import { error } from '@sveltejs/kit';
 import type { TermDraft } from '$lib/types';
 import type { RequestHandler } from './$types';
 // IMPORTED MODULES
+import { DEFAULT_SOURCE_LANG, DEFAULT_TARGET_LANG } from '$lib/languages';
 import { getEffectiveGlossary, getGlossary } from '$lib/server/glossary';
 import { toGlossaryCsv } from '$lib/server/glossary-csv';
 
@@ -12,6 +13,11 @@ import { toGlossaryCsv } from '$lib/server/glossary-csv';
 export const GET: RequestHandler = async ({ url }) => {
 	const scope = url.searchParams.get('scope') ?? 'global';
 	const bookId = url.searchParams.get('bookId');
+	// GLOBAL EXPORT IS SCOPED TO A LANGUAGE PAIR (DEFAULT zh-Hant → en).
+	const pair = {
+		sourceLang: url.searchParams.get('sourceLang') || DEFAULT_SOURCE_LANG,
+		targetLang: url.searchParams.get('targetLang') || DEFAULT_TARGET_LANG,
+	};
 
 	let terms: TermDraft[];
 	let name: string;
@@ -22,11 +28,11 @@ export const GET: RequestHandler = async ({ url }) => {
 	} else if (scope === 'book') {
 		if (!bookId) throw error(400, 'bookId is required for book export.');
 		const rows = await getGlossary('book', bookId);
-		terms = rows.map((r) => ({ raw: r.raw, translation: r.translation, gender: r.gender, tags: r.tags }));
+		terms = rows.map((r) => ({ source: r.source, target: r.target, gender: r.gender, context: r.context, tags: r.tags }));
 		name = `glossary-book-${bookId}.csv`;
 	} else if (scope === 'global') {
-		const rows = await getGlossary('global', null);
-		terms = rows.map((r) => ({ raw: r.raw, translation: r.translation, gender: r.gender, tags: r.tags }));
+		const rows = await getGlossary('global', null, pair);
+		terms = rows.map((r) => ({ source: r.source, target: r.target, gender: r.gender, context: r.context, tags: r.tags }));
 		name = 'glossary-global.csv';
 	} else {
 		throw error(400, 'scope must be global, book, or effective.');

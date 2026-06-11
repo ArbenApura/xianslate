@@ -21,11 +21,22 @@
 
 	// -- TYPES -- //
 
-	type TocItem = { uuid: string; seq: number; titleZh: string; titleEn: string | null; hasEn: boolean };
+	type TocItem = {
+		uuid: string;
+		seq: number;
+		titleSource: string;
+		titleTarget: string | null;
+		hasTarget: boolean;
+		// 0..1 FRACTION ACTUALLY READ — DRIVES THE ✓ (DONE) AND THE THIN PROGRESS BAR
+		readProgress: number;
+	};
 
 	// -- CONSTANTS -- //
 
 	const dispatch = createEventDispatcher();
+	// A CHAPTER COUNTS AS READ ONLY ONCE THE READER SCROLLED ~TO THE END (NOT JUST BY SITTING BEFORE THE
+	// CURRENT CHAPTER). 0.9 TOLERATES THE FOOTER/NAV BELOW THE PROSE.
+	const READ_DONE = 0.9;
 
 	// -- STATES -- //
 
@@ -41,11 +52,11 @@
 
 	// -- REACTIVE STATES -- //
 
-	// SEQ OF THE CHAPTER BEING READ — EVERYTHING BEFORE IT COUNTS AS ALREADY READ (GETS A ✓).
-	$: currentSeq = items.find((it) => it.uuid === currentUuid)?.seq ?? -Infinity;
 	$: q = query.trim().toLowerCase();
 	$: filtered = q
-		? items.filter((it) => it.titleZh.toLowerCase().includes(q) || (it.titleEn ?? '').toLowerCase().includes(q))
+		? items.filter(
+				(it) => it.titleSource.toLowerCase().includes(q) || (it.titleTarget ?? '').toLowerCase().includes(q),
+			)
 		: items;
 	// STABLE KEY FOR THE TRANSLATING SET (MEMBERSHIP, ORDER-INDEPENDENT)
 	$: translatingKey = [...translating].sort().join('|');
@@ -152,15 +163,17 @@
 		{:else}
 			<ul>
 				{#each filtered as it (it.uuid)}
-					{@const lbl = chapterLabel(it.titleZh, it.titleEn)}
-					{@const isRead = it.uuid !== currentUuid && it.seq < currentSeq}
+					{@const lbl = chapterLabel(it.titleSource, it.titleTarget)}
+					<!-- DONE = SCROLLED ~TO THE END; PARTIAL = STARTED BUT NOT FINISHED (THIN BAR, NO ✓) -->
+					{@const isRead = it.uuid !== currentUuid && it.readProgress >= READ_DONE}
+					{@const partial = it.uuid !== currentUuid && it.readProgress > 0.02 && it.readProgress < READ_DONE}
 					<li>
 						<button
 							use:ripple
 							data-active={it.uuid === currentUuid}
 							on:click={() => pick(it.uuid)}
 							class={cn(
-								'hover:bg-current/5 flex w-full items-center gap-1.5 border-l-2 py-2 pl-1.5 pr-3 text-left text-sm',
+								'hover:bg-current/5 relative flex w-full items-center gap-1.5 border-l-2 py-2 pl-1.5 pr-3 text-left text-sm',
 								it.uuid === currentUuid
 									? 'border-sky-500 bg-sky-500/10 font-medium text-sky-600 dark:text-sky-300'
 									: isRead
@@ -173,11 +186,11 @@
 							<span class="flex min-w-[1.85rem] shrink-0 justify-end text-right text-xs tabular-nums opacity-40">
 								{lbl.kind === 'chapter' ? lbl.number : '·'}
 							</span>
-							<!-- READ CHAPTERS GET A ✓ PREFIXED TO THE TITLE -->
+							<!-- FINISHED CHAPTERS GET A ✓ PREFIXED TO THE TITLE -->
 							<span class="flex min-w-0 flex-1 items-center gap-1.5">
 								{#if isRead}<Check size={13} class="shrink-0 text-emerald-500 opacity-90" />{/if}
 								<span class="min-w-0 flex-1 truncate"
-									>{stripChapterPrefix(it.titleEn || it.titleZh)}</span
+									>{stripChapterPrefix(it.titleTarget || it.titleSource)}</span
 								>
 							</span>
 							{#if translating.has(it.uuid)}
@@ -186,6 +199,14 @@
 								</Badge>
 							{:else if lbl.kind === 'special'}<Badge variant="neutral" class="shrink-0">{lbl.tag}</Badge
 								>{/if}
+							<!-- IN-PROGRESS INDICATOR: A THIN BAR ALONG THE BOTTOM EDGE SHOWING HOW FAR YOU GOT -->
+							{#if partial}
+								<!-- RUNTIME-DYNAMIC WIDTH FROM PER-CHAPTER READ PROGRESS — CANNOT BE A TAILWIND CLASS -->
+								<span
+									class="absolute bottom-0 left-0 h-0.5 bg-emerald-500/60"
+									style="width:{Math.round(it.readProgress * 100)}%"
+								></span>
+							{/if}
 						</button>
 					</li>
 				{/each}

@@ -8,22 +8,23 @@ import { deleteBook, getBook } from '$lib/server/books';
 import { db } from '$lib/server/db';
 import { books, chapters } from '$lib/server/db/schema';
 import { matchTerms } from '$lib/server/glossary-match';
-import { translateTitle } from '$lib/server/translate';
+import { translateTerm, translateTitle } from '$lib/server/translate';
 
 // -- FUNCTIONS -- //
 
 export const GET: RequestHandler = async ({ params }) => {
 	const book = await getBook(params.id);
 	if (!book) throw error(404, 'Book not found.');
-	// COMPUTE hasEn IN SQL — DON'T TRANSFER EVERY CHAPTER'S FULL contentEn (POTENTIALLY MEGABYTES) JUST TO
-	// TEST IT FOR null.
+	// COMPUTE hasTarget IN SQL — DON'T TRANSFER EVERY CHAPTER'S FULL contentTarget (POTENTIALLY MEGABYTES)
+	// JUST TO TEST IT FOR null.
 	const list = await db
 		.select({
 			uuid: chapters.uuid,
 			seq: chapters.seq,
-			titleZh: chapters.titleZh,
-			titleEn: chapters.titleEn,
-			hasEn: sql<number>`(${chapters.contentEn} is not null)`,
+			titleSource: chapters.titleSource,
+			titleTarget: chapters.titleTarget,
+			hasTarget: sql<number>`(${chapters.contentTarget} is not null)`,
+			readProgress: chapters.readProgress,
 		})
 		.from(chapters)
 		.where(eq(chapters.bookId, book.id))
@@ -33,27 +34,46 @@ export const GET: RequestHandler = async ({ params }) => {
 		chapters: list.map((c) => ({
 			uuid: c.uuid,
 			seq: c.seq,
-			titleZh: c.titleZh,
-			titleEn: c.titleEn,
-			hasEn: !!c.hasEn,
+			titleSource: c.titleSource,
+			titleTarget: c.titleTarget,
+			hasTarget: !!c.hasTarget,
+			readProgress: c.readProgress ?? 0,
 		})),
 	});
 };
 
-// TRANSLATE THE BOOK TITLE (NOVEL NAME) ONCE, GLOSSARY-AWARE, AND CACHE IT
+// TRANSLATE THE BOOK TITLE (NOVEL NAME) + ROMANIZE THE AUTHOR ONCE, GLOSSARY-AWARE, AND CACHE BOTH
 export const POST: RequestHandler = async ({ params }) => {
 	const book = await getBook(params.id);
 	if (!book) throw error(404, 'Book not found.');
-	if (book.titleEn) return json({ titleEn: book.titleEn });
+	// NOTHING LEFT TO DO: TITLE TRANSLATED AND (NO AUTHOR, OR AUTHOR ALREADY RENDERED)
+	if (book.titleTarget && (!book.author || book.authorTarget)) {
+		return json({ titleTarget: book.titleTarget, authorTarget: book.authorTarget });
+	}
+
+	const pair = { sourceLang: book.sourceLang, targetLang: book.targetLang };
+	let titleTarget = book.titleTarget;
+	let authorTarget = book.authorTarget;
+	const set: { titleTarget?: string; authorTarget?: string } = {};
 	try {
-		const terms = await matchTerms(book.id, book.title);
-		const { text } = await translateTitle(book.title, terms);
-		const titleEn = text || book.title;
-		await db.update(books).set({ titleEn }).where(eq(books.id, book.id));
-		return json({ titleEn });
+		if (!titleTarget) {
+			const terms = await matchTerms(book.id, book.title);
+			const { text } = await translateTitle(book.title, terms, pair);
+			titleTarget = text || book.title;
+			set.titleTarget = titleTarget;
+		}
+		if (book.author && !authorTarget) {
+			// AUTHOR IS A PERSON NAME → RENDER INTO THE TARGET LANGUAGE VIA THE TERM TRANSLATOR, GLOSSARY-AWARE
+			const terms = await matchTerms(book.id, book.author);
+			const { text } = await translateTerm(book.author, pair, terms);
+			authorTarget = text || book.author;
+			set.authorTarget = authorTarget;
+		}
+		if (Object.keys(set).length) await db.update(books).set(set).where(eq(books.id, book.id));
+		return json({ titleTarget, authorTarget });
 	} catch {
-		// DON'T FAIL THE UI IF TRANSLATION IS UNAVAILABLE
-		return json({ titleEn: book.title });
+		// DON'T FAIL THE UI IF TRANSLATION IS UNAVAILABLE — FALL BACK TO THE SOURCE VALUES
+		return json({ titleTarget: titleTarget ?? book.title, authorTarget: authorTarget ?? book.author });
 	}
 };
 

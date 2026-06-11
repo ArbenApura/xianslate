@@ -5,11 +5,16 @@ import { error, json } from '@sveltejs/kit';
 import { z } from 'zod';
 // IMPORTED MODULES
 import { appendChapters, getBook, ingestWebChapter, reorderChapters } from '$lib/server/books';
+import { isFetchError } from '$lib/server/fetch-error';
 
 // -- CONSTANTS -- //
 
 const AddBody = z.discriminatedUnion('kind', [
-	z.object({ kind: z.literal('manual'), titleZh: z.string().trim().min(1), contentZh: z.string().trim().min(1) }),
+	z.object({
+		kind: z.literal('manual'),
+		titleSource: z.string().trim().min(1),
+		contentSource: z.string().trim().min(1),
+	}),
 	z.object({ kind: z.literal('url'), url: z.string().url() }),
 ]);
 
@@ -23,11 +28,12 @@ export const POST: RequestHandler = async ({ params, request }) => {
 	if (!book) throw error(404, 'Book not found.');
 
 	const parsed = AddBody.safeParse(await request.json().catch(() => null));
-	if (!parsed.success) throw error(400, 'Provide { kind: "manual", titleZh, contentZh } or { kind: "url", url }.');
+	if (!parsed.success)
+		throw error(400, 'Provide { kind: "manual", titleSource, contentSource } or { kind: "url", url }.');
 
 	if (parsed.data.kind === 'manual') {
 		const { added, firstUuid } = await appendChapters(book.id, [
-			{ titleZh: parsed.data.titleZh, contentZh: parsed.data.contentZh },
+			{ titleSource: parsed.data.titleSource, contentSource: parsed.data.contentSource },
 		]);
 		return json({ added, firstUuid });
 	}
@@ -38,7 +44,9 @@ export const POST: RequestHandler = async ({ params, request }) => {
 		const view = await ingestWebChapter(parsed.data.url, undefined, book.id);
 		return json({ added: 1, firstUuid: view.uuid });
 	} catch (e) {
-		throw error(502, e instanceof Error ? e.message : 'Failed to fetch chapter.');
+		// TYPED FAILURE → ITS OWN STATUS + HUMAN MESSAGE (INVALID / BLOCKED / UNSUPPORTED / NOT FOUND …)
+		if (isFetchError(e)) throw error(e.status, e.message);
+		throw error(502, e instanceof Error ? e.message : 'Couldn’t fetch that chapter.');
 	}
 };
 

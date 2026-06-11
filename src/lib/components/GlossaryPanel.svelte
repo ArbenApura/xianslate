@@ -1,11 +1,13 @@
 <script lang="ts">
 	// IMPORTED TYPES
 	import type { Gender, GlossaryScope } from '$lib/types';
+	import type { MenuAction } from '$lib/components/ui/ActionMenu.svelte';
 	// IMPORTED DEP-MODULES
 	import { toast } from 'svelte-sonner';
 	import { onMount, onDestroy } from 'svelte';
 	// IMPORTED MODULES
 	import { cn } from '$lib/utils/cn';
+	import { DEFAULT_SOURCE_LANG, DEFAULT_TARGET_LANG } from '$lib/languages';
 	import { settings, THEME_CLASS } from '$lib/stores/settings';
 	// IMPORTED DEP-COMPONENTS
 	import ChevronLeft from 'lucide-svelte/icons/chevron-left';
@@ -13,11 +15,13 @@
 	import ChevronsLeft from 'lucide-svelte/icons/chevrons-left';
 	import ChevronsRight from 'lucide-svelte/icons/chevrons-right';
 	import Download from 'lucide-svelte/icons/download';
+	import Languages from 'lucide-svelte/icons/languages';
 	import Plus from 'lucide-svelte/icons/plus';
 	import Search from 'lucide-svelte/icons/search';
 	import Trash2 from 'lucide-svelte/icons/trash-2';
 	import Upload from 'lucide-svelte/icons/upload';
 	// IMPORTED COMPONENTS
+	import ActionMenu from '$lib/components/ui/ActionMenu.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
 	import Modal from '$lib/components/ui/Modal.svelte';
 	import Select from '$lib/components/ui/Select.svelte';
@@ -33,16 +37,25 @@
 	// SURFACE THE STICKY SEARCH BAR PAINTS OVER. DEFAULTS TO THE THEMED PAGE BG; THE DIALOG OVERRIDES
 	// IT WITH THE MODAL'S OWN SURFACE SO THE PINNED BAR ALWAYS MATCHES WHAT'S BEHIND IT.
 	export let surface = '';
+	// FOR GLOBAL SCOPE: WHICH LANGUAGE PAIR'S GLOSSARY TO SHOW/EDIT. BOOK SCOPE INHERITS THE BOOK'S PAIR
+	// SERVER-SIDE, SO THESE ARE ONLY MEANINGFUL (AND ONLY SENT) WHEN scope === 'global'.
+	export let sourceLang: string = DEFAULT_SOURCE_LANG;
+	export let targetLang: string = DEFAULT_TARGET_LANG;
 
 	// -- TYPES -- //
 
-	type Entry = { id: number; raw: string; translation: string; gender: Gender; tags: string | null };
+	type Entry = { id: number; source: string; target: string; gender: Gender; context: string | null; tags: string | null };
 
 	// -- CONSTANTS -- //
 
 	const GENDERS: Gender[] = ['neuter', 'masculine', 'feminine'];
 	const GENDER_ITEMS = GENDERS.map((g) => ({ value: g, label: g }));
 	const PAGE_SIZE_ITEMS = [10, 25, 50, 100, 200].map((n) => ({ value: String(n), label: `${n} / page` }));
+	// PER-ROW KEBAB MENU OPTIONS (HANDLED IN onRowAction)
+	const ROW_MENU: MenuAction[] = [
+		{ value: 'translate', label: 'Translate', icon: Languages },
+		{ value: 'delete', label: 'Delete', icon: Trash2, danger: true },
+	];
 
 	// -- STATES -- //
 
@@ -54,9 +67,10 @@
 	let query = '';
 	let loading = true;
 	let busy = false;
-	let newRaw = '';
-	let newTranslation = '';
+	let newSource = '';
+	let newTarget = '';
 	let newGender: Gender = 'neuter';
+	let newContext = '';
 	let showAdd = false;
 	let fileInput: HTMLInputElement;
 	let debounce: ReturnType<typeof setTimeout>;
@@ -64,7 +78,10 @@
 
 	// -- REACTIVE STATES -- //
 
-	$: scopeQs = scope === 'book' && bookId ? `scope=book&bookId=${encodeURIComponent(bookId)}` : 'scope=global';
+	$: scopeQs =
+		scope === 'book' && bookId
+			? `scope=book&bookId=${encodeURIComponent(bookId)}`
+			: `scope=global&sourceLang=${encodeURIComponent(sourceLang)}&targetLang=${encodeURIComponent(targetLang)}`;
 	$: pageCount = Math.max(1, Math.ceil(total / pageSize));
 	// 1-BASED RANGE OF ROWS SHOWN ON THE CURRENT PAGE ("1–10 of 7,403")
 	$: rangeFrom = total === 0 ? 0 : (page - 1) * pageSize + 1;
@@ -137,8 +154,8 @@
 	}
 
 	async function addRow() {
-		if (!newRaw.trim() || !newTranslation.trim()) {
-			toast.error('Both raw and translation are required.');
+		if (!newSource.trim() || !newTarget.trim()) {
+			toast.error('Both source and target are required.');
 			return;
 		}
 		busy = true;
@@ -146,12 +163,23 @@
 			const res = await fetch('/api/glossary', {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ scope, bookId, raw: newRaw, translation: newTranslation, gender: newGender }),
+				body: JSON.stringify({
+					scope,
+					bookId,
+					// LANG PAIR IS ONLY USED FOR GLOBAL SCOPE (BOOK SCOPE INHERITS THE BOOK'S DIRECTION)
+					sourceLang,
+					targetLang,
+					source: newSource,
+					target: newTarget,
+					gender: newGender,
+					context: newContext.trim() || null,
+				}),
 			});
 			if (!res.ok) throw new Error('Add failed');
-			newRaw = '';
-			newTranslation = '';
+			newSource = '';
+			newTarget = '';
 			newGender = 'neuter';
+			newContext = '';
 			showAdd = false;
 			await load();
 			toast.success('Term added.');
@@ -167,7 +195,7 @@
 			const res = await fetch(`/api/glossary/${e.id}`, {
 				method: 'PUT',
 				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ raw: e.raw, translation: e.translation, gender: e.gender, tags: e.tags }),
+				body: JSON.stringify({ source: e.source, target: e.target, gender: e.gender, context: e.context, tags: e.tags }),
 			});
 			if (!res.ok) throw new Error('Save failed');
 		} catch {
@@ -184,6 +212,37 @@
 		}
 	}
 
+	// AI-FILL A ROW'S TARGET-LANGUAGE RENDERING FROM ITS SOURCE TERM, THEN PERSIST IT
+	async function translateRow(e: Entry) {
+		const source = e.source.trim();
+		if (!source) {
+			toast.error('Add the source term first.');
+			return;
+		}
+		const tid = toast.loading('Translating…');
+		try {
+			const res = await fetch('/api/translate-text', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ text: source, kind: 'term', bookId: scope === 'book' ? bookId : undefined }),
+			});
+			const d = await res.json();
+			if (!res.ok) throw new Error(d.message ?? 'Translation failed');
+			e.target = d.text;
+			rows = rows; // REASSIGN SO THE BOUND INPUT REFLECTS THE NEW VALUE
+			await saveRow(e);
+			toast.success('Translated.', { id: tid });
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : 'Could not translate the term.', { id: tid });
+		}
+	}
+
+	// KEBAB MENU ROUTER FOR A GLOSSARY ROW
+	function onRowAction(e: Entry, action: string) {
+		if (action === 'translate') translateRow(e);
+		else if (action === 'delete') removeRow(e.id);
+	}
+
 	async function onImport(ev: Event) {
 		const file = (ev.currentTarget as HTMLInputElement).files?.[0];
 		if (!file) return;
@@ -194,6 +253,11 @@
 			fd.append('file', file);
 			fd.append('scope', scope);
 			if (bookId) fd.append('bookId', bookId);
+			// GLOBAL IMPORT TARGETS A SPECIFIC LANGUAGE PAIR; BOOK IMPORT INHERITS THE BOOK'S.
+			if (scope === 'global') {
+				fd.append('sourceLang', sourceLang);
+				fd.append('targetLang', targetLang);
+			}
 			const res = await fetch('/api/glossary/import', { method: 'POST', body: fd });
 			if (!res.ok) throw new Error((await res.json().catch(() => ({}))).message ?? 'Import failed');
 			const out = await res.json();
@@ -210,7 +274,12 @@
 
 	function exportHref(which: GlossaryScope): string {
 		const b = bookId ? `&bookId=${encodeURIComponent(bookId)}` : '';
-		return `/api/glossary/export?scope=${which}${b}`;
+		// GLOBAL EXPORT IS SCOPED TO THE SELECTED LANGUAGE PAIR.
+		const l =
+			which === 'global'
+				? `&sourceLang=${encodeURIComponent(sourceLang)}&targetLang=${encodeURIComponent(targetLang)}`
+				: '';
+		return `/api/glossary/export?scope=${which}${b}${l}`;
 	}
 
 	// CAST IN SCRIPT (TS `as` IS NOT ALLOWED INSIDE SVELTE TEMPLATE EXPRESSIONS)
@@ -284,8 +353,8 @@
 				<div
 					class="hidden items-center gap-3 border-b border-black/[0.06] bg-black/[0.02] px-2.5 py-2 text-[11px] font-semibold uppercase tracking-wide opacity-50 dark:border-white/[0.045] dark:bg-white/[0.02] sm:flex"
 				>
-					<span class="flex-1">原文 · Raw</span>
-					<span class="flex-1">Translation</span>
+					<span class="flex-1">Source</span>
+					<span class="flex-1">Target</span>
 					<span class="w-36 shrink-0">Gender</span>
 					<span class="w-9 shrink-0" aria-hidden="true"></span>
 				</div>
@@ -293,34 +362,49 @@
 					{#each rows as e (e.id)}
 						<!-- TERM ROW: STACKED CARD ON MOBILE, ALIGNED COLUMNS ON DESKTOP; CHANGES SAVE ON BLUR -->
 						<div
-							class="flex flex-col gap-2 p-2.5 transition-colors hover:bg-black/[0.015] dark:hover:bg-white/[0.015] sm:flex-row sm:items-center sm:gap-3 sm:p-2"
+							class="flex flex-col gap-2 p-2.5 transition-colors hover:bg-black/[0.015] dark:hover:bg-white/[0.015] sm:p-2"
 						>
-							<input
-								bind:value={e.raw}
-								on:change={() => saveRow(e)}
-								placeholder="原文"
-								aria-label="Raw term (Chinese)"
-								class="w-full min-w-0 rounded-md border border-black/10 bg-transparent px-2.5 py-1.5 text-sm outline-none transition-colors hover:border-black/20 focus:border-sky-500 dark:border-white/[0.06] dark:hover:border-white/20 sm:flex-1"
-							/>
-							<input
-								bind:value={e.translation}
-								on:change={() => saveRow(e)}
-								placeholder="Translation"
-								aria-label="English translation"
-								class="w-full min-w-0 rounded-md border border-black/10 bg-transparent px-2.5 py-1.5 text-sm outline-none transition-colors hover:border-black/20 focus:border-sky-500 dark:border-white/[0.06] dark:hover:border-white/20 sm:flex-1"
-							/>
-							<!-- GENDER + DELETE SHARE A ROW ON MOBILE, BECOME ALIGNED COLUMNS ON DESKTOP (sm:contents) -->
-							<div class="flex items-center gap-2 sm:contents">
-								<Select
-									items={GENDER_ITEMS}
-									value={e.gender}
-									on:change={(ev) => setRowGender(e, ev.detail)}
-									class="flex-1 sm:w-36 sm:flex-none"
+							<!-- PRIMARY FIELDS: RAW · TRANSLATION · GENDER · DELETE (ALIGN WITH THE COLUMN HEADERS) -->
+							<div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+								<input
+									bind:value={e.source}
+									on:change={() => saveRow(e)}
+									placeholder="Source term"
+									aria-label="Source term"
+									class="w-full min-w-0 rounded-md border border-black/10 bg-transparent px-2.5 py-1.5 text-sm outline-none transition-colors hover:border-black/20 focus:border-sky-500 dark:border-white/[0.06] dark:hover:border-white/20 sm:flex-1"
 								/>
-								<Button variant="danger" size="sm" class="shrink-0" on:click={() => removeRow(e.id)}>
-									<Trash2 size={15} /><span class="sr-only">Delete term</span>
-								</Button>
+								<input
+									bind:value={e.target}
+									on:change={() => saveRow(e)}
+									placeholder="Target rendering"
+									aria-label="Target-language rendering"
+									class="w-full min-w-0 rounded-md border border-black/10 bg-transparent px-2.5 py-1.5 text-sm outline-none transition-colors hover:border-black/20 focus:border-sky-500 dark:border-white/[0.06] dark:hover:border-white/20 sm:flex-1"
+								/>
+								<!-- GENDER + KEBAB SHARE A ROW ON MOBILE, BECOME ALIGNED COLUMNS ON DESKTOP (sm:contents) -->
+								<div class="flex items-center gap-2 sm:contents">
+									<Select
+										items={GENDER_ITEMS}
+										value={e.gender}
+										on:change={(ev) => setRowGender(e, ev.detail)}
+										class="flex-1 sm:w-36 sm:flex-none"
+									/>
+									<!-- ROW ACTIONS: TRANSLATE FROM RAW / DELETE -->
+									<ActionMenu
+										class="shrink-0"
+										label="Term actions"
+										items={ROW_MENU}
+										on:select={(ev) => onRowAction(e, ev.detail)}
+									/>
+								</div>
 							</div>
+							<!-- CONTEXT: TRANSLATOR-FACING NOTE — FULL-WIDTH SECOND LINE, DIMMED TO READ AS SECONDARY -->
+							<input
+								bind:value={e.context}
+								on:change={() => saveRow(e)}
+								placeholder="Context — who/what this is, to guide translation (optional)"
+								aria-label="Translator context note"
+								class="w-full min-w-0 rounded-md border border-black/[0.06] bg-transparent px-2.5 py-1.5 text-xs opacity-75 outline-none transition-colors hover:border-black/20 focus:border-sky-500 focus:opacity-100 dark:border-white/[0.045] dark:hover:border-white/20"
+							/>
 						</div>
 					{/each}
 				</div>
@@ -387,18 +471,18 @@
 <Modal open={showAdd} title="Add term" size="sm" on:close={() => (showAdd = false)}>
 	<form class="flex flex-col gap-4" on:submit|preventDefault={addRow}>
 		<label class="block">
-			<span class="mb-1 block text-xs font-medium opacity-60">原文 (raw)</span>
+			<span class="mb-1 block text-xs font-medium opacity-60">Source term</span>
 			<input
-				bind:value={newRaw}
-				placeholder="原文"
+				bind:value={newSource}
+				placeholder="source term"
 				class="w-full rounded-md border border-black/10 bg-transparent px-2.5 py-2 text-sm outline-none focus:border-sky-500 dark:border-white/[0.06]"
 			/>
 		</label>
 		<label class="block">
-			<span class="mb-1 block text-xs font-medium opacity-60">Translation</span>
+			<span class="mb-1 block text-xs font-medium opacity-60">Target rendering</span>
 			<input
-				bind:value={newTranslation}
-				placeholder="translation"
+				bind:value={newTarget}
+				placeholder="target rendering"
 				class="w-full rounded-md border border-black/10 bg-transparent px-2.5 py-2 text-sm outline-none focus:border-sky-500 dark:border-white/[0.06]"
 			/>
 		</label>
@@ -407,6 +491,15 @@
 			<span class="mb-1 block text-xs font-medium opacity-60">Gender</span>
 			<Select items={GENDER_ITEMS} value={newGender} on:change={(e) => setNewGender(e.detail)} />
 		</div>
+		<label class="block">
+			<span class="mb-1 block text-xs font-medium opacity-60">Context (optional)</span>
+			<textarea
+				bind:value={newContext}
+				rows="2"
+				placeholder="Who or what this is — guides how it's translated (e.g. protagonist's senior martial brother)"
+				class="w-full resize-y rounded-md border border-black/10 bg-transparent px-2.5 py-2 text-sm outline-none focus:border-sky-500 dark:border-white/[0.06]"
+			></textarea>
+		</label>
 		<!-- HIDDEN SUBMIT: LETS ENTER SUBMIT THE FORM WHILE THE VISIBLE ACTION LIVES IN THE FOOTER -->
 		<button type="submit" class="hidden" disabled={busy} aria-hidden="true"></button>
 	</form>

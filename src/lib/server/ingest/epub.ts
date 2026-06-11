@@ -63,8 +63,9 @@ function resolvePath(base: string, rel: string): string {
 	return out.join('/');
 }
 
-// IMPORT AN EPUB FILE INTO AN ORDERED LIST OF CHAPTERS
-export function importEpub(bytes: Uint8Array, fallbackTitle: string): ImportedBook {
+// IMPORT AN EPUB FILE INTO AN ORDERED LIST OF CHAPTERS. `hints` ARE THE SOURCE LANGUAGE'S LEGACY
+// CHARSET CANDIDATES (e.g. JP Shift_JIS) FOR XHTML ENTRIES THAT AREN'T UTF-8 AND CARRY NO DECLARATION.
+export function importEpub(bytes: Uint8Array, fallbackTitle: string, hints: string[] = []): ImportedBook {
 	// EPUB IS A ZIP — REJECT ANYTHING THAT ISN'T (MAGIC BYTES "PK\x03\x04" / EMPTY-ARCHIVE "PK\x05\x06").
 	if (bytes.length < 4 || bytes[0] !== 0x50 || bytes[1] !== 0x4b || (bytes[2] !== 0x03 && bytes[2] !== 0x05)) {
 		throw new Error('Not a valid EPUB (not a ZIP archive).');
@@ -80,8 +81,8 @@ export function importEpub(bytes: Uint8Array, fallbackTitle: string): ImportedBo
 			return TEXT_ENTRY_RE.test(f.name) || f.name === 'META-INF/container.xml';
 		},
 	});
-	// DECODE PER-ENTRY BY DETECTED/DECLARED CHARSET (EPUB XHTML MAY BE GBK/BIG5, NOT JUST UTF-8).
-	const get = (name: string): string | null => (files[name] ? decodeTextBytes(files[name], true) : null);
+	// DECODE PER-ENTRY BY DETECTED/DECLARED CHARSET (EPUB XHTML MAY BE LEGACY CJK, NOT JUST UTF-8).
+	const get = (name: string): string | null => (files[name] ? decodeTextBytes(files[name], true, hints) : null);
 
 	// LOCATE THE OPF VIA container.xml
 	const container = get('META-INF/container.xml');
@@ -106,7 +107,7 @@ export function importEpub(bytes: Uint8Array, fallbackTitle: string): ImportedBo
 
 	// SPINE: ORDERED idrefs
 	const spineBlock = /<spine[^>]*>([\s\S]*?)<\/spine>/i.exec(opf)?.[1] ?? '';
-	const chapters: { titleZh: string; contentZh: string }[] = [];
+	const chapters: { titleSource: string; contentSource: string }[] = [];
 	let seq = 0;
 	for (const m of spineBlock.matchAll(/<itemref\s+[^>]*idref="([^"]+)"/gi)) {
 		const href = manifest.get(m[1]);
@@ -117,7 +118,7 @@ export function importEpub(bytes: Uint8Array, fallbackTitle: string): ImportedBo
 		const { title: chTitle, text } = xhtmlToText(raw);
 		if (!text || text.length < 4) continue;
 		seq += 1;
-		chapters.push({ titleZh: chTitle ?? `第 ${seq} 章`, contentZh: text });
+		chapters.push({ titleSource: chTitle ?? `Chapter ${seq}`, contentSource: text });
 	}
 
 	if (chapters.length === 0) throw new Error('No readable chapters found in EPUB.');

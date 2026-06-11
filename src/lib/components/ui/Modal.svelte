@@ -46,11 +46,10 @@
 		role="dialog"
 		aria-modal="true"
 	>
-		<!-- BACKDROP OVERLAY -->
+		<!-- BACKDROP OVERLAY — NO RIPPLE (A FULL-SCREEN DISMISS SHOULDN'T FLASH A RIPPLE ON CLICK) -->
 		<button
 			class="absolute inset-0 bg-black/40 backdrop-blur-sm"
 			on:click={close}
-			use:ripple
 			aria-label="Close dialog"
 			tabindex="-1"
 			transition:fade={{ duration: 150 }}

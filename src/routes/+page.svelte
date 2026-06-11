@@ -8,16 +8,25 @@
 	// IMPORTED MODULES
 	import { browser } from '$app/environment';
 	import { goto } from '$app/navigation';
+	import { get } from 'svelte/store';
+	import { AUTO_SOURCE, languageOptions, sameLanguage } from '$lib/languages';
+	import { settings } from '$lib/stores/settings';
 	import { ripple } from '$lib/actions/ripple';
 	import { cn } from '$lib/utils/cn';
 	// IMPORTED DEP-COMPONENTS
 	import BookOpen from 'lucide-svelte/icons/book-open';
 	import Check from 'lucide-svelte/icons/check';
+	import Globe from 'lucide-svelte/icons/globe';
+	import Image from 'lucide-svelte/icons/image';
 	import Library from 'lucide-svelte/icons/library';
+	import ListOrdered from 'lucide-svelte/icons/list-ordered';
 	import Plus from 'lucide-svelte/icons/plus';
 	import Search from 'lucide-svelte/icons/search';
 	import Trash2 from 'lucide-svelte/icons/trash-2';
+	// IMPORTED TYPES
+	import type { MenuAction } from '$lib/components/ui/ActionMenu.svelte';
 	// IMPORTED COMPONENTS
+	import ActionMenu from '$lib/components/ui/ActionMenu.svelte';
 	import ConfirmDialog from '$lib/components/ui/ConfirmDialog.svelte';
 	import Modal from '$lib/components/ui/Modal.svelte';
 	import Select from '$lib/components/ui/Select.svelte';
@@ -29,9 +38,14 @@
 	type BookSummary = {
 		id: string;
 		title: string;
-		titleEn: string | null;
+		titleTarget: string | null;
 		author: string | null;
+		authorTarget: string | null;
 		sourceType: SourceType;
+		sourceLang: string;
+		targetLang: string;
+		sourceUrl: string | null;
+		coverUrl: string | null;
 		chapterCount: number;
 		readChapters: number;
 		translatedChapters: number;
@@ -83,6 +97,12 @@
 		{ value: 'finished', label: 'Finished' },
 	];
 	const PREFS_KEY = 'xianslate:library';
+	// PER-CARD KEBAB MENU IS BUILT PER BOOK (SEE bookActions) SO THE COVER ACTION ONLY APPEARS FOR WEB
+	// BOOKS WITH A SOURCE PAGE. ALWAYS TAPPABLE (THE OLD HOVER-ONLY DELETE COULDN'T BE TRIGGERED ON TOUCH).
+	// LANGUAGE OPTIONS FOR THE ADD-BOOK DIALOG. THE SOURCE PICKER LEADS WITH "Auto-detect" (the server
+	// infers the source language from the fetched/imported text); the target is always an explicit language.
+	const TARGET_LANG_ITEMS = languageOptions();
+	const SOURCE_LANG_ITEMS = [{ value: AUTO_SOURCE, label: 'Auto-detect' }, ...TARGET_LANG_ITEMS];
 
 	// -- STATES -- //
 
@@ -96,6 +116,10 @@
 	let emptyTitle = '';
 	let emptyAuthor = '';
 	let pendingDelete: BookSummary | null = null;
+	// PER-BOOK DIRECTION FOR THE NEXT FETCH/IMPORT/CREATE — SOURCE DEFAULTS TO AUTO-DETECT; TARGET IS
+	// SEEDED FROM THE GLOBAL DEFAULT. BOTH ARE EDITABLE IN THE ADD-BOOK DIALOG.
+	let newSourceLang = AUTO_SOURCE;
+	let newTargetLang = get(settings).newBookTargetLang;
 
 	// SORT / FILTER / SEARCH (PERSISTED IN localStorage)
 	let sortKey: SortKey = 'recent';
@@ -107,9 +131,8 @@
 
 	// MOST RECENTLY *READ* BOOK (NOT THE FIRST-CREATED). FALLS BACK TO ANY BOOK WITH A RESUME POINT.
 	$: continueBook =
-		[...booksList]
-			.filter((b) => b.lastChapterUuid)
-			.sort((a, b) => (b.lastReadAt ?? 0) - (a.lastReadAt ?? 0))[0] ?? null;
+		[...booksList].filter((b) => b.lastChapterUuid).sort((a, b) => (b.lastReadAt ?? 0) - (a.lastReadAt ?? 0))[0] ??
+		null;
 
 	// SHELF = SEARCH + SOURCE + STATUS FILTERED, THEN SORTED. THE HERO STAYS GLOBAL (UNFILTERED).
 	$: q = search.trim().toLowerCase();
@@ -120,13 +143,17 @@
 			if (statusFilter === 'unread' && b.readChapters > 0) return false;
 			if (statusFilter === 'finished' && !isFinished(b)) return false;
 			if (q) {
-				const hay = `${b.titleEn ?? ''} ${b.title} ${b.author ?? ''}`.toLowerCase();
+				const hay = `${b.titleTarget ?? ''} ${b.title} ${b.authorTarget ?? ''} ${b.author ?? ''}`.toLowerCase();
 				if (!hay.includes(q)) return false;
 			}
 			return true;
 		}),
 		sortKey,
 	);
+
+	// SOURCE AND TARGET CAN'T BE THE SAME LANGUAGE (e.g. Chinese → Chinese). 'auto' SOURCE IS ALLOWED —
+	// IT'S RESOLVED FROM THE CONTENT AT FETCH/IMPORT.
+	$: langInvalid = sameLanguage(newSourceLang, newTargetLang);
 
 	// -- REACTIVE STATEMENTS -- //
 
@@ -146,7 +173,7 @@
 
 	function sortBooks(list: BookSummary[], key: SortKey): BookSummary[] {
 		const arr = [...list];
-		const name = (b: BookSummary) => (b.titleEn || b.title || '').toLowerCase();
+		const name = (b: BookSummary) => (b.titleTarget || b.title || '').toLowerCase();
 		switch (key) {
 			case 'title':
 				return arr.sort((a, b) => name(a).localeCompare(name(b)));
@@ -202,6 +229,12 @@
 		return COVERS[h % COVERS.length];
 	}
 
+	// HIDE A BROKEN COVER IMAGE SO THE GRADIENT PLACEHOLDER BEHIND IT SHOWS THROUGH (CAST LIVES IN SCRIPT —
+	// TS `as` ISN'T ALLOWED INSIDE A SVELTE TEMPLATE EXPRESSION).
+	function hideImg(e: Event) {
+		(e.currentTarget as HTMLImageElement).style.display = 'none';
+	}
+
 	async function loadBooks() {
 		loading = true;
 		try {
@@ -214,16 +247,24 @@
 		}
 	}
 
-	// LAZILY TRANSLATE + CACHE ANY MISSING BOOK TITLES (SEQUENTIAL TO AVOID API SPAM)
+	// LAZILY TRANSLATE + CACHE ANY MISSING BOOK TITLES / AUTHOR NAMES (SEQUENTIAL TO AVOID API SPAM)
 	async function backfillTitles() {
 		for (const b of booksList) {
-			if (b.titleEn) continue;
+			if (b.titleTarget && (!b.author || b.authorTarget)) continue;
 			try {
 				const res = await fetch(`/api/books/${b.id}`, { method: 'POST' });
-				const { titleEn } = await res.json();
-				booksList = booksList.map((x) => (x.id === b.id ? { ...x, titleEn } : x));
+				const { titleTarget, authorTarget } = await res.json();
+				booksList = booksList.map((x) =>
+					x.id === b.id
+						? {
+								...x,
+								titleTarget: titleTarget ?? x.titleTarget,
+								authorTarget: authorTarget ?? x.authorTarget,
+							}
+						: x,
+				);
 			} catch {
-				// IGNORE — KEEP THE ORIGINAL TITLE
+				// IGNORE — KEEP THE ORIGINAL TITLE / AUTHOR
 			}
 		}
 	}
@@ -241,12 +282,18 @@
 	async function addEmptyBook() {
 		const title = emptyTitle.trim();
 		if (!title || busy) return;
+		if (langInvalid) return toast.error('Source and target must be different languages.');
 		busy = true;
 		try {
 			const res = await fetch('/api/books', {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ title, author: emptyAuthor.trim() || undefined }),
+				body: JSON.stringify({
+					title,
+					author: emptyAuthor.trim() || undefined,
+					sourceLang: newSourceLang,
+					targetLang: newTargetLang,
+				}),
 			});
 			if (!res.ok) throw new Error((await res.json().catch(() => ({}))).message ?? 'Could not create book');
 			const { id } = await res.json();
@@ -261,12 +308,13 @@
 
 	async function addByUrl() {
 		if (!urlInput.trim()) return;
+		if (langInvalid) return toast.error('Source and target must be different languages.');
 		busy = true;
 		try {
 			const res = await fetch('/api/fetch', {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ url: urlInput.trim() }),
+				body: JSON.stringify({ url: urlInput.trim(), sourceLang: newSourceLang, targetLang: newTargetLang }),
 			});
 			if (!res.ok) throw new Error((await res.json().catch(() => ({}))).message ?? 'Fetch failed');
 			const view = await res.json();
@@ -281,11 +329,14 @@
 	}
 
 	async function importFile(kind: 'epub' | 'txt', file: File) {
+		if (langInvalid) return toast.error('Source and target must be different languages.');
 		busy = true;
 		const tid = toast.loading(`Importing ${file.name}…`);
 		try {
 			const fd = new FormData();
 			fd.append('file', file);
+			fd.append('sourceLang', newSourceLang);
+			fd.append('targetLang', newTargetLang);
 			const res = await fetch(`/api/import/${kind}`, { method: 'POST', body: fd });
 			if (!res.ok) throw new Error((await res.json().catch(() => ({}))).message ?? 'Import failed');
 			const data = await res.json();
@@ -299,9 +350,48 @@
 		}
 	}
 
-	function askDelete(b: BookSummary, ev: Event) {
-		ev.stopPropagation();
-		pendingDelete = b;
+	// KEBAB ROUTER FOR A BOOK CARD — OPEN / MANAGE CHAPTERS / DELETE.
+	// WEB BOOKS WITH A SOURCE PAGE CAN (RE)FETCH THEIR COVER FROM IT.
+	function canFetchCover(b: BookSummary): boolean {
+		return !!b.sourceUrl && /^https?:\/\//i.test(b.sourceUrl);
+	}
+
+	function bookActions(b: BookSummary): MenuAction[] {
+		const acts: MenuAction[] = [
+			{ value: 'open', label: 'Open', icon: BookOpen },
+			{ value: 'manage', label: 'Manage chapters', icon: ListOrdered },
+		];
+		if (canFetchCover(b))
+			acts.push({ value: 'cover', label: b.coverUrl ? 'Refetch cover' : 'Fetch cover', icon: Image });
+		acts.push({ value: 'delete', label: 'Delete', icon: Trash2, danger: true });
+		return acts;
+	}
+
+	function onBookAction(b: BookSummary, action: string) {
+		if (action === 'open') openBook(b);
+		else if (action === 'manage') goto(`/book/${b.id}/manage/`);
+		else if (action === 'cover') fetchCover(b);
+		else if (action === 'delete') pendingDelete = b;
+	}
+
+	// (RE)FETCH A BOOK COVER FROM ITS SOURCE PAGE, THEN UPDATE THE CARD IN PLACE (NO RELOAD). A CACHE-BUST
+	// SUFFIX FORCES THE <img> TO RELOAD EVEN WHEN THE COVER URL IS UNCHANGED (E.G. THE SITE SWAPPED THE ART).
+	async function fetchCover(b: BookSummary) {
+		const tid = toast.loading(b.coverUrl ? 'Refetching cover…' : 'Fetching cover…');
+		try {
+			const res = await fetch(`/api/books/${b.id}/cover`, { method: 'POST' });
+			const data = await res.json();
+			if (!res.ok) throw new Error(data.message ?? 'Could not fetch the cover.');
+			if (!data.coverUrl) {
+				toast.error('No cover image found on this book’s source page.', { id: tid });
+				return;
+			}
+			const bust = `${data.coverUrl}${data.coverUrl.includes('?') ? '&' : '?'}_=${Date.now()}`;
+			booksList = booksList.map((x) => (x.id === b.id ? { ...x, coverUrl: bust } : x));
+			toast.success(b.coverUrl ? 'Cover refreshed!' : 'Cover added!', { id: tid });
+		} catch (e) {
+			toast.error(e instanceof Error ? e.message : 'Could not fetch the cover.', { id: tid });
+		}
 	}
 
 	async function confirmDelete() {
@@ -339,52 +429,64 @@
 				<span class="flex items-center gap-2 text-xl font-bold tracking-tight"
 					><BookOpen size={20} class="text-sky-600" /> Xianslate</span
 				>
-				<span class="hidden text-xs opacity-50 sm:inline">· CN → EN novel reader</span>
+				<span class="hidden text-xs opacity-50 sm:inline">· multilingual novel reader</span>
 			</div>
-			<!-- GLOSSARY NAVIGATION LINK -->
-			<a
-				use:ripple
-				href="/glossary/"
-				class="hover:bg-current/5 inline-flex items-center gap-1.5 rounded-lg border border-black/[0.06] px-3 py-1.5 text-sm dark:border-white/[0.045]"
-			>
-				<Library size={15} /> Glossary
-			</a>
+			<!-- NAVIGATION LINKS + PRIMARY "ADD BOOK" CTA -->
+			<div class="flex items-center gap-2">
+				<!-- SITES & AI COST DASHBOARD — ICON-ONLY ON MOBILE TO LEAVE ROOM FOR THE PRIMARY CTA -->
+				<a
+					use:ripple
+					href="/admin/"
+					class="hover:bg-current/5 inline-flex items-center gap-1.5 rounded-lg border border-black/[0.06] px-2.5 py-1.5 text-sm dark:border-white/[0.045] sm:px-3"
+					aria-label="Sites"
+				>
+					<Globe size={15} /> <span class="hidden sm:inline">Sites</span>
+				</a>
+				<!-- GLOSSARY NAVIGATION LINK -->
+				<a
+					use:ripple
+					href="/glossary/"
+					class="hover:bg-current/5 inline-flex items-center gap-1.5 rounded-lg border border-black/[0.06] px-2.5 py-1.5 text-sm dark:border-white/[0.045] sm:px-3"
+					aria-label="Glossary"
+				>
+					<Library size={15} /> <span class="hidden sm:inline">Glossary</span>
+				</a>
+				<!-- PRIMARY CALL TO ACTION -->
+				<button
+					use:ripple
+					on:click={() => (showAddBook = true)}
+					class="inline-flex items-center gap-1.5 rounded-lg bg-sky-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-sky-700"
+				>
+					<Plus size={15} /> Add book
+				</button>
+			</div>
 		</div>
 	</header>
 
 	<main class="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
-		<!-- ADD BOOK BAR -->
-		<section class="mb-8">
-			<button
-				use:ripple
-				on:click={() => (showAddBook = true)}
-				class="inline-flex items-center gap-1.5 rounded-xl border border-dashed border-black/[0.12] px-4 py-2.5 text-sm opacity-70 hover:opacity-100 dark:border-white/[0.08]"
-			>
-				<Plus size={15} /> Add a book
-			</button>
-			<input
-				bind:this={epubInput}
-				type="file"
-				accept=".epub"
-				class="hidden"
-				on:change={(e) => {
-					const f = e.currentTarget.files?.[0];
-					if (f) importFile('epub', f);
-					e.currentTarget.value = '';
-				}}
-			/>
-			<input
-				bind:this={txtInput}
-				type="file"
-				accept=".txt,text/plain"
-				class="hidden"
-				on:change={(e) => {
-					const f = e.currentTarget.files?.[0];
-					if (f) importFile('txt', f);
-					e.currentTarget.value = '';
-				}}
-			/>
-		</section>
+		<!-- HIDDEN FILE INPUTS — TRIGGERED FROM THE ADD-BOOK DIALOG (THE VISIBLE CTA LIVES IN THE HEADER) -->
+		<input
+			bind:this={epubInput}
+			type="file"
+			accept=".epub"
+			class="hidden"
+			on:change={(e) => {
+				const f = e.currentTarget.files?.[0];
+				if (f) importFile('epub', f);
+				e.currentTarget.value = '';
+			}}
+		/>
+		<input
+			bind:this={txtInput}
+			type="file"
+			accept=".txt,text/plain"
+			class="hidden"
+			on:change={(e) => {
+				const f = e.currentTarget.files?.[0];
+				if (f) importFile('txt', f);
+				e.currentTarget.value = '';
+			}}
+		/>
 
 		<!-- CONTINUE READING HERO -->
 		{#if continueBook}
@@ -404,12 +506,24 @@
 					>
 						<span class="absolute left-0 top-0 h-full w-1.5 bg-black/20"></span>
 						<span class="line-clamp-3 text-[11px] font-semibold leading-tight text-white drop-shadow"
-							>{continueBook.titleEn || continueBook.title}</span
+							>{continueBook.titleTarget || continueBook.title}</span
 						>
+						<!-- FETCHED BOOK COVER — OVERLAYS THE GRADIENT FALLBACK; HIDES ITSELF IF IT FAILS TO LOAD -->
+						{#if continueBook.coverUrl}
+							<img
+								src={continueBook.coverUrl}
+								alt=""
+								class="absolute inset-0 h-full w-full object-cover"
+								on:error={hideImg}
+							/>
+						{/if}
 					</div>
 					<div class="flex min-w-0 flex-1 flex-col justify-center">
-						<span class="line-clamp-2 text-lg font-bold">{continueBook.titleEn || continueBook.title}</span>
-						{#if continueBook.author}<span class="mt-0.5 text-sm opacity-60">{continueBook.author}</span
+						<span class="line-clamp-2 text-lg font-bold"
+							>{continueBook.titleTarget || continueBook.title}</span
+						>
+						{#if continueBook.author}<span class="mt-0.5 text-sm opacity-60"
+								>{continueBook.authorTarget || continueBook.author}</span
 							>{/if}
 						<!-- READING PROGRESS -->
 						{#if continueBook.chapterCount > 0}
@@ -519,9 +633,24 @@
 							>
 								<!-- SPINE -->
 								<span class="absolute left-0 top-0 h-full w-2 bg-black/20"></span>
-								<div class="flex items-start justify-between gap-1">
+								<!-- FETCHED COVER — FULL-BLEED OVER THE GRADIENT; HIDES ITSELF IF IT FAILS TO LOAD -->
+								{#if b.coverUrl}
+									<img
+										src={b.coverUrl}
+										alt=""
+										class="absolute inset-0 h-full w-full object-cover"
+										on:error={hideImg}
+									/>
+									<!-- BOTTOM SCRIM KEEPS THE TITLE READABLE OVER ANY COVER — linear-gradient CAN'T BE A TAILWIND CLASS -->
 									<span
-										class="ml-1 inline-flex w-fit rounded bg-black/25 px-1.5 py-0.5 text-[9px] font-bold tracking-wider text-white"
+										class="pointer-events-none absolute inset-x-0 bottom-0 h-1/2"
+										style="background: linear-gradient(to top, rgba(0,0,0,0.85), transparent);"
+									></span>
+								{/if}
+								<!-- TOP ROW: SOURCE + DONE BADGES (THE KEBAB LIVES IN THE FOOTER BELOW, OFF THE COVER). -->
+								<div class="flex flex-wrap items-center gap-1">
+									<span
+										class="inline-flex w-fit rounded bg-black/25 px-1.5 py-0.5 text-[9px] font-bold tracking-wider text-white"
 										>{SOURCE_BADGE[b.sourceType]}</span
 									>
 									{#if done}
@@ -531,15 +660,10 @@
 										>
 									{/if}
 								</div>
+								<!-- TITLE PINNED TO THE COVER BOTTOM (OVER ART OR GRADIENT). THE FOOTER BELOW SHOWS ONLY
+								     AUTHOR/CHAPTER META, SO THE TITLE ISN'T DUPLICATED. -->
 								<span class="ml-1 line-clamp-4 text-sm font-bold leading-tight text-white drop-shadow"
-									>{b.titleEn || b.title}</span
-								>
-								<!-- DELETE BUTTON -->
-								<button
-									use:ripple
-									on:click={(e) => askDelete(b, e)}
-									class="absolute right-1.5 top-1.5 hidden rounded-md bg-black/30 p-1.5 text-white/90 hover:bg-red-600 group-hover:block"
-									aria-label="Delete book"><Trash2 size={14} /></button
+									>{b.titleTarget || b.title}</span
 								>
 								<!-- READING-PROGRESS BAR PINNED TO THE COVER FOOT -->
 								{#if b.readChapters > 0 && !done}
@@ -549,18 +673,32 @@
 									</div>
 								{/if}
 							</div>
-							<div class="px-0.5">
-								<p class="line-clamp-1 text-sm font-medium">{b.titleEn || b.title}</p>
-								<p class="flex items-center gap-1 text-xs opacity-50">
-									{#if b.author}<span class="truncate">{b.author}</span> ·{/if}
-									<span class="shrink-0">
-										{#if done}Finished · {b.chapterCount} ch
-										{:else if b.readChapters > 0}{b.readChapters}/{b.chapterCount} ch · {Math.round(
-												frac * 100,
-											)}%
-										{:else}{b.chapterCount} ch{/if}
-									</span>
-								</p>
+							<!-- FOOTER: TITLE/META ON THE LEFT, BOOK-ACTIONS KEBAB ON THE RIGHT. THE KEBAB IS OUTSIDE THE
+							     CLICKABLE COVER, SO IT NEVER FIRES THE CARD RIPPLE/OPEN AND IS ALWAYS VISIBLE (NOT OVER ART). -->
+							<div class="flex items-center justify-between gap-1 px-0.5">
+								<div class="min-w-0 flex-1">
+									<!-- META ONLY — THE TITLE LIVES ON THE COVER ABOVE, SO IT ISN'T REPEATED HERE. -->
+									<p class="flex items-center gap-1 text-xs opacity-60">
+										{#if b.author}<span class="truncate">{b.authorTarget || b.author}</span> ·{/if}
+										<span class="shrink-0">
+											{#if done}Finished · {b.chapterCount} ch
+											{:else if b.readChapters > 0}{b.readChapters}/{b.chapterCount} ch · {Math.round(
+													frac * 100,
+												)}%
+											{:else}{b.chapterCount} ch{/if}
+										</span>
+									</p>
+								</div>
+								<!-- svelte-ignore a11y-no-static-element-interactions a11y-click-events-have-key-events -->
+								<div class="-mr-1 shrink-0" on:click|stopPropagation>
+									<ActionMenu
+										label="Book actions"
+										items={bookActions(b)}
+										iconSize={20}
+										class="rounded-lg p-2 opacity-60 hover:bg-black/5 hover:opacity-100 dark:hover:bg-white/10"
+										on:select={(e) => onBookAction(b, e.detail)}
+									/>
+								</div>
 							</div>
 						</div>
 					{/each}
@@ -573,15 +711,48 @@
 <!-- ADD A BOOK: FROM URL, FILE IMPORT, OR AN EMPTY BOOK TO CURATE LATER -->
 <Modal open={showAddBook} title="Add a book" size="md" on:close={() => (showAddBook = false)}>
 	<div class="flex flex-col gap-5">
+		<!-- LANGUAGE DIRECTION FOR THE NEW BOOK — APPLIES TO WHICHEVER ADD METHOD BELOW YOU USE -->
+		<div class="min-w-0">
+			<span class="mb-1.5 block text-xs font-medium opacity-60">Languages</span>
+			<!-- min-w-0 ON EACH COLUMN LETS THE SELECTS SHRINK + TRUNCATE INSTEAD OF FORCING HORIZONTAL OVERFLOW -->
+			<div class="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:items-end">
+				<div class="min-w-0">
+					<span class="mb-1 block text-xs opacity-50">Source (original)</span>
+					<Select
+						items={SOURCE_LANG_ITEMS}
+						value={newSourceLang}
+						on:change={(e) => (newSourceLang = e.detail)}
+					/>
+				</div>
+				<span class="hidden pb-2 text-center opacity-40 sm:block">→</span>
+				<div class="min-w-0">
+					<span class="mb-1 block text-xs opacity-50">Target (translation)</span>
+					<Select
+						items={TARGET_LANG_ITEMS}
+						value={newTargetLang}
+						on:change={(e) => (newTargetLang = e.detail)}
+					/>
+				</div>
+			</div>
+			<!-- INLINE VALIDATION: SAME LANGUAGE ON BOTH SIDES IS NOT A TRANSLATION -->
+			{#if langInvalid}
+				<p class="mt-1.5 text-xs text-red-500">Source and target must be different languages.</p>
+			{/if}
+		</div>
+
 		<!-- FROM URL -->
-		<form class="flex flex-col gap-2" on:submit|preventDefault={addByUrl}>
-			<TextField
-				bind:value={urlInput}
-				type="url"
-				label="From a URL"
-				placeholder="Paste a uukanshu.cc chapter URL…"
-			/>
-			<Button type="submit" variant="primary" loading={busy} disabled={busy || !urlInput.trim()} class="w-fit">
+		<form
+			class="flex min-w-0 flex-col gap-2 border-t border-black/[0.06] pt-4 dark:border-white/[0.045]"
+			on:submit|preventDefault={addByUrl}
+		>
+			<TextField bind:value={urlInput} type="url" label="From a URL" placeholder="Paste a chapter URL…" />
+			<Button
+				type="submit"
+				variant="primary"
+				loading={busy}
+				disabled={busy || langInvalid || !urlInput.trim()}
+				class="w-fit"
+			>
 				Add from URL
 			</Button>
 		</form>
@@ -590,20 +761,20 @@
 		<div class="border-t border-black/[0.06] pt-4 dark:border-white/[0.045]">
 			<span class="mb-2 block text-xs font-medium opacity-60">Import a file</span>
 			<div class="flex flex-wrap gap-2">
-				<Button on:click={() => epubInput.click()} disabled={busy}>EPUB</Button>
-				<Button on:click={() => txtInput.click()} disabled={busy}>TXT</Button>
+				<Button on:click={() => epubInput.click()} disabled={busy || langInvalid}>EPUB</Button>
+				<Button on:click={() => txtInput.click()} disabled={busy || langInvalid}>TXT</Button>
 			</div>
 		</div>
 
 		<!-- EMPTY BOOK: CREATE NOW, CURATE GLOSSARY / ADD CHAPTERS LATER -->
 		<form
-			class="flex flex-col gap-3 border-t border-black/[0.06] pt-4 dark:border-white/[0.045]"
+			class="flex min-w-0 flex-col gap-3 border-t border-black/[0.06] pt-4 dark:border-white/[0.045]"
 			on:submit|preventDefault={addEmptyBook}
 		>
 			<span class="text-xs font-medium opacity-60">Create an empty book</span>
 			<TextField bind:value={emptyTitle} label="Title" placeholder="Book title…" />
 			<TextField bind:value={emptyAuthor} label="Author" placeholder="Author (optional)" />
-			<Button type="submit" loading={busy} disabled={busy || !emptyTitle.trim()} class="w-fit">
+			<Button type="submit" loading={busy} disabled={busy || langInvalid || !emptyTitle.trim()} class="w-fit">
 				Create empty book
 			</Button>
 		</form>
@@ -614,7 +785,9 @@
 <ConfirmDialog
 	open={!!pendingDelete}
 	title="Delete book?"
-	message={pendingDelete ? `"${pendingDelete.title}" and its glossary will be permanently removed.` : ''}
+	message={pendingDelete
+		? `"${pendingDelete.titleTarget || pendingDelete.title}" and its glossary will be permanently removed.`
+		: ''}
 	confirmLabel="Delete"
 	on:confirm={confirmDelete}
 	on:cancel={() => (pendingDelete = null)}

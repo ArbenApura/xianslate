@@ -2,11 +2,15 @@
 import { browser } from '$app/environment';
 // IMPORTED DEP-MODULES
 import { writable } from 'svelte/store';
+// IMPORTED MODULES
+import { DEFAULT_SOURCE_LANG, DEFAULT_TARGET_LANG } from '$lib/languages';
 
 // -- TYPES -- //
 
 export type Theme = 'light' | 'sepia' | 'dark' | 'oled' | 'contrast';
-export type LayoutMode = 'sidebyside' | 'interleaved' | 'en' | 'zh';
+// READING LAYOUT: 'target' = TRANSLATION ONLY, 'source' = ORIGINAL ONLY, plus the two bilingual views.
+// (THESE WERE 'en'/'zh' BEFORE THE APP BECAME LANGUAGE-AGNOSTIC — load() MIGRATES THE OLD VALUES.)
+export type LayoutMode = 'sidebyside' | 'interleaved' | 'target' | 'source';
 export type Align = 'left' | 'justify';
 
 export interface ReaderSettings {
@@ -28,13 +32,16 @@ export interface ReaderSettings {
 	prefetch: number;
 	// ALSO WARM THEIR TRANSLATIONS (FRONT-LOADS DEEPSEEK COST FOR INSTANT NEXT)
 	prefetchTranslate: boolean;
+	// GLOBAL DEFAULT TRANSLATION DIRECTION FOR NEWLY FETCHED/IMPORTED BOOKS (PER-BOOK OVERRIDES AT CREATION)
+	newBookSourceLang: string;
+	newBookTargetLang: string;
 }
 
 // -- CONSTANTS -- //
 
 // BUMP version WHEN DEFAULTS CHANGE — TRIGGERS A ONE-TIME MIGRATION OF SAVED SETTINGS
 export const DEFAULTS: ReaderSettings = {
-	version: 3,
+	version: 4,
 	latinFont: 'literata',
 	cjkFont: 'noto-serif-tc',
 	fontSizePx: 19,
@@ -45,10 +52,12 @@ export const DEFAULTS: ReaderSettings = {
 	align: 'left',
 	indent: false,
 	theme: 'sepia',
-	layout: 'en',
+	layout: 'target',
 	autoExtract: true,
 	prefetch: 1,
 	prefetchTranslate: false,
+	newBookSourceLang: DEFAULT_SOURCE_LANG,
+	newBookTargetLang: DEFAULT_TARGET_LANG,
 };
 
 const KEY = 'xianslate:settings';
@@ -124,7 +133,13 @@ function load(): ReaderSettings {
 			// MIGRATION: MERGE THE USER'S SAVED VALUES *FORWARD* ONTO THE CURRENT DEFAULTS RATHER THAN
 			// DISCARDING THEM ON A version BUMP — A DEFAULTS CHANGE MUST NOT WIPE THE READER'S THEME, LAYOUT,
 			// AND TYPOGRAPHY. NEW KEYS COME FROM DEFAULTS; KNOWN KEYS KEEP THE SAVED VALUE (TYPE-CHECKED).
-			return mergeKnown(parsed);
+			const merged = mergeKnown(parsed);
+			// LAYOUT WAS RENAMED en→target / zh→source WHEN THE READER BECAME LANGUAGE-AGNOSTIC — REMAP A
+			// SAVED LEGACY VALUE SO IT STILL SELECTS THE RIGHT VIEW.
+			const legacyLayout = (parsed as { layout?: string } | null)?.layout;
+			if (legacyLayout === 'en') merged.layout = 'target';
+			else if (legacyLayout === 'zh') merged.layout = 'source';
+			return merged;
 		}
 	} catch {
 		// IGNORE CORRUPT STATE

@@ -6,8 +6,12 @@ import type { Gender, TermDraft } from '$lib/types';
 // -- TYPES -- //
 
 interface CsvRow {
+	// NEW HEADERS (source/target) AND THE LEGACY ONES (raw/translation) ARE BOTH ACCEPTED ON IMPORT.
+	source?: string;
+	target?: string;
 	raw?: string;
 	translation?: string;
+	context?: string;
 	description?: string;
 }
 
@@ -24,7 +28,8 @@ function genderFromTags(tags: string[]): Gender {
 	return 'neuter';
 }
 
-// PARSE A `raw,translation,description` CSV; DERIVE gender FROM #masculine/#feminine TAGS
+// PARSE A `source,target,context,description` CSV (LEGACY `raw,translation` HEADERS ALSO ACCEPTED);
+// DERIVE gender FROM #masculine/#feminine TAGS
 export function parseGlossaryCsv(text: string): TermDraft[] {
 	const parsed = Papa.parse<CsvRow>(text, {
 		header: true,
@@ -32,15 +37,15 @@ export function parseGlossaryCsv(text: string): TermDraft[] {
 		transformHeader: (h) => h.trim().toLowerCase(),
 	});
 	// SURFACE A STRUCTURAL PARSE FAILURE (e.g. UNTERMINATED QUOTE) RATHER THAN SILENTLY KEEPING WHATEVER
-	// ROWS HAPPENED TO PARSE. A MISSING raw/translation HEADER IS CAUGHT BY THE per-row CHECK BELOW.
+	// ROWS HAPPENED TO PARSE. A MISSING source/target HEADER IS CAUGHT BY THE per-row CHECK BELOW.
 	const fatal = parsed.errors.find((e) => e.type === 'Quotes' || e.type === 'Delimiter');
 	if (fatal) throw new Error(`Malformed CSV: ${fatal.message}`);
 	const out: TermDraft[] = [];
 	for (const row of parsed.data) {
 		if (out.length >= MAX_ROWS) throw new Error(`Too many rows (limit ${MAX_ROWS}).`);
-		const raw = row.raw?.trim();
-		const translation = row.translation?.trim();
-		if (!raw || !translation) continue;
+		const source = (row.source ?? row.raw)?.trim();
+		const target = (row.target ?? row.translation)?.trim();
+		if (!source || !target) continue;
 		const tags = (row.description ?? '')
 			.split(/\s+/)
 			.map((t) => t.trim().toLowerCase())
@@ -48,7 +53,8 @@ export function parseGlossaryCsv(text: string): TermDraft[] {
 		const gender = genderFromTags(tags);
 		// PRESERVE NON-GENDER TAGS FOR LOSSLESS ROUND-TRIP
 		const extra = tags.filter((t) => !['#masculine', '#male', '#feminine', '#female', '#neuter'].includes(t));
-		out.push({ raw, translation, gender, tags: extra.length ? extra.join(' ') : null });
+		const context = row.context?.trim() || null;
+		out.push({ source, target, gender, context, tags: extra.length ? extra.join(' ') : null });
 	}
 	return out;
 }
@@ -61,8 +67,13 @@ function descriptionFor(t: TermDraft): string {
 	return parts.join(' ');
 }
 
-// SERIALISE TERMS BACK TO THE SAME `raw,translation,description` FORMAT (ROUND-TRIPS WITH IMPORT)
+// SERIALISE TERMS BACK TO A `source,target,context,description` CSV (ROUND-TRIPS WITH IMPORT)
 export function toGlossaryCsv(terms: TermDraft[]): string {
-	const rows = terms.map((t) => ({ raw: t.raw, translation: t.translation, description: descriptionFor(t) }));
-	return Papa.unparse(rows, { columns: ['raw', 'translation', 'description'] });
+	const rows = terms.map((t) => ({
+		source: t.source,
+		target: t.target,
+		context: t.context ?? '',
+		description: descriptionFor(t),
+	}));
+	return Papa.unparse(rows, { columns: ['source', 'target', 'context', 'description'] });
 }

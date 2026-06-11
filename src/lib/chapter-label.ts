@@ -33,19 +33,22 @@ const CN_UNIT: Record<string, number> = { 十: 10, 百: 100, 千: 1000, 萬: 100
 
 const ZH_NUM = '〇零一二三四五六七八九十百千萬万兩两';
 
-const ZH_CHAPTER_RE = new RegExp(`第\\s*(\\d{1,7}|[${ZH_NUM}]{1,12})\\s*[章回節节卷]`);
+// CJK CHAPTER MARKER — CHINESE 第N章/回/節/卷 AND JAPANESE 第N話/章. KOREAN USES 제N장/화 (HANDLED BELOW).
+const ZH_CHAPTER_RE = new RegExp(`第\\s*(\\d{1,7}|[${ZH_NUM}]{1,12})\\s*[章回節节卷話话]`);
+
+const KO_CHAPTER_RE = /제\s*(\d{1,7})\s*[장화권부편]/;
 
 const EN_CHAPTER_RE = /\bchapter\s+(\d{1,7})\b/i;
 
-// NON-CHAPTER ENTRIES — ONLY CONSULTED WHEN NO CHAPTER NUMBER IS PRESENT
+// NON-CHAPTER ENTRIES — ONLY CONSULTED WHEN NO CHAPTER NUMBER IS PRESENT (CN · JP · KO · EN)
 const SPECIAL: { re: RegExp; tag: string }[] = [
-	{ re: /楔子|序章|序言|引子/, tag: 'Prologue' },
+	{ re: /楔子|序章|序言|引子|プロローグ|프롤로그/, tag: 'Prologue' },
 	{ re: /\bprologue\b/i, tag: 'Prologue' },
 	{ re: /尾聲|尾声|大結局|大结局|終章|终章/, tag: 'Finale' },
-	{ re: /\bepilogue\b/i, tag: 'Epilogue' },
-	{ re: /番外/, tag: 'Extra' },
+	{ re: /\bepilogue\b|エピローグ|에필로그/i, tag: 'Epilogue' },
+	{ re: /番外|閑話|外伝|외전/, tag: 'Extra' },
 	{ re: /\bside[\s-]?story\b|\bextra\b/i, tag: 'Extra' },
-	{ re: /後記|后记|後話|后话|完本感言|感言|作者的?[話话]|上架|請假|请假|通知|公告/, tag: 'Note' },
+	{ re: /後記|后记|後話|后话|完本感言|感言|作者的?[話话]|上架|請假|请假|通知|公告|あとがき|작가의?\s*말/, tag: 'Note' },
 	{ re: /author.?s?\s*note|\bafterword\b/i, tag: 'Note' },
 ];
 
@@ -87,6 +90,8 @@ function numberFrom(title: string | null | undefined): number | null {
 		const n = /^\d+$/.test(raw) ? parseInt(raw, 10) : chineseToNumber(raw);
 		if (n != null && n >= 0) return n;
 	}
+	const ko = KO_CHAPTER_RE.exec(title);
+	if (ko) return parseInt(ko[1], 10);
 	const en = EN_CHAPTER_RE.exec(title);
 	if (en) return parseInt(en[1], 10);
 	return null;
@@ -99,10 +104,10 @@ function specialFrom(title: string | null | undefined): string | null {
 }
 
 /** SMART LABEL: A REAL CHAPTER NUMBER IF ONE IS IN THE TITLE, ELSE A SPECIAL TAG, ELSE plain. */
-export function chapterLabel(titleZh: string, titleEn?: string | null): ChapterLabel {
-	const n = numberFrom(titleZh) ?? numberFrom(titleEn);
+export function chapterLabel(titleSource: string, titleTarget?: string | null): ChapterLabel {
+	const n = numberFrom(titleSource) ?? numberFrom(titleTarget);
 	if (n != null) return { kind: 'chapter', number: n };
-	const tag = specialFrom(titleZh) ?? specialFrom(titleEn);
+	const tag = specialFrom(titleSource) ?? specialFrom(titleTarget);
 	if (tag) return { kind: 'special', tag };
 	return { kind: 'plain' };
 }

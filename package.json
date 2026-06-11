@@ -54,6 +54,7 @@
 		"openai": "^4.71.1",
 		"p-queue": "^8.0.1",
 		"papaparse": "^5.4.1",
+		"playwright": "^1.60.0",
 		"svelte-sonner": "^0.3.28",
 		"tailwind-merge": "^2.5.4",
 		"zod": "^3.23.8"
