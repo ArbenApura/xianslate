@@ -247,10 +247,16 @@
 		}
 	}
 
-	// LAZILY TRANSLATE + CACHE ANY MISSING BOOK TITLES / AUTHOR NAMES (SEQUENTIAL TO AVOID API SPAM)
+	// LAZILY TRANSLATE + CACHE ANY MISSING BOOK TITLES / AUTHOR NAMES. RUNS THROUGH A SMALL CONCURRENT
+	// POOL RATHER THAN STRICTLY SEQUENTIALLY: A LIBRARY OF FRESHLY-IMPORTED BOOKS USED TO HYDRATE ITS
+	// TITLES ONE BLOCKING ROUND-TRIP AT A TIME. THE SERVER'S OWN DEEPSEEK QUEUE STILL CAPS REAL MODEL
+	// CALLS GLOBALLY, SO THIS ONLY REMOVES STACKED REQUEST LATENCY — IT DOESN'T INCREASE API PRESSURE.
 	async function backfillTitles() {
-		for (const b of booksList) {
-			if (b.titleTarget && (!b.author || b.authorTarget)) continue;
+		const pending = booksList.filter((b) => !b.titleTarget || (b.author && !b.authorTarget));
+		if (pending.length === 0) return;
+		const POOL = 4;
+		let cursor = 0;
+		const backfillOne = async (b: BookSummary) => {
 			try {
 				const res = await fetch(`/api/books/${b.id}`, { method: 'POST' });
 				const { titleTarget, authorTarget } = await res.json();
@@ -266,7 +272,14 @@
 			} catch {
 				// IGNORE — KEEP THE ORIGINAL TITLE / AUTHOR
 			}
-		}
+		};
+		const worker = async () => {
+			while (cursor < pending.length) {
+				const b = pending[cursor++];
+				await backfillOne(b);
+			}
+		};
+		await Promise.all(Array.from({ length: Math.min(POOL, pending.length) }, worker));
 	}
 
 	function openBook(b: BookSummary) {
@@ -638,6 +651,8 @@
 									<img
 										src={b.coverUrl}
 										alt=""
+										loading="lazy"
+										decoding="async"
 										class="absolute inset-0 h-full w-full object-cover"
 										on:error={hideImg}
 									/>

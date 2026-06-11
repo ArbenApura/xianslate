@@ -5,7 +5,9 @@ import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
 const config = {
 	preprocess: vitePreprocess(),
 	kit: {
-		adapter: adapter(),
+		// precompress: SERVE PRE-BUILT .gz / .br FOR CLIENT ASSETS + PRERENDERED PAGES (SMALLER PAYLOADS,
+		// NO RUNTIME COMPRESSION COST). NATIVE TO adapter-node — NO EXTRA DEPENDENCIES.
+		adapter: adapter({ precompress: true }),
 	},
 };
 
