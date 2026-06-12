@@ -50,6 +50,8 @@ function nameRule(src: Language, tgt: Language): string {
 function systemPrompt(src: Language, tgt: Language): string {
 	return `You are a master literary translator specializing in ${src.name} web/light novels — the cultivation, martial-arts, fantasy, romance, and adventure serials their fans devour. You translate the user's ${src.name} text into ${tgt.name} prose so immersive and idiomatic that a native ${tgt.name} reader forgets it was ever translated. Your job is not to decode the source word by word — it is to RE-TELL the same story as a gifted ${tgt.name} novelist would, so the page reads as though it were written in ${tgt.name} from the start. The output should read like a polished, professionally edited web novel — clean, propulsive, emotionally alive — never like a literal, stilted gloss.
 
+⚠️ FORMAT RULE YOU MUST NOT FORGET (it is easy to drop on a long chapter, so read it first): the source paragraphs are separated by the EXACT marker ${PARA}. Put that EXACT marker ${PARA} between every pair of your translated paragraphs and use nothing else as a separator — never a blank line — reproducing the SAME number of paragraphs as the source. The full mechanical rules are restated at the bottom; this one is the most important.
+
 Your work has two layers that NEVER trade off against each other. The HARD RULES at the bottom are mechanical and absolute — breaking any one of them corrupts the system that consumes your output. The CRAFT below makes the prose sing. Honor the HARD RULES on every paragraph, all the way to the end of the longest chapter; then pour your craft into the words inside them.
 
 CRAFT — what genuinely good genre translation sounds like (apply all of this, but NEVER at the expense of the HARD RULES):
@@ -228,6 +230,27 @@ export function addUsage(a: TranslationUsage, b: TranslationUsage): TranslationU
 	};
 }
 
+// SPLIT RAW MODEL OUTPUT INTO PARAGRAPHS ON THE ${PARA} MARKER *OR* A BLANK LINE. THE MODEL OFTEN DROPS THE
+// MARKER UNDER THE LONG CRAFT PROMPT AND SEPARATES WITH BLANK LINES INSTEAD; ACCEPTING BOTH KEEPS THE COUNT
+// 1:1 WITH THE SOURCE (CHUNK BOUNDARIES ALSO INSERT THE MARKER), WHICH AVOIDS A NEEDLESS — AND SOMETIMES
+// DEGENERATE — WHOLE-CHAPTER REALIGN. ALSO SCRUBS ANY STRAY MARKER BRACKET A MANGLE LEFT BEHIND.
+const SPLIT_RE = new RegExp(`(?:[${MARK}]*¶[${MARK}]*)|\\n{2,}`, 'gu');
+function splitParas(raw: string): string[] {
+	return raw
+		.split(SPLIT_RE)
+		.map((p) => p.replace(STRAY_MARK, '').trim())
+		.filter((p) => p.length > 0);
+}
+
+// CHEAP DETECTOR FOR A DEGENERATE GENERATION: THE FLASH MODEL OCCASIONALLY COLLAPSES INTO RUN-ON WORD-SALAD
+// WITH DROPPED SPACES ("buzzingOne", "outFor"). NATURAL PROSE HAS NEAR-ZERO lowercase→UPPERCASE JOINS, SO A
+// HIGH DENSITY IS A RELIABLE COLLAPSE SIGNAL. USED ONLY TO REFUSE TO PERSIST / OVERWRITE WITH WORSE TEXT.
+function looksDegenerate(text: string): boolean {
+	if (text.length < 200) return false;
+	const joins = (text.match(/[a-z][A-Z]/g) ?? []).length;
+	return (joins / text.length) * 1000 > 2;
+}
+
 /**
  * REPAIR A TRANSLATION THAT LEAKED UNTRANSLATED SOURCE SCRIPT. RE-TRANSLATES ONLY THE PARAGRAPHS THAT
  * STILL CONTAIN SOURCE-SCRIPT RESIDUE (CHEAP — USUALLY 0–2), UP TO TWO PASSES, AND SPLICES THE CLEANED
@@ -318,10 +341,7 @@ async function translateAligned(
 			),
 		);
 		usage = computeUsage(res.usage, model);
-		out = (res.choices[0]?.message?.content ?? '')
-			.split(PARA_RE)
-			.map((p) => p.replace(STRAY_MARK, '').trim())
-			.filter((p) => p.length > 0);
+		out = splitParas(res.choices[0]?.message?.content ?? '');
 	} catch {
 		// A FAILED BATCH CAN'T BE ALIGNED — KEEP THE SOURCE PARAGRAPHS SO THE 1:1 COUNT HOLDS (THE RESIDUE
 		// PASS THAT RUNS AFTERWARD TRANSLATES ANY SOURCE SCRIPT LEFT BEHIND).
@@ -463,21 +483,36 @@ export async function translateChapterStreaming(
 	// `pending` IS A (PARTIAL) MARKER → DROP IT FROM THE CLIENT VIEW (THE SERVER TEXT STRIPS MARKERS TOO).
 	pending = '';
 
-	// FINAL TEXT: SPLIT ON THE MARKER (TOLERANT) → ONE PARAGRAPH PER SOURCE PARAGRAPH, JOINED BY BLANK LINES.
-	// ALSO SCRUB ANY STRAY MARKER BRACKET A MANGLE LEFT BEHIND (e.g. A ⟬ THAT WASN'T ADJACENT TO THE PILCROW).
-	let paras = fullRaw
-		.split(PARA_RE)
-		.map((p) => p.replace(STRAY_MARK, '').trim())
-		.filter((p) => p.length > 0);
+	// FINAL TEXT: SPLIT ON THE MARKER, OR ON BLANK LINES WHEN THE MODEL DROPPED THE MARKER (splitParas) →
+	// ONE PARAGRAPH PER SOURCE PARAGRAPH. THE BLANK-LINE FALLBACK IS WHAT STOPS A MARKER-LESS GENERATION
+	// FROM COLLAPSING TO ONE GIANT "PARAGRAPH" AND FORCING THE WHOLE-CHAPTER REALIGN.
+	let paras = splitParas(fullRaw);
 
 	// ALIGNMENT SAFETY NET: IF THE MODEL MERGED/SPLIT PARAGRAPHS (OUTPUT COUNT ≠ SOURCE COUNT), EVERY LATER
-	// PARAGRAPH IS SHIFTED OUT OF SYNC WITH THE SOURCE — RE-TRANSLATE WITH A 1:1-GUARANTEED PASS AND PUSH THE
-	// CORRECTED FULL TEXT TO THE CLIENT (onReplace) SO THE STORED/CACHED TEXT IS THE ALIGNED ONE.
+	// PARAGRAPH IS SHIFTED OUT OF SYNC — RE-TRANSLATE WITH A 1:1-GUARANTEED PASS AND PUSH THE CORRECTED TEXT
+	// (onReplace). REFUSE A REALIGN THAT IS ITSELF DEGENERATE (THE RE-TRANSLATE CAN COLLAPSE TOO) — NEVER
+	// REPLACE COHERENT TEXT WITH WORSE.
 	if (sourceParaCount > 0 && paras.length !== sourceParaCount) {
 		const re = await realignParagraphs(contentSource, paras, terms, pair, signal, model);
-		if (re.realigned) {
+		if (re.realigned && !(looksDegenerate(re.paras.join('\n\n')) && !looksDegenerate(paras.join('\n\n')))) {
 			paras = re.paras;
 			usage = addUsage(usage, re.usage);
+			onReplace?.(paras.join('\n\n'));
+		}
+	}
+
+	// DEGENERATION RETRY: IF THE RESULT COLLAPSED INTO RUN-ON WORD-SALAD (THE INTERMITTENT FLASH FAILURE),
+	// RE-RUN ONCE THROUGH THE 1:1 ALIGNED PATH — ITS SMALLER SUB-BATCHES DEGENERATE FAR LESS — AND PREFER
+	// THAT RESULT ONLY IF IT COMES BACK CLEAN AND 1:1.
+	if (looksDegenerate(paras.join('\n\n'))) {
+		const srcParas = contentSource
+			.split(/\n{2,}/)
+			.map((p) => p.trim())
+			.filter((p) => p.length > 0);
+		const retry = await translateAligned(srcParas, system, glossary, pair, signal, model);
+		if (retry.paras.length === srcParas.length && !looksDegenerate(retry.paras.join('\n\n'))) {
+			paras = retry.paras;
+			usage = addUsage(usage, retry.usage);
 			onReplace?.(paras.join('\n\n'));
 		}
 	}
