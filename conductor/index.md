@@ -14,6 +14,7 @@ Navigation hub for project context.
 ## Active Tracks
 
 -   [x] [xianslate-mvp_20260611](./tracks/xianslate-mvp_20260611/index.md) — Xianslate MVP: Fetch, Glossary, Translate & Reader (6/6 phases ✅)
+-   [~] [scale-up-multitenant_20260613](./tracks/scale-up-multitenant_20260613/index.md) — Multi-User Scale-Up & Cross-Platform Delivery (1/8 phases · Phase 0 done)
 
 <!-- Auto-populated by /conductor:new-track -->
 

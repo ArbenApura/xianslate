@@ -1,0 +1,303 @@
+# Implementation Plan: Multi-User Scale-Up & Cross-Platform Delivery
+
+**Track ID:** scale-up-multitenant_20260613
+**Spec:** [spec.md](./spec.md)
+**Created:** 2026-06-13
+**Status:** [ ] Not Started (Phase 0 prerequisites complete)
+
+## Overview
+
+Eight phases, each independently verifiable. **Phase 0 is already done** (the `/app` route
+refactor + the DeepSeek pricing fix). The remaining seven phases follow a dependency-aware order:
+decouple `/app` from the server (1) and migrate the DB (2) — both independent — then layer
+identity (3), tenancy + cost guardrails (4), the distributed queue (5), the Android build (6), and
+finally hosting + end-to-end verification (7).
+
+**Dependency graph:**
+
+```
+P1 (/app → API)  ─────────────┐
+P2 (Postgres/Neon) ──► P3 (Firebase) ──► P4 (tenancy+quota) ──► P5 (Redis queue)
+P1 + P3 ───────────────────────────────► P6 (Capacitor)
+all ───────────────────────────────────► P7 (hosting + verify)
+```
+
+Per `workflow.md`: **flexible TDD** (tests for the breakage-prone logic — auth verification,
+tenancy scoping, queue replay, the Postgres cache-key/glossary paths — not trivial glue);
+**Conventional Commits**; **review non-trivial changes**; **manual end-to-end verification at
+track completion**. All code follows `conductor/code_styleguides/` (Tailwind-only, no
+`<style>`/CSS vars, `cn()`, `svelte-sonner`, UPPERCASE comments, strict import groups + section
+headers) and `.prettierrc`. Run checks via the Windows full-node-path workaround:
+`$env:Path = "C:\Program Files\nodejs;C:\Windows\System32;" + $env:Path` then
+`node "C:\Program Files\nodejs\node_modules\npm\bin\npm-cli.js" run check`.
+
+> **Source of truth:** [spec.md](./spec.md) + `memory/scale-up-architecture-plan.md`. Verify each
+> referenced file/symbol against the live codebase before editing — line numbers drift.
+
+## Phase 0: Completed Prerequisites (DONE — verify, don't redo)
+
+### Tasks
+
+-   [x] Task 0.1: `/app` route-prefix refactor — reader pages under `src/routes/app/*`, `/admin`
+        top-level, `/` landing page, all internal links rewritten, `svelte-check` clean.
+-   [x] Task 0.2: DeepSeek model-aware pricing in `src/lib/server/deepseek.ts` — `PRICING` table +
+        `pricingFor()` with real Flash/Pro rates; per-model env overrides; README updated.
+
+### Verification
+
+-   [x] `svelte-check` clean (773 files, 0 errors); `/`, `/app/`, `/admin/`, `/api/*` resolve.
+
+## Phase 1: Decouple `/app` from server loads (SPA-ready)
+
+Make every `/app` route render with `ssr=false` against `/api` only — the prerequisite for both
+the Capacitor static build and cross-origin auth. Depends on: none.
+
+### Tasks
+
+-   [ ] Task 1.1: Reader load. Convert `src/routes/app/book/[id]/[chapter]/+page.server.ts` (today
+        `getChapterView(uuid, true)` + resume tracking) to a universal `+page.ts` that fetches
+        `GET /api/chapter?id={uuid}` (endpoint exists) via `event.fetch`. Move the "record resume /
+        `lastReadAt`" side-effect to an API call (extend `/api/chapter` with `?resume=1` **or** add
+        `POST /api/chapters/[uuid]/resume`). Must run identically server-side (web SSR) and
+        client-side (native SPA).
+-   [ ] Task 1.2: Manage load. Convert `src/routes/app/book/[id]/manage/+page.server.ts` to a
+        universal `+page.ts` fetching `GET /api/books/[id]/chapters` (+ book meta). Add any fields
+        the page needs to that endpoint.
+-   [ ] Task 1.3: Resume redirect. Replace `src/routes/app/book/[id]/+page.server.ts` (server
+        `redirect()` to resume/first chapter) with a universal `+page.ts` that resolves the resume
+        chapter via `/api` and throws `redirect()` (works client-side in SPA mode); empty book →
+        `/app/book/[id]/manage/`.
+-   [ ] Task 1.4: Theme without a server load. Keep `+layout.server.ts` cookie-theme as a
+        **web-only** anti-flash nicety; ensure no `/app` route *requires* it (theme already comes
+        from `$settings`/localStorage). Confirm the static build (Phase 6, `ssr=false`) tolerates or
+        excludes `+layout.server.ts`; if it errors, gate the theme to be fully client-side for the
+        capacitor target.
+-   [ ] Task 1.5: Audit `/app` for any other server-only reach (e.g. `$env/dynamic/private`,
+        `$lib/server/*` imported into a `+page.ts`/component); relocate behind `/api`.
+
+### Verification
+
+-   [ ] Reader/manage/library behave identically with SSR; temporarily set `export const ssr = false`
+        on the `/app` layout and confirm every `/app` route renders against `/api` with **no** server
+        load reached; revert the flag; `svelte-check` clean.
+
+## Phase 2: PostgreSQL on Neon migration
+
+Swap the DB layer libsql → Postgres with no query-logic rewrite (Drizzle). Depends on: none.
+
+### Tasks
+
+-   [ ] Task 2.1: Provision **Neon** (Launch; min CU 0.25–0.5; autoscale on; scale-to-zero **off**;
+        region = the planned Fly region; PITR 7d). Capture three connection strings and set as
+        env/secrets: `DATABASE_URL` (pooled `-pooler`, transaction mode), `DATABASE_URL_DIRECT`
+        (session), `DATABASE_URL_REPLICA` (replica; = pooled primary until a replica is added).
+-   [ ] Task 2.2: Deps — add `postgres` (postgres.js); keep `drizzle-orm`; leave `@libsql/client`
+        until the migration is verified.
+-   [ ] Task 2.3: `schema.ts` → `drizzle-orm/pg-core`. Map every table/column/index: `pgTable`;
+        `bigint`-identity PKs (bigint for `chapters`/`translations`); `uuid().defaultRandom()` for
+        `chapters.uuid`; **all ms-epoch timestamps → `bigint({mode:'number'}).$defaultFn(()=>Date.now())`**
+        (keep `Date.now()` + stat math unchanged — do NOT move to `timestamptz`); `cost_usd`/ratios
+        → `doublePrecision`; `read_progress` → `doublePrecision`; `site_events.ok` integer kept;
+        `text(enum)` kept. Reproduce partial unique indexes (`glossary_global_unq` WHERE
+        `scope='global'`, `glossary_book_unq` WHERE `scope='book'`, `chapters_url_unq`,
+        `chapters_uuid_unq`, `chapters_book_seq_unq`) + all `index()`es; keep `$inferSelect/$inferInsert`.
+-   [ ] Task 2.4: `db/index.ts` → postgres.js. Create `dbWrite` (pooled, `{prepare:false, max:10}`),
+        `dbRead` (`DATABASE_URL_REPLICA`), `migrator` (`DATABASE_URL_DIRECT`, `{max:1}`). Export
+        `db = dbWrite` for back-compat + `dbRead`. Remove WAL/FK pragmas + the top-level `await`;
+        keep the `globalThis` singleton guard for HMR.
+-   [ ] Task 2.5: `glossary.ts` `likeContains` → **`ILIKE`** (Postgres `LIKE` is case-sensitive;
+        SQLite's was not). Verify `onConflictDoUpdate({target, targetWhere, set:{x:sql\`excluded.x\`}})`
+        and `Number(count(*))` still work on PG.
+-   [ ] Task 2.6: `drizzle.config.ts` → `dialect:'postgresql'`, credentials = `DATABASE_URL_DIRECT`.
+        `drizzle-kit generate` the initial migration; add a `migrate.ts` (postgres-js migrator) + npm
+        script; run it (Windows node-path workaround).
+-   [ ] Task 2.7: Route reads → `dbRead` (library list, chapter view, stats), writes +
+        read-your-writes → `dbWrite` (translate persist, progress, glossary edits, inserts). Both
+        point at the pooled primary until a replica exists.
+-   [ ] Task 2.8: Data migration — pre-prod: recreate fresh. With data: document + script a
+        COPY-based ETL libsql → Postgres + reset identity sequences.
+-   [ ] Task 2.9: Remove `@libsql/client` + `drizzle-orm/libsql` once green; update
+        `conductor/tech-stack.md` (SQLite/better-sqlite3 → Postgres/postgres.js).
+
+### Verification
+
+-   [ ] App boots on Neon; full fetch → import → extract → translate → read works; glossary search
+        is case-insensitive; cascade delete (book → chapters → translations → glossary) verified;
+        `svelte-check` clean.
+
+## Phase 3: Firebase authentication
+
+Identity via Firebase; the server stays authoritative for app data. Depends on: Phase 2.
+
+### Tasks
+
+-   [ ] Task 3.1: Firebase project — enable **Email/Password** + **Google**; obtain the web config +
+        a **service-account** credential. Env: `PUBLIC_FIREBASE_*` (web) + `FIREBASE_SERVICE_ACCOUNT`
+        (server). Add `firebase` + `firebase-admin`.
+-   [ ] Task 3.2: `users` table (Postgres): `id text pk` (= Firebase `uid`), `email` unique,
+        `emailVerified boolean`, `name`, `avatarUrl`, `role text enum['user','admin'] default 'user'`,
+        `createdAt bigint`. Migration. (No sessions/password/oauth tables — Firebase owns them.)
+-   [ ] Task 3.3: `src/lib/server/auth/` — `admin.ts` (firebase-admin singleton), `verify.ts`
+        (`verifyIdToken`, `createSessionCookie`, `verifySessionCookie`), `user.ts`
+        (`upsertUserFromToken(decoded)`, `requireUser(locals)`).
+-   [ ] Task 3.4: `POST /api/auth/session` (verify ID token → set Firebase **session cookie**:
+        httpOnly, secure, `SameSite=Lax`, path `/`); `POST /api/auth/logout` (clear + optional revoke).
+-   [ ] Task 3.5: `hooks.server.ts` — `sequence()` the existing theme handle with a new auth handle:
+        `Authorization: Bearer` → `verifyIdToken`, else session cookie → `verifySessionCookie` →
+        `upsertUserFromToken` → `event.locals.user`. Guards: `/app/*`,`/admin/*` → `/login` if no
+        user; `/admin/*` require `role==='admin'`; `/api/*` (except `/api/auth/*`) → `401` if no user.
+-   [ ] Task 3.6: `src/app.d.ts` — declare `App.Locals { user?: AuthUser }`.
+-   [ ] Task 3.7: Client — `src/lib/firebase.ts` (web SDK init); public `/login` + `/signup` pages
+        (email/password + "Continue with Google" popup) → POST ID token to `/api/auth/session` →
+        `goto('/app/')`; `/logout`; email-verify + password-reset via Firebase; a `/verify-email`
+        notice page.
+-   [ ] Task 3.8: Add an `apiFetch()` helper (web relies on the same-origin cookie; native attaches
+        the bearer in Phase 6) and route `/app` data calls through it.
+
+### Verification
+
+-   [ ] Email/password sign-up (with verification) and Google sign-in both work; session persists
+        across reloads; `/app` requires login; `/admin` requires `role==='admin'`; `/api` returns
+        `401` when logged out.
+
+## Phase 4: Per-user multi-tenancy & cost guardrail
+
+Make every library private and bound LLM spend per user. Depends on: Phase 2 + 3.
+
+### Tasks
+
+-   [ ] Task 4.1: Schema — add `userId text references(users.id, onDelete:'cascade')` to **`books`**
+        and **`glossary`**. Change `glossary_global_unq` → `(userId, sourceLang, targetLang, source)
+        WHERE scope='global'`. Migration + backfill existing rows to the seed admin uid.
+-   [ ] Task 4.2: Thread `userId` through `books.ts` — filter every read/write by owner; add
+        `assertBookOwner(userId, bookId)` / `getOwnedChapterByUuid(userId, uuid)` (join
+        chapters→books). Update `listBooks`, `getBook`, `getChapterView`, `ingestWebChapter`,
+        `createImportedBook`, `appendChapters`, `setReadProgress`, `setBookReadStatus`,
+        `refreshChapterNav`, `refetchCover`, delete.
+-   [ ] Task 4.3: Thread `userId` through `glossary.ts` (all CRUD + `getEffectiveGlossary`,
+        `getGlossaryPage`, `mergeGlossary`, `addNewTerms`, `bookPair`) — global rows scoped by
+        `userId`. `glossary-match.ts` `getEffectiveGlossary` scoping; `chapter-stats.ts` owner scope.
+-   [ ] Task 4.4: Enforce ownership in every `/api/*` endpoint + the Phase-1 universal loads via
+        `locals.user`: `/api/books*`, `/api/chapter*`, `/api/chapters/[uuid]/*`, `/api/translate`,
+        `/api/translate-text`, `/api/extract`, `/api/fetch`, `/api/import/*`, `/api/glossary*` →
+        reject cross-user access (404/403).
+-   [ ] Task 4.5: Job ownership — in `/api/translate`, verify the caller owns `chapterId` (join to
+        book) **before** `ensureTranslationJob`/`subscribe`, so a user can't attach to another's SSE
+        stream by guessing the integer id.
+-   [ ] Task 4.6: `ai_usage` attribution — keep chapter-linked rows (cascade); `'map'` stays global;
+        add per-user roll-up reads for the quota gate.
+-   [ ] Task 4.7: `src/lib/server/quota.ts` — `assertWithinBudget(userId)` sums the user's
+        window cost (`ai_usage` + `translations`) vs a per-user limit (config/table); call in
+        `/api/translate` (+ `/api/fetch`) **before** enqueue; over-limit → typed error → friendly
+        toast. Define default free-tier caps (e.g. N chapters/day) — confirm values with product.
+-   [ ] Task 4.8: `/admin` + `/api/admin/*` — global dashboard (`site-stats.getDashboard`,
+        cross-user) gated by `role==='admin'`; per-user stats stay user-scoped.
+
+### Verification
+
+-   [ ] Two users can't see/mutate each other's books/glossary; cross-user `chapterId` translate
+        attach is refused; over-budget translate is refused; admin dashboard requires admin;
+        deleting a user cascades their data but leaves shared `site_adapters`/`site_events`.
+
+## Phase 5: Redis/BullMQ queue + global DeepSeek cap
+
+Externalize jobs + concurrency so the web tier is stateless and the DeepSeek cap is global +
+settable. Depends on: Phase 2 (config); uses Phase 4 (quota gate).
+
+### Tasks
+
+-   [ ] Task 5.1: Provision Redis (Upstash) → `REDIS_URL`; add `bullmq` + `ioredis`.
+-   [ ] Task 5.2: `src/lib/server/queue/` — define a `translate` BullMQ queue. Job data
+        `{chapterId, force, autoExtract, model, userId}`; job id = `chapterId` (collapse duplicates).
+        Producer (`/api/translate`, after the quota gate) enqueues + subscribes to channel
+        `translate:{chapterId}`, replays the capped list `translate:{chapterId}:events` (TTL) then
+        tails, piping into the SSE stream — preserving the `TranslationEvent` shape + endpoint contract.
+-   [ ] Task 5.3: `src/lib/server/queue/worker.ts` — run the existing `run()` pipeline, refactored to
+        **publish** each `TranslationEvent` + append to the capped list (replacing the in-memory
+        `job.events`/listeners). Worker `concurrency` = the **global DeepSeek cap**, read from
+        config/Redis (runtime-adjustable); add BullMQ `limiter:{max,duration}` for DeepSeek RPM.
+-   [ ] Task 5.4: `deepseek.ts` — retire the per-process `PQueue` global cap (authoritative cap is
+        now worker concurrency); keep chunked per-chapter calls sequential within one job.
+-   [ ] Task 5.5: `translation-service.ts` — replace the in-memory `jobs` `Map` + `emit/subscribe`
+        with the queue-backed pub/sub; keep completion persisting to Postgres (Redis loss → next read
+        hits the `contentTarget` fast-path).
+-   [ ] Task 5.6: Distributed cache invalidation — `glossary-match.invalidateBook/All` and
+        `site-adapter` cache changes broadcast over Redis pub/sub so all instances drop stale entries.
+-   [ ] Task 5.7: Document the Phase-0 bridge (single instance, or sticky sessions via Fly
+        `fly-replay`, or an in-process worker) for launching before the worker tier is split out.
+
+### Verification
+
+-   [ ] Two web instances + one worker locally: a translate started on instance A streams correctly
+        when the SSE client reconnects to instance B; global cap honoured across workers (set cap=1 →
+        serialized); glossary edit on A invalidates B; killing Redis mid-run still leaves a persisted
+        translation.
+
+## Phase 6: Capacitor Android build
+
+Ship only `/app` as a native static SPA against the hosted API. Depends on: Phase 1 + Phase 3.
+
+### Tasks
+
+-   [ ] Task 6.1: Conditional adapter in `svelte.config.js` — `BUILD_TARGET==='capacitor'` →
+        `@sveltejs/adapter-static` (SPA fallback, precompress off); else `adapter-node`. Add
+        `@sveltejs/adapter-static`.
+-   [ ] Task 6.2: `ssr=false` + `prerender=false` for the capacitor build; confirm no server load is
+        reached (relies on Phase 1); theme from `localStorage`; native WebView background set to
+        avoid flash; SPA start path `/app/`.
+-   [ ] Task 6.3: Capacitor init — `@capacitor/core` + `@capacitor/cli` + `@capacitor/android`;
+        `capacitor.config.ts` (appId, `webDir` = static output); add the Android platform.
+-   [ ] Task 6.4: API base + transport — `PUBLIC_API_BASE` (web `''`; native `https://xianslate.com`);
+        `apiFetch()` attaches `Authorization: Bearer <idToken>` on native (token from the Firebase
+        SDK), cookie on web; all `/app` fetches go through it.
+-   [ ] Task 6.5: Native auth — `@capacitor-firebase/authentication` for native Google sign-in (+
+        email/password); register `google-services.json` + SHA-1/256 fingerprints in Firebase.
+-   [ ] Task 6.6: API CORS — allow the Capacitor origin (`https://localhost`/`capacitor://localhost`)
+        for `/api/*` (methods + `Authorization`), no credentialed cookies for native; add a CORS
+        handle in hooks scoped to `/api`.
+-   [ ] Task 6.7: Build + run the APK in an emulator/device against `https://xianslate.com/api`.
+
+### Verification
+
+-   [ ] APK boots to `/app`; native Google + email/password sign-in succeed; library, reader, and
+        streaming translation work cross-origin with the bearer token; `/` and `/admin` are not
+        reachable in-app.
+
+## Phase 7: Hosting & deployment + final verification
+
+Stand up the production topology and verify the whole system. Depends on: all.
+
+### Tasks
+
+-   [ ] Task 7.1: Dockerfiles — slim multi-stage Node image for `web` + `translation-worker` (no
+        Chromium); a separate Chromium image for the `scraper` (`playwright install --with-deps chromium`).
+-   [ ] Task 7.2: `fly.toml`(s) — App A `[processes]` `web` + `translation-worker` (http_service +
+        health checks on `web` only); App B `scraper` (no public ports, autostop). Fly region = Neon
+        region. `fly secrets set` `DATABASE_URL*`, `DEEPSEEK_API_KEY`, `FIREBASE_SERVICE_ACCOUNT`,
+        `REDIS_URL`, public Firebase web config.
+-   [ ] Task 7.3: Cloudflare — DNS `xianslate.com` → Fly (orange-cloud); cache rule for
+        `/_app/immutable/*`, bypass `/api/*`; create the R2 bucket.
+-   [ ] Task 7.4: R2 covers — route cover upload/serve (`uploads.ts` + cover endpoints) to R2 (S3
+        API); serve via CDN.
+-   [ ] Task 7.5: Capacitor — point `PUBLIC_API_BASE` at `https://xianslate.com`; rebuild the APK.
+-   [ ] Task 7.6: Smoke + light load — SSE through Cloudflare (heartbeat), same-origin web cookie +
+        cross-origin native bearer, multi-instance web, replica reads, autostop scraper.
+
+### Verification
+
+-   [ ] **Whole-track manual E2E (per `workflow.md`):** sign up → add book (URL/EPUB/TXT) → extract
+        → translate (streamed, global cap honoured) → read (progress saved) → glossary edit
+        (cross-instance) → second-user isolation → over-budget refusal → Android parity.
+
+## Final Verification
+
+-   [ ] All acceptance criteria (spec §A–H) met.
+-   [ ] Tests for the breakage-prone logic (auth verify, tenancy scoping, queue replay, PG glossary
+        paths) pass; `svelte-check` / `lint` / `format` pass.
+-   [ ] Docs updated: `conductor/tech-stack.md` (Postgres, Fly, Firebase, Redis), `conductor/product.md`
+        (multi-user/online), `README.md`, `memory/scale-up-architecture-plan.md` (mark phases done).
+-   [ ] Track marked complete in `conductor/tracks.md` + `conductor/index.md`.
+
+---
+
+_Generated by Conductor. Tasks will be marked [~] in progress and [x] complete._

@@ -1,0 +1,16 @@
+{
+	"id": "scale-up-multitenant_20260613",
+	"title": "Multi-User Scale-Up & Cross-Platform Delivery",
+	"type": "feature",
+	"status": "in_progress",
+	"created": "2026-06-13T00:00:00Z",
+	"updated": "2026-06-13T01:00:00Z",
+	"phases": {
+		"total": 8,
+		"completed": 1
+	},
+	"tasks": {
+		"total": 52,
+		"completed": 2
+	}
+}
