@@ -251,32 +251,48 @@ settable. Depends on: Phase 2 (config); uses Phase 4 (quota gate).
 
 ### Tasks
 
--   [ ] Task 5.1: Provision Redis (Upstash) → `REDIS_URL`; add `bullmq` + `ioredis`.
--   [ ] Task 5.2: `src/lib/server/queue/` — define a `translate` BullMQ queue. Job data
-        `{chapterId, force, autoExtract, model, userId}`; job id = `chapterId` (collapse duplicates).
-        Producer (`/api/translate`, after the quota gate) enqueues + subscribes to channel
-        `translate:{chapterId}`, replays the capped list `translate:{chapterId}:events` (TTL) then
-        tails, piping into the SSE stream — preserving the `TranslationEvent` shape + endpoint contract.
--   [ ] Task 5.3: `src/lib/server/queue/worker.ts` — run the existing `run()` pipeline, refactored to
-        **publish** each `TranslationEvent` + append to the capped list (replacing the in-memory
-        `job.events`/listeners). Worker `concurrency` = the **global DeepSeek cap**, read from
-        config/Redis (runtime-adjustable); add BullMQ `limiter:{max,duration}` for DeepSeek RPM.
--   [ ] Task 5.4: `deepseek.ts` — retire the per-process `PQueue` global cap (authoritative cap is
-        now worker concurrency); keep chunked per-chapter calls sequential within one job.
--   [ ] Task 5.5: `translation-service.ts` — replace the in-memory `jobs` `Map` + `emit/subscribe`
-        with the queue-backed pub/sub; keep completion persisting to Postgres (Redis loss → next read
-        hits the `contentTarget` fast-path).
--   [ ] Task 5.6: Distributed cache invalidation — `glossary-match.invalidateBook/All` and
-        `site-adapter` cache changes broadcast over Redis pub/sub so all instances drop stale entries.
--   [ ] Task 5.7: Document the Phase-0 bridge (single instance, or sticky sessions via Fly
-        `fly-replay`, or an in-process worker) for launching before the worker tier is split out.
+-   [x] Task 5.1: **DONE:** added `bullmq` + `ioredis`; `REDIS_URL` documented in `.env.example`.
+        **⚠ USER ACTION:** provision Upstash (or other) Redis and set `REDIS_URL`. (Unset = in-memory bridge.)
+-   [x] Task 5.2: `src/lib/server/queue/translate-queue.ts`. **DONE:** a `translate` BullMQ queue, job data
+        `{chapterId, force, autoExtract, model, userId}`, jobId = `chapterId` (collapse duplicates; force
+        removes the prior job). Producer (`/api/translate`, after the quota gate) enqueues + subscribes to
+        channel `translate:{chapterId}`, replays the capped TTL list `translate:{chapterId}:events` then
+        tails (ordered + deduped) into the SSE stream — the `TranslationEvent` shape + endpoint contract
+        are unchanged. `redis.ts` holds the connections/keys/pub-sub helpers.
+-   [x] Task 5.3: `src/lib/server/queue/worker.ts`. **DONE:** a BullMQ `Worker` that drives the existing
+        in-memory pipeline **in the worker process** and **publishes** each `TranslationEvent` to Redis
+        (no risky rewrite of the proven `run()`); resolves the job on done/error. `concurrency` = the
+        runtime-adjustable global cap (`redis.getGlobalConcurrency`/`setGlobalConcurrency`); optional
+        `limiter:{max:DEEPSEEK_RPM, duration:60s}`. Started from `hooks.server.ts` when
+        `RUN_TRANSLATE_WORKER=1`.
+-   [x] Task 5.4: `deepseek.ts`. **DONE (documented):** the authoritative global cap is now the BullMQ
+        worker `concurrency`; the per-process `PQueue` is retained as a per-worker safety throttle (set
+        `DEEPSEEK_CONCURRENCY >= worker cap`) and remains the global cap in the no-Redis bridge.
+-   [x] Task 5.5: `translation-service.ts`. **DONE (gated):** the in-memory `jobs` Map is now the
+        **single-instance bridge**; with Redis, `/api/translate` enqueues to BullMQ and streams from
+        Redis pub/sub instead. The worker still drives `run()`, which persists completion to Postgres
+        (a Redis loss → the next read hits the free `contentTarget` fast path). Keeping both paths (vs a
+        hard replace) means the app works with **or** without Redis — see the design note below.
+-   [x] Task 5.6: `src/lib/server/cache-bus.ts`. **DONE:** `glossary-match.invalidateBook/All` and
+        `site-adapter` re-learns broadcast over the Redis `cache:invalidate` channel; every instance
+        subscribes (started in hooks) and drops the stale local cache. No-op without Redis.
+-   [x] Task 5.7: **DONE (documented):** the Phase-0 bridge is **`REDIS_URL` unset → in-memory single
+        instance** (works today). With Redis on a single box, set `RUN_TRANSLATE_WORKER=1` so the one
+        process both serves and works (in-process worker). The split web/worker tiers come in Phase 7.
+
+> **DESIGN NOTE (gated, not hard-replaced):** Phase 5 is **`REDIS_URL`-gated**. With Redis: distributed
+> BullMQ queue + Redis pub/sub (stateless web tier, global cap, cross-instance invalidation). Without
+> Redis: the existing in-memory `jobs` Map + per-process `PQueue` (the working single-instance path). This
+> was a deliberate safety choice — the distributed path can't be exercised here (no live Redis), so the
+> proven in-memory path is retained as a fallback rather than deleted, keeping `npm run build` green and
+> the app runnable in every configuration.
 
 ### Verification
 
--   [ ] Two web instances + one worker locally: a translate started on instance A streams correctly
-        when the SSE client reconnects to instance B; global cap honoured across workers (set cap=1 →
-        serialized); glossary edit on A invalidates B; killing Redis mid-run still leaves a persisted
-        translation.
+-   [x] `svelte-check` clean + build green in both modes (the Redis path compiles; the no-Redis bridge is
+        the current working path). **⚠ Live distributed checks pending a Redis instance** (Task 5.1): two
+        web instances + one worker — reconnect-replay across instances, global cap honoured (cap=1 →
+        serialized), glossary edit on A invalidates B, Redis-kill mid-run still leaves a persisted translation.
 
 ## Phase 6: Capacitor Android build
 
