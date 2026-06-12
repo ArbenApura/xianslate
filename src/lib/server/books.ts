@@ -3,7 +3,7 @@ import type { ImportedBook, LangPair, SourceType } from '$lib/types';
 // IMPORTED DEP-MODULES
 import { randomUUID } from 'node:crypto';
 import { and, asc, desc, eq, gt, gte, inArray, lt, lte, sql } from 'drizzle-orm';
-import { alias } from 'drizzle-orm/sqlite-core';
+import { alias } from 'drizzle-orm/pg-core';
 // IMPORTED MODULES
 import { AUTO_SOURCE, DEFAULT_SOURCE_LANG, DEFAULT_TARGET_LANG, detectSourceLang } from '$lib/languages';
 import { db } from './db';
@@ -182,9 +182,11 @@ export async function refreshChapterNav(uuid: string): Promise<ChapterView | nul
  */
 export async function setReadProgress(uuid: string, progress: number): Promise<void> {
 	const p = Math.max(0, Math.min(1, progress));
+	// greatest() IS THE POSTGRES SCALAR ROW-WISE MAX (SQLite's 2-ARG max() IS AN AGGREGATE IN PG). KEEPS
+	// THE WRITE MONOTONIC — NEVER LOWERS A PREVIOUSLY-RECORDED MAX.
 	await db
 		.update(chapters)
-		.set({ readProgress: sql`max(coalesce(${chapters.readProgress}, 0), ${p})` })
+		.set({ readProgress: sql`greatest(coalesce(${chapters.readProgress}, 0), ${p})` })
 		.where(eq(chapters.uuid, uuid));
 }
 
@@ -233,19 +235,25 @@ export async function listBooks(): Promise<BookSummary[]> {
 	const rows = await db.select().from(books).orderBy(desc(books.createdAt));
 	if (rows.length === 0) return [];
 
-	// CHAPTER COUNT + TRANSLATED COUNT + FIRST-CHAPTER uuid PER BOOK IN ONE PASS. SQLite RETURNS THE BARE
-	// `uuid` FROM THE SAME ROW min(seq) CAME FROM, SO THIS YIELDS THE FIRST CHAPTER'S uuid WITHOUT N QUERIES.
+	// CHAPTER COUNT + TRANSLATED COUNT PER BOOK (PURE AGGREGATES — VALID UNDER GROUP BY IN POSTGRES).
 	const agg = await db
 		.select({
 			bookId: chapters.bookId,
 			n: sql<number>`count(*)`,
 			translated: sql<number>`sum(case when ${chapters.contentTarget} is not null then 1 else 0 end)`,
-			firstUuid: chapters.uuid,
-			minSeq: sql<number>`min(${chapters.seq})`,
 		})
 		.from(chapters)
 		.groupBy(chapters.bookId);
 	const byBook = new Map(agg.map((a) => [a.bookId, a]));
+
+	// FIRST-CHAPTER uuid PER BOOK (THE min(seq) ROW). POSTGRES FORBIDS SELECTING A BARE NON-GROUPED COLUMN
+	// (SQLite ALLOWED THE "uuid FROM THE min(seq) ROW" TRICK), SO USE DISTINCT ON (book_id) ORDERED BY seq
+	// TO PICK EACH BOOK'S FIRST CHAPTER uuid IN ONE PASS — NO N+1.
+	const firstRows = await db
+		.selectDistinctOn([chapters.bookId], { bookId: chapters.bookId, uuid: chapters.uuid })
+		.from(chapters)
+		.orderBy(chapters.bookId, asc(chapters.seq));
+	const firstUuidByBook = new Map(firstRows.map((r) => [r.bookId, r.uuid]));
 
 	// RESOLVE EVERY RESUME-POINT id → uuid IN A SINGLE QUERY
 	const lastIds = rows.map((b) => b.lastChapterId).filter((id): id is number => id != null);
@@ -286,7 +294,7 @@ export async function listBooks(): Promise<BookSummary[]> {
 			readChapters: readByBook.get(b.id) ?? 0,
 			translatedChapters: Number(a?.translated ?? 0),
 			lastChapterUuid: b.lastChapterId != null ? (lastUuids.get(b.lastChapterId) ?? null) : null,
-			firstChapterUuid: a?.firstUuid ?? null,
+			firstChapterUuid: firstUuidByBook.get(b.id) ?? null,
 			lastReadAt: b.lastReadAt,
 			createdAt: b.createdAt,
 		};

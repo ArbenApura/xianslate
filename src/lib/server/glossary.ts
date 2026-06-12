@@ -1,5 +1,5 @@
 // IMPORTED DEP-TYPES
-import type { SQLiteColumn } from 'drizzle-orm/sqlite-core';
+import type { Column } from 'drizzle-orm';
 // IMPORTED TYPES
 import type { Gender, GlossaryScope, LangPair, TermDraft, TranslationUsage } from '$lib/types';
 // IMPORTED DEP-MODULES
@@ -52,10 +52,12 @@ const MAX_CONTEXT_TERMS = 120;
 
 // -- FUNCTIONS -- //
 
-// CASE-INSENSITIVE "CONTAINS" THAT TREATS THE USER'S % _ \ AS LITERALS (NOT LIKE WILDCARDS)
-function likeContains(col: SQLiteColumn, q: string) {
+// CASE-INSENSITIVE "CONTAINS" THAT TREATS THE USER'S % _ \ AS LITERALS (NOT LIKE WILDCARDS). USES ILIKE —
+// POSTGRES `LIKE` IS CASE-SENSITIVE (UNLIKE SQLite's ASCII-CASE-INSENSITIVE LIKE), SO ILIKE PRESERVES THE
+// CASE-INSENSITIVE GLOSSARY SEARCH THE EDITOR HAD ON SQLite.
+function likeContains(col: Column, q: string) {
 	const escaped = q.replace(/[\\%_]/g, (c) => `\\${c}`);
-	return sql`${col} LIKE ${'%' + escaped + '%'} ESCAPE '\\'`;
+	return sql`${col} ILIKE ${'%' + escaped + '%'} ESCAPE '\\'`;
 }
 
 function invalidate(scope: GlossaryScope, bookId: string | null): void {
