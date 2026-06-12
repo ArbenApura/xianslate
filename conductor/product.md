@@ -2,10 +2,15 @@
 
 ## Description
 
-A local web app that fetches web novels in any supported language, builds a per-book and global
-glossary, and translates them with DeepSeek — wrapped in a cutting-edge, fully customizable,
-mobile-responsive reader. The translation direction is per-book data (source + target language),
-not a fixed Chinese→English assumption.
+A multi-user web **and Android** app that fetches web novels in any supported language, builds a
+per-book and global glossary, and translates them with DeepSeek — wrapped in a cutting-edge, fully
+customizable, mobile-responsive reader. The translation direction is per-book data (source + target
+language), not a fixed Chinese→English assumption.
+
+Each reader has a **private account + library** (Firebase auth; per-user books, glossaries, settings,
+and reading progress), backed by PostgreSQL/Neon, a Redis/BullMQ translation queue, and a per-user
+cost guardrail that bounds LLM spend. It still runs **single-instance/local-first** with Redis unset.
+(Evolved from the original local-only app by `scale-up-multitenant_20260613`.)
 
 ## Problem Statement
 

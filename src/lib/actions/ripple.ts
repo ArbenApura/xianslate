@@ -74,10 +74,7 @@ function offset(el: HTMLElement) {
 	};
 }
 
-function resolveExceptions(
-	selector: RippleOptions['triggerExcept'],
-	parent: HTMLElement,
-): Element[] {
+function resolveExceptions(selector: RippleOptions['triggerExcept'], parent: HTMLElement): Element[] {
 	if (!selector) return [];
 	if (selector instanceof NodeList || selector instanceof HTMLCollection) return Array.from(selector) as Element[];
 	if (selector instanceof Element) return [selector];

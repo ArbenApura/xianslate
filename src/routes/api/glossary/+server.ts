@@ -52,7 +52,10 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 	const pageSize = Math.min(200, Math.max(10, Number(url.searchParams.get('pageSize') ?? '50') || 50));
 	const q = url.searchParams.get('q') ?? '';
 	// GLOBAL ROWS ARE PARTITIONED BY LANGUAGE PAIR; BOOK ROWS ARE IMPLICITLY SINGLE-PAIR.
-	const pair = scope === 'global' ? pairFrom(url.searchParams.get('sourceLang'), url.searchParams.get('targetLang')) : undefined;
+	const pair =
+		scope === 'global'
+			? pairFrom(url.searchParams.get('sourceLang'), url.searchParams.get('targetLang'))
+			: undefined;
 
 	const { rows, total } = await getGlossaryPage(scope, bookId, user.id, {
 		q,

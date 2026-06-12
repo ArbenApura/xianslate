@@ -47,22 +47,22 @@ export const books = pgTable(
 			.notNull()
 			.references(() => users.id, { onDelete: 'cascade' }),
 		sourceType: text('source_type', { enum: ['web', 'epub', 'txt', 'manual'] }).notNull(),
-	// THE BOOK'S OWN TRANSLATION DIRECTION — BCP-47-ISH CODES FROM $lib/languages. PRE-EXISTING BOOKS ARE
-	// BACKFILLED TO zh-Hant → en (THE APP'S ORIGINAL HARDCODED DIRECTION) BY THE MIGRATION.
-	sourceLang: text('source_lang').notNull(),
-	targetLang: text('target_lang').notNull(),
-	// TITLE/AUTHOR AS WRITTEN IN THE SOURCE LANGUAGE.
-	title: text('title').notNull(),
-	// TITLE/AUTHOR RENDERED INTO THE TARGET LANGUAGE (LAZILY FILLED) — SO THE LIBRARY ISN'T MIXED-SCRIPT.
-	titleTarget: text('title_target'),
-	author: text('author'),
-	authorTarget: text('author_target'),
-	sourceUrl: text('source_url'),
-	coverUrl: text('cover_url'),
-	// RESUME POINTER → chapters.id (bigint). NO DECLARED FK (THE READER WRITES IT FREELY); STAYS bigint.
-	lastChapterId: bigint('last_chapter_id', { mode: 'number' }),
-	// WHEN ANY CHAPTER OF THIS BOOK WAS LAST OPENED — DRIVES THE "CONTINUE READING" PICK (MOST RECENT WINS)
-	lastReadAt: epochMs('last_read_at'),
+		// THE BOOK'S OWN TRANSLATION DIRECTION — BCP-47-ISH CODES FROM $lib/languages. PRE-EXISTING BOOKS ARE
+		// BACKFILLED TO zh-Hant → en (THE APP'S ORIGINAL HARDCODED DIRECTION) BY THE MIGRATION.
+		sourceLang: text('source_lang').notNull(),
+		targetLang: text('target_lang').notNull(),
+		// TITLE/AUTHOR AS WRITTEN IN THE SOURCE LANGUAGE.
+		title: text('title').notNull(),
+		// TITLE/AUTHOR RENDERED INTO THE TARGET LANGUAGE (LAZILY FILLED) — SO THE LIBRARY ISN'T MIXED-SCRIPT.
+		titleTarget: text('title_target'),
+		author: text('author'),
+		authorTarget: text('author_target'),
+		sourceUrl: text('source_url'),
+		coverUrl: text('cover_url'),
+		// RESUME POINTER → chapters.id (bigint). NO DECLARED FK (THE READER WRITES IT FREELY); STAYS bigint.
+		lastChapterId: bigint('last_chapter_id', { mode: 'number' }),
+		// WHEN ANY CHAPTER OF THIS BOOK WAS LAST OPENED — DRIVES THE "CONTINUE READING" PICK (MOST RECENT WINS)
+		lastReadAt: epochMs('last_read_at'),
 		createdAt: epochMs('created_at')
 			.notNull()
 			.$defaultFn(() => Date.now()),

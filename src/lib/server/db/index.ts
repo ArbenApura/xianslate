@@ -9,7 +9,6 @@ import * as schema from './schema';
 // -- TYPES -- //
 
 declare global {
-	// eslint-disable-next-line no-var
 	var __xianslatePg: { write: ReturnType<typeof postgres>; read: ReturnType<typeof postgres> } | undefined;
 }
 

@@ -22,7 +22,9 @@ export async function apiFetch(path: string, init: RequestInit = {}): Promise<Re
 	const url = /^https?:\/\//.test(path) ? path : `${API_BASE}${path}`;
 	const headers = new Headers(init.headers);
 	if (browser) {
-		const token = await firebaseAuth().currentUser?.getIdToken().catch(() => null);
+		const token = await firebaseAuth()
+			.currentUser?.getIdToken()
+			.catch(() => null);
 		if (token) headers.set('Authorization', `Bearer ${token}`);
 	}
 	return fetch(url, { ...init, headers });

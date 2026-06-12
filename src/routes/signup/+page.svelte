@@ -108,7 +108,9 @@
 		<!-- SIGN-IN LINK -->
 		<p class="mt-6 text-center text-sm opacity-60">
 			Already have an account?
-			<a href="/login/" use:ripple class="rounded font-medium text-sky-600 hover:underline dark:text-sky-400">Sign in</a>
+			<a href="/login/" use:ripple class="rounded font-medium text-sky-600 hover:underline dark:text-sky-400"
+				>Sign in</a
+			>
 		</p>
 	</div>
 </div>

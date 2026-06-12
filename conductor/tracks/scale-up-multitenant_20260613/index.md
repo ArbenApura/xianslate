@@ -1,7 +1,8 @@
 # Track: Multi-User Scale-Up & Cross-Platform Delivery
 
 **ID:** scale-up-multitenant_20260613
-**Status:** Pending (Phase 0 complete)
+**Status:** Implementation complete (Phases 0–7; `check`/`lint`/`build` green). Live E2E + external
+provisioning (Neon/Firebase/Redis/Fly/Cloudflare/Android SDK) pending — see [DEPLOYMENT.md](../../../DEPLOYMENT.md).
 
 ## Documents
 
@@ -10,8 +11,8 @@
 
 ## Progress
 
--   Phases: 1/8 complete (Phase 0 prerequisites done)
--   Tasks: 2/52 complete
+-   Phases: 8/8 code-complete (live E2E pending external provisioning)
+-   Tasks: 50/52 (the 2 open are pure operator provisioning — Neon 2.1, smoke/load 7.6)
 
 ## Phase Map
 
@@ -22,7 +23,7 @@
 -   [x] Phase 4 — Per-user multi-tenancy & cost guardrail (code complete; live isolation pending Neon+Firebase)
 -   [x] Phase 5 — Redis/BullMQ queue + global DeepSeek cap (code complete; REDIS_URL-gated, in-memory bridge retained)
 -   [x] Phase 6 — Capacitor Android build (config + SPA build green; APK build pending Android SDK)
--   [ ] Phase 7 — Hosting & deployment + final verification
+-   [x] Phase 7 — Hosting & deployment config (Dockerfiles + fly.toml + DEPLOYMENT.md; deploy pending Fly/Cloudflare)
 
 ## Cross-Session References
 

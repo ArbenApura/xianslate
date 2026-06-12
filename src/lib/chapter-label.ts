@@ -6,15 +6,12 @@
 
 // -- TYPES -- //
 
-export type ChapterLabel =
-	| { kind: 'chapter'; number: number }
-	| { kind: 'special'; tag: string }
-	| { kind: 'plain' };
+export type ChapterLabel = { kind: 'chapter'; number: number } | { kind: 'special'; tag: string } | { kind: 'plain' };
 
 // -- CONSTANTS -- //
 
 const CN_DIGIT: Record<string, number> = {
-	'〇': 0,
+	〇: 0,
 	零: 0,
 	一: 1,
 	二: 2,
@@ -48,7 +45,10 @@ const SPECIAL: { re: RegExp; tag: string }[] = [
 	{ re: /\bepilogue\b|エピローグ|에필로그/i, tag: 'Epilogue' },
 	{ re: /番外|閑話|外伝|외전/, tag: 'Extra' },
 	{ re: /\bside[\s-]?story\b|\bextra\b/i, tag: 'Extra' },
-	{ re: /後記|后记|後話|后话|完本感言|感言|作者的?[話话]|上架|請假|请假|通知|公告|あとがき|작가의?\s*말/, tag: 'Note' },
+	{
+		re: /後記|后记|後話|后话|完本感言|感言|作者的?[話话]|上架|請假|请假|通知|公告|あとがき|작가의?\s*말/,
+		tag: 'Note',
+	},
 	{ re: /author.?s?\s*note|\bafterword\b/i, tag: 'Note' },
 ];
 

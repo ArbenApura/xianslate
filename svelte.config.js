@@ -15,7 +15,13 @@ const config = {
 			? // SPA FALLBACK (index.html) — ANY IN-APP PATH RESOLVES TO THE CLIENT ROUTER. OUTPUT TO
 				// build-capacitor/ (= capacitor.config.ts webDir), SEPARATE FROM THE node BUILD's build/.
 				// strict:false BECAUSE THE SERVER-ONLY ROUTES (/admin, /api) AREN'T PART OF THE NATIVE BUNDLE.
-				adapterStatic({ pages: 'build-capacitor', assets: 'build-capacitor', fallback: 'index.html', precompress: false, strict: false })
+				adapterStatic({
+					pages: 'build-capacitor',
+					assets: 'build-capacitor',
+					fallback: 'index.html',
+					precompress: false,
+					strict: false,
+				})
 			: // precompress: SERVE PRE-BUILT .gz / .br FOR CLIENT ASSETS + PRERENDERED PAGES. NATIVE TO adapter-node.
 				adapterNode({ precompress: true }),
 	},

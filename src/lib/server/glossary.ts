@@ -260,11 +260,7 @@ export async function addTerm(
 	return row;
 }
 
-export async function updateTerm(
-	id: number,
-	patch: Partial<TermDraft>,
-	userId: string,
-): Promise<GlossaryEntry | null> {
+export async function updateTerm(id: number, patch: Partial<TermDraft>, userId: string): Promise<GlossaryEntry | null> {
 	// OWNER-SCOPED: A USER CAN ONLY EDIT THEIR OWN TERM (A GUESSED id FROM ANOTHER USER RETURNS null → 404).
 	const [existing] = await db
 		.select()

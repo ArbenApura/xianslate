@@ -42,9 +42,12 @@ if (opf) {
 		const href = /\bhref="([^"]+)"/i.exec(a)?.[1];
 		const props = /\bproperties="([^"]+)"/i.exec(a)?.[1];
 		const media = /\bmedia-type="([^"]+)"/i.exec(a)?.[1];
-		if (href && /x?html?$/i.test(href.split('#')[0]) || props) {
+		if ((href && /x?html?$/i.test(href.split('#')[0])) || props) {
 			console.log(`   ${id} -> ${href} ${props ? '[' + props + ']' : ''} ${media ?? ''}`);
-			if (++count > 40) { console.log('   ...'); break; }
+			if (++count > 40) {
+				console.log('   ...');
+				break;
+			}
 		}
 	}
 	// FIRST CONTENT DOC HEADING SHAPE
@@ -60,7 +63,11 @@ if (opf) {
 	const resolve = (rel) => {
 		const parts = (opfDir + rel.split('#')[0]).split('/');
 		const out = [];
-		for (const p of parts) { if (p === '' || p === '.') continue; if (p === '..') out.pop(); else out.push(p); }
+		for (const p of parts) {
+			if (p === '' || p === '.') continue;
+			if (p === '..') out.pop();
+			else out.push(p);
+		}
 		return out.join('/');
 	};
 	const firstDoc = dec(all[resolve(manifest.get(firstHref) ?? '')]);
@@ -68,7 +75,13 @@ if (opf) {
 		console.log('\n--- first spine doc: heading tags present ---');
 		const hs = [...firstDoc.matchAll(/<(h[1-6])[^>]*>([\s\S]*?)<\/\1>/gi)].slice(0, 30);
 		console.log('   heading count (h1-h6):', [...firstDoc.matchAll(/<h[1-6][^>]*>/gi)].length);
-		for (const h of hs.slice(0, 20)) console.log(`     <${h[1]}> ${h[2].replace(/<[^>]+>/g, '').trim().slice(0, 60)}`);
+		for (const h of hs.slice(0, 20))
+			console.log(
+				`     <${h[1]}> ${h[2]
+					.replace(/<[^>]+>/g, '')
+					.trim()
+					.slice(0, 60)}`,
+			);
 		// ALSO: count "Chapter N" textual markers
 		const text = firstDoc.replace(/<[^>]+>/g, ' ');
 		const chapMatches = [...text.matchAll(/\bChapter\s+\d+\b/gi)].length;

@@ -34,8 +34,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 	try {
 		const { url, fromChapterId, dir, targetBookId, sourceLang, targetLang } = parsed.data;
 		const anchor = fromChapterId && dir ? { fromChapterId, dir } : undefined;
-		const pair =
-			sourceLang && targetLang ? { sourceLang, targetLang } : undefined;
+		const pair = sourceLang && targetLang ? { sourceLang, targetLang } : undefined;
 		const view = await ingestWebChapter(url, user.id, anchor, targetBookId, pair);
 		return json(view);
 	} catch (e) {

@@ -213,7 +213,7 @@ single `role` flag; migrating off DeepSeek.
 -   **Single-origin auth benefit:** web `/app`→`/api` is same-origin → cookie sessions "just work"
     (no CORS/`SameSite=None`); only the native client is cross-origin (bearer).
 -   **Postgres type mapping:** `integer().primaryKey({autoIncrement})` → `bigserial`/`bigint
-    identity` (use bigint for high-volume `chapters`/`translations`); `text('uuid').$defaultFn(randomUUID)`
+identity` (use bigint for high-volume `chapters`/`translations`); `text('uuid').$defaultFn(randomUUID)`
     → native `uuid().defaultRandom()`; ms-epoch `integer` timestamps → **`bigint({mode:'number'})`**
     (keeps all `Date.now()` + stat math unchanged — do NOT churn to `timestamptz`); `real('cost_usd')`
     → `doublePrecision`; `text(enum)`, partial `uniqueIndex().where()`, cascades port as-is.

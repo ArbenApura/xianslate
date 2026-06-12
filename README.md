@@ -29,12 +29,15 @@ whole book) at minimal cost.
 
 ## Tech stack
 
-SvelteKit 2 (Svelte 4) · TypeScript · TailwindCSS · Vite · **libsql** (SQLite, WAL) + Drizzle ORM ·
-DeepSeek via the OpenAI-compatible SDK · `node-html-parser` · `ahocorasick` · `papaparse` ·
-`svelte-sonner`. Runs on `@sveltejs/adapter-node`.
+SvelteKit 2 (Svelte 4) · TypeScript · TailwindCSS · Vite · **PostgreSQL** (Neon) via **postgres.js** +
+Drizzle ORM · **Firebase** auth · **Redis/BullMQ** translation queue · DeepSeek via the
+OpenAI-compatible SDK · `node-html-parser` · `ahocorasick` · `papaparse` · `svelte-sonner`. Web runs on
+`@sveltejs/adapter-node`; the **Android** app is an `@sveltejs/adapter-static` Capacitor SPA.
 
-> The DB layer is **libsql** (not `better-sqlite3`) so it needs **no native compiler** and is a
-> drop-in path to a hosted Turso DB for the planned future online scale-out.
+> **Multi-user & online:** Xianslate is a multi-tenant app — per-user private libraries (Firebase
+> sign-in), Postgres on Neon, a Redis-backed queue, and a Capacitor Android build, fronted by
+> Cloudflare on Fly.io. It still runs **single-instance/local-first** with `REDIS_URL` unset. See
+> [`DEPLOYMENT.md`](./DEPLOYMENT.md) for the hosting runbook + provisioning.
 
 ## Setup
 
@@ -49,13 +52,13 @@ yarn dev                  # http://localhost:5173
 
 ### Environment (`.env`)
 
-| Var                 | Purpose                             | Default                    |
-| ------------------- | ----------------------------------- | -------------------------- |
-| `DEEPSEEK_API_KEY`  | DeepSeek API key (server-side only) | —                          |
-| `DEEPSEEK_BASE_URL` | API base URL                        | `https://api.deepseek.com` |
-| `DEEPSEEK_MODEL`    | Model id                            | `deepseek-v4-flash`        |
-| `DEEPSEEK_REASONING`| `enabled` allows the model's chain-of-thought; anything else disables it | `disabled` |
-| `DATABASE_URL`      | libsql URL                          | `file:./xianslate.db`      |
+| Var                  | Purpose                                                                  | Default                    |
+| -------------------- | ------------------------------------------------------------------------ | -------------------------- |
+| `DEEPSEEK_API_KEY`   | DeepSeek API key (server-side only)                                      | —                          |
+| `DEEPSEEK_BASE_URL`  | API base URL                                                             | `https://api.deepseek.com` |
+| `DEEPSEEK_MODEL`     | Model id                                                                 | `deepseek-v4-flash`        |
+| `DEEPSEEK_REASONING` | `enabled` allows the model's chain-of-thought; anything else disables it | `disabled`                 |
+| `DATABASE_URL`       | libsql URL                                                               | `file:./xianslate.db`      |
 
 Optional per-model price overrides (USD per 1M tokens) for the cost meter — these default to DeepSeek's
 published Flash/Pro rates, override only to track price changes:

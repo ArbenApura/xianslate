@@ -70,11 +70,7 @@ export function parseRuns(html: string): Run[] {
 			const nameStart = i + (isClose ? 2 : 1);
 			let j = nameStart;
 			while (j < html.length && html[j] !== '>') j++;
-			const tag = html
-				.slice(nameStart, j)
-				.trim()
-				.replace(/\/$/, '')
-				.toLowerCase();
+			const tag = html.slice(nameStart, j).trim().replace(/\/$/, '').toLowerCase();
 			if (KNOWN_TAGS.has(tag)) {
 				flush();
 				if (tag === 'br') {

@@ -57,16 +57,15 @@
 	$: wordTimingOk = voiceHasWordTiming(activeVoice, $wordTimingSupport);
 
 	// ORDER THE TWO VOICE PICKERS SO THE LANGUAGE BEING READ SHOWS FIRST.
-	$: voiceBlocks =
-		isZh
-			? ([
-					{ key: 'zh', label: 'Chinese voice', opts: toOptions(zhVoices), empty: zhVoices.length === 0 },
-					{ key: 'en', label: 'English voice', opts: toOptions(enVoices), empty: enVoices.length === 0 },
-				] as const)
-			: ([
-					{ key: 'en', label: 'English voice', opts: toOptions(enVoices), empty: enVoices.length === 0 },
-					{ key: 'zh', label: 'Chinese voice', opts: toOptions(zhVoices), empty: zhVoices.length === 0 },
-				] as const);
+	$: voiceBlocks = isZh
+		? ([
+				{ key: 'zh', label: 'Chinese voice', opts: toOptions(zhVoices), empty: zhVoices.length === 0 },
+				{ key: 'en', label: 'English voice', opts: toOptions(enVoices), empty: enVoices.length === 0 },
+			] as const)
+		: ([
+				{ key: 'en', label: 'English voice', opts: toOptions(enVoices), empty: enVoices.length === 0 },
+				{ key: 'zh', label: 'Chinese voice', opts: toOptions(zhVoices), empty: zhVoices.length === 0 },
+			] as const);
 
 	// -- REACTIVE STATEMENTS -- //
 
@@ -79,7 +78,8 @@
 		// STOP THE ENGINE FIRST. PREVIEW SPEAKS OUTSIDE THE ENGINE'S QUEUE, SO CANCELLING WITHOUT THIS WOULD
 		// KILL AN ACTIVE READ WHILE LEAVING THE ENGINE'S STATE STUCK AT 'playing' (THE gen-GUARD EATS onend).
 		tts.stop();
-		const sample = which === 'en' ? 'The quick brown fox jumps over the lazy dog.' : '春江潮水連海平，海上明月共潮生。';
+		const sample =
+			which === 'en' ? 'The quick brown fox jumps over the lazy dog.' : '春江潮水連海平，海上明月共潮生。';
 		const u = new SpeechSynthesisUtterance(sample);
 		const s = $ttsSettings;
 		u.rate = s.rate;
@@ -122,7 +122,9 @@
 								: ($ttsSettings.zhVoiceURI = e.detail || null)}
 					/>
 					{#if b.empty}
-						<p class="mt-1 text-xs opacity-50">No {b.key === 'en' ? 'English' : 'Chinese'} voices installed in this browser.</p>
+						<p class="mt-1 text-xs opacity-50">
+							No {b.key === 'en' ? 'English' : 'Chinese'} voices installed in this browser.
+						</p>
 					{/if}
 				</div>
 			{/each}
@@ -191,8 +193,8 @@
 
 		<!-- FOOTER HINT -->
 		<p class="text-xs opacity-50">
-			Voices come from your browser/OS. Install more system voices to expand the list. Tip: click any word
-			while reading to jump there.
+			Voices come from your browser/OS. Install more system voices to expand the list. Tip: click any word while
+			reading to jump there.
 		</p>
 	</div>
 

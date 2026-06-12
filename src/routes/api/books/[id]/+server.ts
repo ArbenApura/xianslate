@@ -1,7 +1,7 @@
 // IMPORTED DEP-TYPES
 import type { RequestHandler } from './$types';
 // IMPORTED DEP-MODULES
-import { error, json } from '@sveltejs/kit';
+import { json } from '@sveltejs/kit';
 import { asc, eq, sql } from 'drizzle-orm';
 // IMPORTED MODULES
 import { isMonolingual } from '$lib/languages';

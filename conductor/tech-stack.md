@@ -15,23 +15,36 @@
 ## Backend
 
 -   **SvelteKit server endpoints** (`+server.ts`) running on **Node** via
-    **@sveltejs/adapter-node**. All fetching, LLM calls, DB access, and the API key live
+    **@sveltejs/adapter-node** (web build). All fetching, LLM calls, DB access, and secrets live
     server-side.
 -   **Routing convention:** `export const trailingSlash = 'always';` in the root `+layout.ts`.
+-   **Auth:** **Firebase** (Email/Password + Google) — `firebase` web SDK on the client,
+    `firebase-admin` on the server. Web uses a httpOnly **session cookie** (same-origin); native uses
+    an `Authorization: Bearer` **ID token**. `hooks.server.ts` populates `event.locals.user` and
+    guards `/app`, `/admin`, `/api`.
+-   **Translation jobs:** a **Redis-backed BullMQ** queue + Redis pub/sub for SSE replay and
+    cross-instance cache invalidation, **gated on `REDIS_URL`**. Unset → an in-memory single-instance
+    bridge (the original per-process path) so the app runs without Redis too.
 
 ## Database
 
--   **SQLite** via **better-sqlite3** (sync driver), opened in **WAL mode**
-    (`journal_mode=WAL`, `synchronous=NORMAL`) with prepared statements.
--   **Drizzle ORM** + **drizzle-kit** for schema/migrations.
--   DB layer kept swappable — Drizzle dialect can move SQLite → Postgres for the future online
-    scale-out without rewriting query code.
+-   **PostgreSQL** (managed by **Neon**) via **postgres.js** (`postgres`) + **Drizzle ORM**
+    (`drizzle-orm/pg-core`). Three connection roles: `dbWrite` (pooled primary, `prepare:false`),
+    `dbRead` (replica endpoint), and a direct-endpoint `migrator` (in `db/migrate.ts`).
+-   ms-epoch timestamps stay `bigint({mode:'number'})` (not `timestamptz`) so `Date.now()` + stat math
+    are unchanged; `bigserial` PKs; native `uuid`; partial unique indexes for the glossary scopes.
+-   **drizzle-kit** generates SQL migrations (`drizzle/`), applied via `npm run db:migrate` (no
+    interactive `db:push`). (Migrated from the original local SQLite/libsql layer.)
 
 ## External Services
 
 -   **DeepSeek** (OpenAI-compatible API) via the **openai** SDK pointed at
     `https://api.deepseek.com`. Default model `deepseek-v4-flash` (configurable via `.env`).
     Relies on DeepSeek automatic prefix (KV) caching — prompts are ordered stable-prefix-first.
+    The global concurrency cap is the BullMQ worker concurrency (runtime-adjustable via Redis) when
+    Redis is configured; a per-process `PQueue` otherwise.
+-   **Neon** (Postgres), **Upstash** (or other) **Redis**, **Firebase** (auth), **Cloudflare**
+    (edge + R2), **Fly.io** (Node host) — see `DEPLOYMENT.md`.
 
 ## Key Dependencies
 
@@ -44,6 +57,10 @@
 -   `clsx` (or `tailwind-merge`) exposed as **`cn()`** — the only allowed way to compose dynamic
     Tailwind classes (per the Svelte style guide).
 -   `svelte-sonner` — toast notifications.
+-   `postgres` (postgres.js) — Postgres driver; `firebase` + `firebase-admin` — auth; `bullmq` +
+    `ioredis` — the translation queue + pub/sub; `@capacitor/{core,cli,android}` +
+    `@capacitor-firebase/authentication` — the Android build + native sign-in;
+    `@sveltejs/adapter-static` — the Capacitor SPA build.
 
 ## Tooling
 
@@ -57,7 +74,11 @@
 
 ## Infrastructure
 
--   **Now:** local / self-hosted via `adapter-node` (`npm run dev` or built Node server); SQLite
-    file on disk; local-first.
--   **Future:** scale online — anticipated path is containerize (Docker) + migrate the DB layer
-    to Postgres; keep secrets server-side and stateless-friendly.
+-   **Online (multi-tenant):** single **Cloudflare** origin `xianslate.com` fronting a **Fly.io** Node
+    app (`web` + `translation-worker` process groups from one `Dockerfile`), **Neon** Postgres,
+    **Upstash** Redis, **Firebase** auth, **R2** for future cover proxying. Stateless web tier scales
+    horizontally. See `DEPLOYMENT.md` for the runbook + provisioning.
+-   **Android:** a **Capacitor** static-SPA build (`BUILD_TARGET=capacitor`, `adapter-static`) ships
+    only `/app` against `https://xianslate.com/api` with a bearer token.
+-   **Local / single-instance:** still runs via `adapter-node` with `REDIS_URL` unset (in-memory
+    translation bridge) — the original local-first path remains intact.

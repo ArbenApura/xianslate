@@ -81,11 +81,9 @@
 			<span
 				data-s={t.isWord ? t.start : undefined}
 				class={cn(
-					t.isWord &&
-						'rounded-[3px] transition-[background-color,color] duration-100 ease-in',
+					t.isWord && 'rounded-[3px] transition-[background-color,color] duration-100 ease-in',
 					tagClasses(t),
-					inSent &&
-						'rounded-[2px] bg-[rgba(56,189,248,0.16)] dark:bg-[rgba(56,189,248,0.18)]',
+					inSent && 'rounded-[2px] bg-[rgba(56,189,248,0.16)] dark:bg-[rgba(56,189,248,0.18)]',
 					isWord &&
 						// tts-word IS A JS QUERY HOOK — querySelector('.tts-word') SCROLLS TO THE ACTIVE WORD (NOT STYLING)
 						'tts-word bg-[rgba(56,189,248,0.45)] shadow-[0_0_0_1px_rgba(56,189,248,0.35)] dark:bg-[rgba(56,189,248,0.52)] dark:shadow-[0_0_0_1px_rgba(56,189,248,0.5)]',

@@ -33,6 +33,7 @@ export default [
 		},
 	},
 	{
-		ignores: ['build/', '.svelte-kit/', 'package/', 'drizzle/', '*.db'],
+		// build*/.svelte-kit/package/drizzle: generated. tools/: ad-hoc dev/test scripts (some gitignored).
+		ignores: ['build/', 'build-capacitor/', '.svelte-kit/', 'package/', 'drizzle/', 'tools/', '*.db'],
 	},
 ];

@@ -13,14 +13,14 @@ Topology: a single **Cloudflare** origin `xianslate.com` fronting a **Fly.io** N
 
 ## 0. One-time provisioning (needs your accounts)
 
-| Service | What to create | Env it produces |
-| --- | --- | --- |
-| **Neon** (Postgres) | Project (Launch plan; min CU 0.25–0.5; autoscale on; scale-to-zero OFF; PITR 7d). Region = the Fly region. | `DATABASE_URL` (pooled `-pooler`), `DATABASE_URL_DIRECT` (direct/session), `DATABASE_URL_REPLICA` (= pooled until a replica exists) |
-| **Firebase** | Project; enable **Email/Password** + **Google**; a **service-account** key (server); an **Android app** with `google-services.json` + SHA-1/256 fingerprints (for native Google sign-in). | `PUBLIC_FIREBASE_API_KEY`, `PUBLIC_FIREBASE_AUTH_DOMAIN`, `PUBLIC_FIREBASE_PROJECT_ID`, `PUBLIC_FIREBASE_APP_ID`, `FIREBASE_SERVICE_ACCOUNT` (whole JSON, single line) |
-| **Upstash** (Redis) | A Redis database (TLS). | `REDIS_URL` (`rediss://…`) |
-| **Cloudflare** | Zone for `xianslate.com`; an **R2** bucket (future cover proxying — see §5). | — |
-| **Fly.io** | Org + the `xianslate` app (+ optional `xianslate-scraper`). | — |
-| **Android** | Android Studio / SDK toolchain for the APK. | — |
+| Service             | What to create                                                                                                                                                                            | Env it produces                                                                                                                                                        |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Neon** (Postgres) | Project (Launch plan; min CU 0.25–0.5; autoscale on; scale-to-zero OFF; PITR 7d). Region = the Fly region.                                                                                | `DATABASE_URL` (pooled `-pooler`), `DATABASE_URL_DIRECT` (direct/session), `DATABASE_URL_REPLICA` (= pooled until a replica exists)                                    |
+| **Firebase**        | Project; enable **Email/Password** + **Google**; a **service-account** key (server); an **Android app** with `google-services.json` + SHA-1/256 fingerprints (for native Google sign-in). | `PUBLIC_FIREBASE_API_KEY`, `PUBLIC_FIREBASE_AUTH_DOMAIN`, `PUBLIC_FIREBASE_PROJECT_ID`, `PUBLIC_FIREBASE_APP_ID`, `FIREBASE_SERVICE_ACCOUNT` (whole JSON, single line) |
+| **Upstash** (Redis) | A Redis database (TLS).                                                                                                                                                                   | `REDIS_URL` (`rediss://…`)                                                                                                                                             |
+| **Cloudflare**      | Zone for `xianslate.com`; an **R2** bucket (future cover proxying — see §5).                                                                                                              | —                                                                                                                                                                      |
+| **Fly.io**          | Org + the `xianslate` app (+ optional `xianslate-scraper`).                                                                                                                               | —                                                                                                                                                                      |
+| **Android**         | Android Studio / SDK toolchain for the APK.                                                                                                                                               | —                                                                                                                                                                      |
 
 All env vars are documented in `.env.example`.
 
@@ -65,9 +65,9 @@ process). Set it to enable the distributed BullMQ queue + cross-instance cache b
 
 `fly.toml` defines two process groups from one image (`Dockerfile`):
 
-- **web** — serves HTTP, enqueues translations (does not run the worker).
-- **translation-worker** — same image; `hooks.server.ts` starts the BullMQ worker because Fly sets
-  `FLY_PROCESS_GROUP=translation-worker` (or set `RUN_TRANSLATE_WORKER=1`). No public HTTP.
+-   **web** — serves HTTP, enqueues translations (does not run the worker).
+-   **translation-worker** — same image; `hooks.server.ts` starts the BullMQ worker because Fly sets
+    `FLY_PROCESS_GROUP=translation-worker` (or set `RUN_TRANSLATE_WORKER=1`). No public HTTP.
 
 ```bash
 fly deploy                  # builds Dockerfile, deploys both process groups
@@ -121,8 +121,9 @@ npx cap run android                          # emulator/device
 ```
 
 Native Google sign-in uses `@capacitor-firebase/authentication` — register `google-services.json`
-+ the SHA-1/256 fingerprints in the Firebase Android app. The APK boots to `/app/`; `/` and `/admin`
-are unreachable in-app.
+
+-   the SHA-1/256 fingerprints in the Firebase Android app. The APK boots to `/app/`; `/` and `/admin`
+    are unreachable in-app.
 
 ---
 
@@ -130,14 +131,14 @@ are unreachable in-app.
 
 Run once provisioning is done:
 
-- [ ] Sign up (email + verification) and Google sign-in both work; session persists across reloads.
-- [ ] `/app` requires login; `/admin` requires `role==='admin'`; `/api` returns 401 logged out.
-- [ ] Add a book (URL / EPUB / TXT) → extract → translate (streamed) → read (progress saved).
-- [ ] Glossary edit on web instance A is seen by instance B (Redis cache bus).
-- [ ] A second user cannot see/mutate the first user's books/glossary; a guessed `chapterId` translate
-      attach is refused (404).
-- [ ] Over-budget translate is refused (set `QUOTA_USD_PER_WINDOW` low to test).
-- [ ] Global cap honoured across workers (set the concurrency to 1 → serialized).
-- [ ] Kill Redis mid-translate → a completed translation is still persisted (next read is free).
-- [ ] Android APK: native sign-in + library + reader + streaming translation work cross-origin with the
-      bearer token.
+-   [ ] Sign up (email + verification) and Google sign-in both work; session persists across reloads.
+-   [ ] `/app` requires login; `/admin` requires `role==='admin'`; `/api` returns 401 logged out.
+-   [ ] Add a book (URL / EPUB / TXT) → extract → translate (streamed) → read (progress saved).
+-   [ ] Glossary edit on web instance A is seen by instance B (Redis cache bus).
+-   [ ] A second user cannot see/mutate the first user's books/glossary; a guessed `chapterId` translate
+        attach is refused (404).
+-   [ ] Over-budget translate is refused (set `QUOTA_USD_PER_WINDOW` low to test).
+-   [ ] Global cap honoured across workers (set the concurrency to 1 → serialized).
+-   [ ] Kill Redis mid-translate → a completed translation is still persisted (next read is free).
+-   [ ] Android APK: native sign-in + library + reader + streaming translation work cross-origin with the
+        bearer token.

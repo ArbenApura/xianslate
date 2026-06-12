@@ -32,7 +32,12 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		const imported = importEpub(bytes, fallback, getLanguage(pair.sourceLang).charsetHints);
 		if (targetBook) {
 			const { added, firstUuid } = await appendChapters(targetBook.id, imported.chapters);
-			return json({ bookId: targetBook.id, firstChapterUuid: firstUuid, chapters: added, title: targetBook.title });
+			return json({
+				bookId: targetBook.id,
+				firstChapterUuid: firstUuid,
+				chapters: added,
+				title: targetBook.title,
+			});
 		}
 		const { bookId, firstChapterUuid } = await createImportedBook(imported, user.id, null, pair);
 		return json({ bookId, firstChapterUuid, chapters: imported.chapters.length, title: imported.title });

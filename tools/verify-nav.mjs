@@ -23,7 +23,9 @@ const label = (u) => (u ? (uuidToNum[u] ?? u.slice(0, 8)) : '∅');
 console.log('LIVE server (port 3000) chapter navigation for book 25048:');
 for (const n of ['559', '561', '560', '562']) {
 	const v = await viewOf(byNum[n]);
-	console.log(`  Chapter ${n}:  prev = ${label(v.prevUuid)}   next = ${label(v.nextUuid)}   (nextUrl=${v.nextUrl ? 'kept' : 'null'})`);
+	console.log(
+		`  Chapter ${n}:  prev = ${label(v.prevUuid)}   next = ${label(v.nextUuid)}   (nextUrl=${v.nextUrl ? 'kept' : 'null'})`,
+	);
 }
 console.log('\nExpected reading chain after the reorder: 559 → 561 → 560 → 562');
 await db.close();

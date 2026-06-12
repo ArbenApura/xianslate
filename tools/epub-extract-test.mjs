@@ -103,7 +103,11 @@ function splitBodyByHeadings(body) {
 	const re = /<(h[1-6])\b[^>]*>([\s\S]*?)<\/\1>/gi;
 	let m;
 	while ((m = re.exec(body))) {
-		heads.push({ level: Number(m[1][1]), start: m.index, title: decodeEntities(m[2].replace(/<[^>]+>/g, '').trim()) });
+		heads.push({
+			level: Number(m[1][1]),
+			start: m.index,
+			title: decodeEntities(m[2].replace(/<[^>]+>/g, '').trim()),
+		});
 	}
 	if (heads.length < SPLIT_MIN_HEADINGS) return [];
 	const byLevel = new Map();
@@ -134,7 +138,10 @@ function docToChapters(html, fallbackTitle) {
 	if (fullText.length >= SPLIT_MIN_DOC_CHARS) {
 		const segs = splitBodyByHeadings(body);
 		if (segs.length >= 2) {
-			return segs.map((s, i) => ({ titleSource: s.title || `${fallbackTitle} (${i + 1})`, contentSource: s.text }));
+			return segs.map((s, i) => ({
+				titleSource: s.title || `${fallbackTitle} (${i + 1})`,
+				contentSource: s.text,
+			}));
 		}
 	}
 	if (fullText.length < 4) return [];
@@ -223,7 +230,8 @@ function importEpub(bytes, fallbackTitle, hints = []) {
 		for (const name of names) {
 			const raw = get(name);
 			if (!raw) continue;
-			for (const c of docToChapters(raw, titleFromFilename(name) || `Chapter ${chapters.length + 1}`)) chapters.push(c);
+			for (const c of docToChapters(raw, titleFromFilename(name) || `Chapter ${chapters.length + 1}`))
+				chapters.push(c);
 		}
 	}
 	if (chapters.length === 0) throw new Error('No readable chapters found in EPUB.');
@@ -255,9 +263,15 @@ function check(name, book) {
 	if (empty) problems.push(`${empty} empty chapter(s)`);
 	if (exp.ordered) {
 		// VERIFY NATURAL ORDER: chapter numbers parsed from titles must be ascending
-		const nums = book.chapters.map((c) => Number((c.titleSource.match(/(\d+)/) ?? [])[1])).filter((n) => !Number.isNaN(n));
+		const nums = book.chapters
+			.map((c) => Number((c.titleSource.match(/(\d+)/) ?? [])[1]))
+			.filter((n) => !Number.isNaN(n));
 		let asc = true;
-		for (let i = 1; i < nums.length; i++) if (nums[i] < nums[i - 1]) { asc = false; break; }
+		for (let i = 1; i < nums.length; i++)
+			if (nums[i] < nums[i - 1]) {
+				asc = false;
+				break;
+			}
 		if (!asc) problems.push('chapter order is NOT natural-ascending (10/100 before 2)');
 	}
 	return { problems, avg };
@@ -280,15 +294,21 @@ for (const f of epubs) {
 		continue;
 	}
 	const { problems, avg } = check(name, book);
-	console.log(`  title="${book.title}" author=${JSON.stringify(book.author)} chapters=${book.chapters.length} avg=${avg}ch`);
+	console.log(
+		`  title="${book.title}" author=${JSON.stringify(book.author)} chapters=${book.chapters.length} avg=${avg}ch`,
+	);
 	console.log('  first 5:');
-	book.chapters.slice(0, 5).forEach((c, i) =>
-		console.log(`    [${i}] ${c.contentSource.length}ch  "${c.titleSource.slice(0, 50)}"`),
-	);
+	book.chapters
+		.slice(0, 5)
+		.forEach((c, i) => console.log(`    [${i}] ${c.contentSource.length}ch  "${c.titleSource.slice(0, 50)}"`));
 	console.log('  last 3:');
-	book.chapters.slice(-3).forEach((c, i) =>
-		console.log(`    [${book.chapters.length - 3 + i}] ${c.contentSource.length}ch  "${c.titleSource.slice(0, 50)}"`),
-	);
+	book.chapters
+		.slice(-3)
+		.forEach((c, i) =>
+			console.log(
+				`    [${book.chapters.length - 3 + i}] ${c.contentSource.length}ch  "${c.titleSource.slice(0, 50)}"`,
+			),
+		);
 	if (problems.length) {
 		console.log('  ❌ FAIL:', problems.join(' | '));
 		allOk = false;

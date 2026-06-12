@@ -26,7 +26,6 @@ const DEFAULT_CONCURRENCY = Math.max(1, Number(env.DEEPSEEK_CONCURRENCY ?? '4') 
 // -- TYPES -- //
 
 declare global {
-	// eslint-disable-next-line no-var
 	var __xianslateRedis: { client?: RedisClient; sub?: RedisClient } | undefined;
 }
 

@@ -49,22 +49,22 @@
 		<MailCheck size={32} class="mx-auto mb-3 text-sky-600 dark:text-sky-400" />
 		<h1 class="text-xl font-bold">Check your inbox</h1>
 		<p class="mt-2 text-sm opacity-70">
-			We sent a verification link{#if email} to <span class="font-medium">{email}</span>{/if}. Verifying secures your
-			account and lets us reach you about your library.
+			We sent a verification link{#if email}
+				to <span class="font-medium">{email}</span>{/if}. Verifying secures your account and lets us reach you
+			about your library.
 		</p>
 
 		<!-- ACTIONS -->
 		<div class="mt-6 flex flex-col gap-2">
-			<a
-				href="/app/"
-				use:ripple
-				class="rounded-lg bg-sky-600 px-4 py-2 text-sm font-medium text-white">Continue to my library</a
+			<a href="/app/" use:ripple class="rounded-lg bg-sky-600 px-4 py-2 text-sm font-medium text-white"
+				>Continue to my library</a
 			>
 			<button
 				use:ripple={{ disabled: busy }}
 				disabled={busy}
 				on:click={resend}
-				class="rounded-lg border border-black/15 px-4 py-2 text-sm font-medium dark:border-white/15">Resend email</button
+				class="rounded-lg border border-black/15 px-4 py-2 text-sm font-medium dark:border-white/15"
+				>Resend email</button
 			>
 			<a href="/logout/" use:ripple class="rounded-md py-1 text-xs opacity-60 hover:opacity-100">Sign out</a>
 		</div>

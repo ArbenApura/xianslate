@@ -39,7 +39,7 @@
 <!-- LINK VARIANT (href provided) -->
 {#if href}
 	<a {href} use:ripple={{ disabled }} class={cn(classes, disabled && 'pointer-events-none opacity-50')}><slot /></a>
-<!-- BUTTON VARIANT -->
+	<!-- BUTTON VARIANT -->
 {:else}
 	<button {type} {disabled} use:ripple={{ disabled }} class={classes} on:click>
 		<!-- LOADING SPINNER -->

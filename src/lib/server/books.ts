@@ -336,11 +336,7 @@ export async function refetchCover(
  * `recordResume` MUST ONLY BE SET ON A REAL PAGE VIEW (THE SSR LOAD) — NOT FROM PREFETCH / JSON
  * LOOKUPS, OTHERWISE BACKGROUND PREFETCH WOULD SILENTLY ADVANCE THE BOOK'S "RESUME" POINTER.
  */
-export async function getChapterView(
-	uuid: string,
-	userId: string,
-	recordResume = false,
-): Promise<ChapterView | null> {
+export async function getChapterView(uuid: string, userId: string, recordResume = false): Promise<ChapterView | null> {
 	const row = await db.select().from(chapters).where(eq(chapters.uuid, uuid)).limit(1);
 	if (!row[0]) return null;
 	const book = await getBook(row[0].bookId);

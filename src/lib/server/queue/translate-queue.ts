@@ -6,13 +6,7 @@ import type { TranslationEvent } from '../translation-service';
 // IMPORTED DEP-MODULES
 import { Queue } from 'bullmq';
 // IMPORTED MODULES
-import {
-	eventsChannel,
-	hasRedis,
-	newBullConnection,
-	readBufferedEvents,
-	redisSubscriber,
-} from '../redis';
+import { eventsChannel, hasRedis, newBullConnection, readBufferedEvents, redisSubscriber } from '../redis';
 
 // -- TYPES -- //
 

@@ -183,7 +183,9 @@
 						>
 							<!-- ALWAYS SHOW THE REAL CHAPTER NUMBER ('·' FOR NON-CHAPTER ENTRIES) — THE ✓ LIVES ON THE
 							     TITLE, NOT IN THIS NUMBER COLUMN. -->
-							<span class="flex min-w-[1.85rem] shrink-0 justify-end text-right text-xs tabular-nums opacity-40">
+							<span
+								class="flex min-w-[1.85rem] shrink-0 justify-end text-right text-xs tabular-nums opacity-40"
+							>
 								{lbl.kind === 'chapter' ? lbl.number : '·'}
 							</span>
 							<!-- FINISHED CHAPTERS GET A ✓ PREFIXED TO THE TITLE -->

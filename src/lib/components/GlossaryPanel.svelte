@@ -44,7 +44,14 @@
 
 	// -- TYPES -- //
 
-	type Entry = { id: number; source: string; target: string; gender: Gender; context: string | null; tags: string | null };
+	type Entry = {
+		id: number;
+		source: string;
+		target: string;
+		gender: Gender;
+		context: string | null;
+		tags: string | null;
+	};
 
 	// -- CONSTANTS -- //
 
@@ -195,7 +202,13 @@
 			const res = await fetch(`/api/glossary/${e.id}`, {
 				method: 'PUT',
 				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ source: e.source, target: e.target, gender: e.gender, context: e.context, tags: e.tags }),
+				body: JSON.stringify({
+					source: e.source,
+					target: e.target,
+					gender: e.gender,
+					context: e.context,
+					tags: e.tags,
+				}),
 			});
 			if (!res.ok) throw new Error('Save failed');
 		} catch {
