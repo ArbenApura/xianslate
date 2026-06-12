@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Xianslate">
+	<defs>
+		<linearGradient id="xs-logo-bg" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+			<stop offset="0" stop-color="#38bdf8" />
+			<stop offset="0.5" stop-color="#0ea5e9" />
+			<stop offset="1" stop-color="#6366f1" />
+		</linearGradient>
+	</defs>
+	<!-- SKY -> INDIGO SQUIRCLE TILE -->
+	<rect width="64" height="64" rx="15" fill="url(#xs-logo-bg)" />
+	<!-- OPEN BOOK — LEFT PAGE BLANK (SOURCE), RIGHT PAGE WITH TEXT LINES (THE RENDERED TRANSLATION) -->
+	<g fill="#ffffff">
+		<path d="M31 25 C 24 21 16 21 11 22 L 11 46 C 16 45 24 45 31 48 Z" />
+		<path d="M33 25 C 40 21 48 21 53 22 L 53 46 C 48 45 40 45 33 48 Z" />
+	</g>
+	<!-- TRANSLATED-TEXT LINES ON THE RIGHT PAGE -->
+	<g fill="#0ea5e9" opacity="0.55">
+		<rect x="37" y="29" width="13" height="2" rx="1" />
+		<rect x="37" y="34" width="13" height="2" rx="1" />
+		<rect x="37" y="39" width="9" height="2" rx="1" />
+	</g>
+	<!-- AI / TRANSLATION SPARK -->
+	<path
+		fill="#ffffff"
+		d="M47 9 C 47.6 12.4 48.6 13.4 52 14 C 48.6 14.6 47.6 15.6 47 19 C 46.4 15.6 45.4 14.6 42 14 C 45.4 13.4 46.4 12.4 47 9 Z"
+	/>
+</svg>

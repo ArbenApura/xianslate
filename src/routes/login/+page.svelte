@@ -76,6 +76,8 @@
 	>
 		<!-- HEADER -->
 		<div class="mb-6 text-center">
+			<!-- BRAND MARK (static/logo.svg) -->
+			<img src="/logo.svg" alt="" class="mx-auto mb-3 h-12 w-12 rounded-xl" />
 			<h1 class="text-xl font-bold">Welcome back</h1>
 			<p class="mt-1 text-sm opacity-60">Sign in to your Xianslate library.</p>
 		</div>

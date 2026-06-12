@@ -65,7 +65,8 @@
 	<!-- TOP BAR: BRAND + APP ENTRY -->
 	<header class="flex items-center justify-between py-5">
 		<span class="inline-flex items-center gap-2 text-lg font-bold">
-			<BookOpen size={22} class="text-sky-600 dark:text-sky-400" /> Xianslate
+			<!-- BRAND MARK (static/logo.svg) — THE GRADIENT TILE IS THEME-INDEPENDENT; THE WORDMARK INHERITS THEME TEXT -->
+			<img src="/logo.svg" alt="" class="h-7 w-7 rounded-[7px]" /> Xianslate
 		</span>
 		<Button href="/app/" variant="ghost">Open app</Button>
 	</header>
