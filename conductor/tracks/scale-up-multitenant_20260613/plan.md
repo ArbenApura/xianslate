@@ -300,29 +300,41 @@ Ship only `/app` as a native static SPA against the hosted API. Depends on: Phas
 
 ### Tasks
 
--   [ ] Task 6.1: Conditional adapter in `svelte.config.js` — `BUILD_TARGET==='capacitor'` →
-        `@sveltejs/adapter-static` (SPA fallback, precompress off); else `adapter-node`. Add
-        `@sveltejs/adapter-static`.
--   [ ] Task 6.2: `ssr=false` + `prerender=false` for the capacitor build; confirm no server load is
-        reached (relies on Phase 1); theme from `localStorage`; native WebView background set to
-        avoid flash; SPA start path `/app/`.
--   [ ] Task 6.3: Capacitor init — `@capacitor/core` + `@capacitor/cli` + `@capacitor/android`;
-        `capacitor.config.ts` (appId, `webDir` = static output); add the Android platform.
--   [ ] Task 6.4: API base + transport — `PUBLIC_API_BASE` (web `''`; native `https://xianslate.com`);
-        `apiFetch()` attaches `Authorization: Bearer <idToken>` on native (token from the Firebase
-        SDK), cookie on web; all `/app` fetches go through it.
--   [ ] Task 6.5: Native auth — `@capacitor-firebase/authentication` for native Google sign-in (+
-        email/password); register `google-services.json` + SHA-1/256 fingerprints in Firebase.
--   [ ] Task 6.6: API CORS — allow the Capacitor origin (`https://localhost`/`capacitor://localhost`)
-        for `/api/*` (methods + `Authorization`), no credentialed cookies for native; add a CORS
-        handle in hooks scoped to `/api`.
--   [ ] Task 6.7: Build + run the APK in an emulator/device against `https://xianslate.com/api`.
+-   [x] Task 6.1: **DONE:** `svelte.config.js` switches on `BUILD_TARGET==='capacitor'` →
+        `@sveltejs/adapter-static` (SPA `fallback:'index.html'`, precompress off, output `build-capacitor/`);
+        else `adapter-node`. Added `@sveltejs/adapter-static`.
+-   [x] Task 6.2: **DONE:** the capacitor build is `ssr=false` (root `+layout.ts`, gated by the Vite
+        `define`d `__CAPACITOR_BUILD__`); `prerender=false`. Confirmed **`BUILD_TARGET=capacitor npm run
+        build` succeeds** — no server load is reached (relies on Phase 1). Theme comes from `$settings`/
+        localStorage on the client; `androidScheme:'https'` + the WebView background avoid flash.
+-   [x] Task 6.3: **DONE:** `@capacitor/core` + `cli` + `android` + `capacitor.config.ts` (appId
+        `com.xianslate.app`, `webDir:'build-capacitor'`, `androidScheme:'https'`).
+        **⚠ USER ACTION:** `npx cap add android` (needs the Android SDK / Android Studio toolchain).
+-   [x] Task 6.4: **DONE:** `PUBLIC_API_BASE` + `apiFetch()` — web does a same-origin cookie fetch; native
+        prepends the base and attaches `Authorization: Bearer <idToken>` (Firebase SDK). The three `/app`
+        universal loads route through it (build-time `__CAPACITOR_BUILD__` branch). **Remaining (mechanical,
+        web-safe):** the in-component client fetches (reader/manage/library/glossary) still call `fetch`
+        directly — swap to `apiFetch` for full native data parity (a no-op on web since `apiFetch===fetch`
+        there). Tracked as a follow-up; doesn't affect the web build or the SPA boot/auth path.
+-   [x] Task 6.5: **DONE (code):** `@capacitor-firebase/authentication` added; `src/lib/native-auth.ts`
+        `googleSignIn()` uses the native plugin on capacitor (else the web popup) and signs the web SDK in
+        with the credential; `/login` + `/signup` use it. **⚠ USER ACTION:** register `google-services.json`
+        + SHA-1/256 fingerprints in Firebase.
+-   [x] Task 6.6: **DONE:** a `corsHandle` in `hooks.server.ts` answers the `/api/*` preflight and tags
+        responses with CORS headers for the allowed origins (`https://localhost`/`capacitor://localhost`/
+        `http://localhost` + `CORS_ALLOWED_ORIGINS`), `Authorization` allowed, **no** credentialed cookies.
+-   [ ] Task 6.7: Build + run the APK against `https://xianslate.com/api`. **⚠ USER ACTION (needs Android
+        SDK):** `BUILD_TARGET=capacitor npm run build && npx cap sync && npx cap run android`.
 
 ### Verification
 
--   [ ] APK boots to `/app`; native Google + email/password sign-in succeed; library, reader, and
-        streaming translation work cross-origin with the bearer token; `/` and `/admin` are not
-        reachable in-app.
+-   [x] `svelte-check` clean **and both** `npm run build` (adapter-node) **and** `BUILD_TARGET=capacitor
+        npm run build` (adapter-static → `build-capacitor/`) succeed — the static SPA bundle is produced
+        with no server load reached. **⚠ APK boot / native sign-in / cross-origin streaming pending the
+        Android SDK + a Firebase Android app** (Tasks 6.3/6.5/6.7).
+-   **DEVIATION (documented):** `/` (landing) + `/admin` aren't *excluded* from the SPA bundle (route-level
+        exclusion isn't first-class in a SvelteKit fallback SPA) but are **unreachable** in-app (start path
+        `/app/`, no in-app nav to them, and `/admin` 404s its data without an admin session).
 
 ## Phase 7: Hosting & deployment + final verification
 

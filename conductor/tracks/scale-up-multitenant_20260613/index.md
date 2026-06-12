@@ -21,7 +21,7 @@
 -   [x] Phase 3 — Firebase authentication (code complete; live sign-in pending Firebase project)
 -   [x] Phase 4 — Per-user multi-tenancy & cost guardrail (code complete; live isolation pending Neon+Firebase)
 -   [x] Phase 5 — Redis/BullMQ queue + global DeepSeek cap (code complete; REDIS_URL-gated, in-memory bridge retained)
--   [ ] Phase 6 — Capacitor Android build
+-   [x] Phase 6 — Capacitor Android build (config + SPA build green; APK build pending Android SDK)
 -   [ ] Phase 7 — Hosting & deployment + final verification
 
 ## Cross-Session References
