@@ -57,8 +57,10 @@ yarn dev                  # http://localhost:5173
 | `DEEPSEEK_REASONING`| `enabled` allows the model's chain-of-thought; anything else disables it | `disabled` |
 | `DATABASE_URL`      | libsql URL                          | `file:./xianslate.db`      |
 
-Optional price overrides (USD per 1M tokens) for the cost meter: `DEEPSEEK_PRICE_INPUT`,
-`DEEPSEEK_PRICE_CACHED`, `DEEPSEEK_PRICE_OUTPUT`.
+Optional per-model price overrides (USD per 1M tokens) for the cost meter — these default to DeepSeek's
+published Flash/Pro rates, override only to track price changes:
+`DEEPSEEK_PRICE_FLASH_INPUT` / `_FLASH_CACHED` / `_FLASH_OUTPUT` (cache-miss input / cache-hit input / output)
+and `DEEPSEEK_PRICE_PRO_INPUT` / `_PRO_CACHED` / `_PRO_OUTPUT`.
 
 ## Scripts
 

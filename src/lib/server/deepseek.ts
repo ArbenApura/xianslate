@@ -6,6 +6,15 @@ import { env } from '$env/dynamic/private';
 import OpenAI from 'openai';
 import PQueue from 'p-queue';
 
+// -- TYPES -- //
+
+// USD-PER-TOKEN PRICE TRIPLE FOR ONE MODEL (CACHE-MISS INPUT, CACHE-HIT INPUT, OUTPUT).
+interface ModelPricing {
+	inputMiss: number;
+	inputHit: number;
+	output: number;
+}
+
 // -- CONSTANTS -- //
 
 const apiKey = env.DEEPSEEK_API_KEY ?? '';
@@ -54,13 +63,22 @@ const CONCURRENCY = Math.max(1, Number(env.DEEPSEEK_CONCURRENCY ?? '4') || 4);
 
 const queue = new PQueue({ concurrency: CONCURRENCY });
 
-// DEEPSEEK PRICING (USD PER 1M TOKENS) — APPROXIMATE; OVERRIDE VIA ENV IF NEEDED.
-// CACHE HITS ARE ~10x CHEAPER THAN MISSES.
-const PRICE_INPUT_MISS = Number(env.DEEPSEEK_PRICE_INPUT ?? '0.27') / 1_000_000;
-
-const PRICE_INPUT_HIT = Number(env.DEEPSEEK_PRICE_CACHED ?? '0.027') / 1_000_000;
-
-const PRICE_OUTPUT = Number(env.DEEPSEEK_PRICE_OUTPUT ?? '1.10') / 1_000_000;
+// DEEPSEEK PRICING (USD PER 1M TOKENS) BY MODEL — FROM api-docs.deepseek.com/quick_start/pricing (2026-06).
+// A CACHE HIT IS ~50x CHEAPER THAN A MISS. EVERY FIELD IS ENV-OVERRIDABLE SO A DEPLOYMENT CAN TRACK PRICE
+// CHANGES — OR REMAP FLASH/PRO — WITHOUT A CODE CHANGE. KEYED BY THE SAME MODEL_FLASH/MODEL_PRO IDS USED
+// EVERYWHERE ELSE, SO REMAPPING A MODEL ID AUTOMATICALLY REMAPS ITS PRICE TOO.
+const PRICING: Record<string, ModelPricing> = {
+	[MODEL_FLASH]: {
+		inputMiss: Number(env.DEEPSEEK_PRICE_FLASH_INPUT ?? '0.14') / 1_000_000,
+		inputHit: Number(env.DEEPSEEK_PRICE_FLASH_CACHED ?? '0.0028') / 1_000_000,
+		output: Number(env.DEEPSEEK_PRICE_FLASH_OUTPUT ?? '0.28') / 1_000_000,
+	},
+	[MODEL_PRO]: {
+		inputMiss: Number(env.DEEPSEEK_PRICE_PRO_INPUT ?? '0.435') / 1_000_000,
+		inputHit: Number(env.DEEPSEEK_PRICE_PRO_CACHED ?? '0.003625') / 1_000_000,
+		output: Number(env.DEEPSEEK_PRICE_PRO_OUTPUT ?? '0.87') / 1_000_000,
+	},
+};
 
 // -- FUNCTIONS -- //
 
@@ -104,8 +122,14 @@ export async function withRetry<T>(fn: () => Promise<T>, retries = 4): Promise<T
 	throw lastErr;
 }
 
-// COMPUTE APPROXIMATE COST FROM A USAGE OBJECT (HANDLES DEEPSEEK CACHE FIELDS). `model` LABELS THE
-// RESULTING USAGE ROW SO THE COST METER + CACHE ATTRIBUTE SPEND TO THE MODEL THAT WAS ACTUALLY USED.
+// RESOLVE THE PER-MODEL PRICE TABLE, FALLING BACK TO FLASH FOR ANY UNKNOWN / ALIASED ID SO COST IS NEVER
+// ZERO (e.g. A LEGACY USAGE ROW WHOSE model NO LONGER MATCHES A CONFIGURED ID).
+function pricingFor(model: string): ModelPricing {
+	return PRICING[model] ?? PRICING[MODEL_FLASH];
+}
+
+// COMPUTE APPROXIMATE COST FROM A USAGE OBJECT (HANDLES DEEPSEEK CACHE FIELDS). `model` SELECTS THE PRICE
+// TABLE *AND* LABELS THE RESULTING USAGE ROW, SO FLASH AND PRO SPEND ARE COSTED AT THEIR OWN RATES.
 export function computeUsage(
 	usage: OpenAI.Completions.CompletionUsage | undefined,
 	model: string = MODEL,
@@ -120,6 +144,7 @@ export function computeUsage(
 	};
 	const cachedTokens = u?.prompt_cache_hit_tokens ?? u?.prompt_tokens_details?.cached_tokens ?? 0;
 	const missTokens = u?.prompt_cache_miss_tokens ?? Math.max(0, promptTokens - cachedTokens);
-	const costUsd = missTokens * PRICE_INPUT_MISS + cachedTokens * PRICE_INPUT_HIT + completionTokens * PRICE_OUTPUT;
+	const price = pricingFor(model);
+	const costUsd = missTokens * price.inputMiss + cachedTokens * price.inputHit + completionTokens * price.output;
 	return { model, promptTokens, cachedTokens, completionTokens, costUsd };
 }
