@@ -4,22 +4,31 @@
 	"type": "chore",
 	"status": "in_progress",
 	"created": "2026-06-13T09:00:00Z",
-	"updated": "2026-06-13T14:30:00Z",
-	"current_phase": 3,
-	"current_task": "3.1",
+	"updated": "2026-06-13T15:30:00Z",
+	"current_phase": 4,
+	"current_task": "4.6",
 	"blocked": false,
-	"blocked_reason": "Phase 1 (Neon + Firebase) + Phase 2 (offline gate) PASS; app boots in bridge mode. Agent can now drive Phases 3-5 via Firebase REST auth + bearer tokens (no browser). Still needs operator for: browser Google-OAuth/verification-reset emails (Phase 3), Upstash/Redis (Phase 6), Fly/Cloudflare (Phase 8), Android SDK (Phase 7).",
+	"blocked_reason": "Phases 1+2 PASS. Phase 3 API-half PASS (3.1 sign-up provider, 3.6 guards/admin-gate); browser-only 3.2-3.5/3.7 pending human. Phase 4 isolation core (4.1-4.5) PASS 29/29 via bearer-token harness; 4.6 (budget 429) deferred pending cost go-ahead, 4.7 (user-delete cascade) deferred (destructive, run last). Findings: FND-1 malformed-uuid->500 (minor robustness, file bug track). Next decision: approve small DeepSeek spend to run Phase 5 pipeline + 4.6 guardrail.",
+	"findings": [
+		"FND-1: malformed (non-UUID) chapter id from an authed user -> 500 instead of 404/400 (uuid column cast). Affects /api/chapter, /api/chapters/[uuid]/*. Minor robustness, no data leak. -> file bug track at sign-off."
+	],
+	"test_users": {
+		"A": "smoke-a@xianslate.test (uid HjY2ydmZezdsz7zPxBwJZmXRnxR2)",
+		"B": "smoke-b@xianslate.test (uid zXS1XFu6HeQOmzoEsYIXpIqyqDp1)",
+		"note": "throwaway; delete at track sign-off (B's delete doubles as Task 4.7 cascade test)"
+	},
 	"phases": {
 		"total": 10,
 		"completed": 2
 	},
 	"tasks": {
 		"total": 66,
-		"completed": 10
+		"completed": 15
 	},
 	"commits": [
 		"e66a386: Phase 2 offline regression gate PASS",
 		"4e9c91f: Fly region -> sin (Singapore)",
-		"d35a99b: Neon provisioned + migrated (Tasks 1.1, 1.4)"
+		"d35a99b: Neon provisioned + migrated (Tasks 1.1, 1.4)",
+		"680fd04: Phase 1 complete — Firebase live + first boot"
 	]
 }

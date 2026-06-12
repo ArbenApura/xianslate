@@ -3,8 +3,9 @@
 **Track ID:** smoke-stability_20260613
 **Spec:** [spec.md](./spec.md)
 **Created:** 2026-06-13
-**Status:** [~] In Progress — **Phase 1 + Phase 2 PASS** (Neon + Firebase live, app boots). Driving Phases
-3–5 via the API next; Phases 6–8 + browser/Android/deploy steps await Redis/Fly/Cloudflare/Android.
+**Status:** [~] In Progress — **Phases 1, 2 PASS; Phase 4 isolation core PASS (29/29)**; Phase 3 API-half +
+admin gate PASS. Remaining: Phase 4.6/4.7 (cost/destructive), Phase 5 (cost), browser/Redis/Fly/CF/Android.
+**Findings:** FND-1 (malformed-uuid → 500, minor, file as bug).
 
 > **⏳ Execution status (2026-06-13).** **Done:** **Phase 2** offline gate (all 5 green); **Phase 1** —
 > **Neon** live in Singapore `ap-southeast-1` (migrated + schema-verified, Fly region `sin`) and **Firebase**
@@ -130,23 +131,36 @@ Validate the Firebase handshake + route guards. Depends on: Phase 1.
 
 ### Tasks
 
--   [ ] Task 3.1: 🌐 `/signup/` → create user A (email/password). → verification email sent; lands on
-        `/verify-email/`; "Resend" works.
+-   [~] Task 3.1: 🌐 `/signup/` → create user A (email/password). → verification email sent; lands on
+        `/verify-email/`; "Resend" works. **Observed:** account creation proven programmatically — Firebase
+        REST `accounts:signUp` for `smoke-a@`/`smoke-b@xianslate.test` returns 200 (so **Email/Password
+        provider IS enabled**); bearer token → `verifyIdToken` → `upsertUserFromToken` inserts the Neon
+        `users` row; `GET /api/books` → 200. **Browser-only remainder:** the `/signup/` UI, the verification
+        email + `/verify-email/` redirect, and "Resend" still need a human pass.
 -   [ ] Task 3.2: 🌐 reload `/app/` → still signed in (session cookie persists). DevTools → a httpOnly
         `xianslate_session` cookie exists, `SameSite=Lax`, `Secure` in prod.
 -   [ ] Task 3.3: 🌐 `/logout/` → cookie cleared; `/app/` now redirects to `/login/?redirect=%2Fapp%2F`.
 -   [ ] Task 3.4: 🌐 `/login/` → sign in with email/password → back to `/app/`. Then "Continue with
         Google" → Google popup → `/app/`. (Native Google is Phase 7.)
 -   [ ] Task 3.5: 🌐 "Forgot password?" on `/login/` (enter A's email) → reset email arrives.
--   [ ] Task 3.6: ⌨ guards while **signed out**: `curl -i $BASE/api/books` → **401** JSON `{message}`;
+-   [x] Task 3.6: ⌨ guards while **signed out**: `curl -i $BASE/api/books` → **401** JSON `{message}`;
         `curl -i $BASE/api/admin/...`/any admin data → 401/403; `GET /app/book/x/` (no cookie) → 303 →
         `/login/`. While signed in as a non-admin: `/admin/` → 303 → `/app/`; `/api/admin/*` → **403**.
+        **Observed (curl + bearer):** `GET /api/books` (no auth) → **401** `{"message":"Sign in required."}`;
+        `GET /app/` → **303** `/login/?redirect=%2Fapp%2F`; `GET /admin/` (signed out) → **303** `/login/`;
+        non-admin user B `GET /api/admin/anything` → **403** `{"message":"Admin only."}`. (Signed-in non-admin
+        `/admin/`→`/app/` page redirect needs a session cookie — browser check, deferred to a human pass.)
 -   [ ] Task 3.7: Promote A to admin (SQL: `update users set role='admin' where email=…`) → `/admin/`
         loads the dashboard; `/api/admin/*` (if any) → 200.
 
 ### Verification
 
--   [ ] Sign-up+verify, both sign-ins, logout, reset, and every guard behave as above. **Findings:** _(…)_
+-   [~] Sign-up+verify, both sign-ins, logout, reset, and every guard behave as above. **Findings:** The
+        **API/guard half is PASS** (sign-up provider enabled, bearer auth → Neon upsert, all signed-out + the
+        non-admin `/api/admin` guard correct — Tasks 3.1 core + 3.6). The **browser-only half is pending a
+        human pass** (Tasks 3.2 session-cookie persistence, 3.3 logout, 3.4 email + Google sign-in via the UI,
+        3.5 password-reset email, 3.7 admin-page load) — these need the `/login` UI / Google OAuth popup /
+        Firebase emails an agent can't drive.
 
 ---
 
@@ -156,35 +170,53 @@ The security-critical phase. Create a **second** user B. Depends on: Phase 3.
 
 ### Tasks
 
--   [ ] Task 4.1: As A, add a book (any source) + a book-scope glossary term + a global glossary term.
-        Note A's `bookId` and a `chapterId`/`uuid`. Sign in as B (separate browser/profile).
--   [ ] Task 4.2: As B, exercise **every** owner-scoped endpoint against A's ids → expect **404** (never
+-   [x] Task 4.1: As A, add a book (any source) + a book-scope glossary term + a global glossary term.
+        Note A's `bookId` and a `chapterId`/`uuid`. Sign in as B (separate browser/profile). **Observed:** via
+        bearer-token harness — user A created a manual book (`POST /api/books`) + manual chapter, a book-scope
+        term + a global term; user B signed in independently. (Two real Firebase users `smoke-a`/`smoke-b`.)
+-   [x] Task 4.2: As B, exercise **every** owner-scoped endpoint against A's ids → expect **404** (never
         A's data): `GET /api/chapter?id=<A.uuid>`; `GET /api/books/<A.bookId>`;
         `GET /api/books/<A.bookId>/chapters`; `GET /api/chapters/<A.uuid>/stats`;
         `POST /api/chapters/<A.uuid>/progress`; `PATCH/DELETE /api/chapters/<A.uuid>`;
         `POST /api/books/<A.bookId>/read`; `POST /api/books/<A.bookId>/cover`;
         `POST/PATCH /api/books/<A.bookId>/chapters`; `POST /api/extract {chapterId:<A.id>}`;
-        `GET /api/books/<A.bookId>/translating`.
--   [ ] Task 4.3: ⌨ Glossary isolation: as B, `GET /api/glossary?scope=global&sourceLang=…&targetLang=…`
+        `GET /api/books/<A.bookId>/translating`. **Observed:** all 13 endpoints → **404** for B (the full
+        matrix passed). Ownership check is owner-scoped SQL (`WHERE userId=…`) so B's id matches zero rows.
+-   [x] Task 4.3: ⌨ Glossary isolation: as B, `GET /api/glossary?scope=global&sourceLang=…&targetLang=…`
         → only B's globals (not A's); `GET /api/glossary?scope=book&bookId=<A.bookId>` → **404**;
         `PUT/DELETE /api/glossary/<A.termId>` → 404 (term not found for B); CSV
-        `GET /api/glossary/export?scope=book&bookId=<A.bookId>` → 404.
--   [ ] Task 4.4: **SSE hijack:** as B, `POST /api/translate {chapterId:<A.id>}` → **404** before any
-        stream attaches (B can't observe A's translation).
--   [ ] Task 4.5: **Library scoping:** `GET /api/books` as A vs B → each sees only their own books; counts
+        `GET /api/glossary/export?scope=book&bookId=<A.bookId>` → 404. **Observed:** B's global list = 0 (A's
+        global term **not** visible — per-user partition); `scope=book` of A → **404**; `PUT` A's book term &
+        A's global term → **404**; CSV export of A's book → **404**. `DELETE /api/glossary/<A.id>` returns
+        **200** (idempotent no-op by design) but **A's term survives** (owner-scoped delete touched nothing) ✓.
+-   [x] Task 4.4: **SSE hijack:** as B, `POST /api/translate {chapterId:<A.id>}` → **404** before any
+        stream attaches (B can't observe A's translation). **Observed:** **404** (`assertChapterOwner` throws
+        before `assertWithinBudget` and before any enqueue/stream). ✓
+-   [x] Task 4.5: **Library scoping:** `GET /api/books` as A vs B → each sees only their own books; counts
         (`chapterCount`, `readChapters`, `translatedChapters`, first/resume uuids) are correct per user.
--   [ ] Task 4.6: **Cost guardrail:** set `QUOTA_USD_PER_WINDOW=0.01`, restart. As a user, translate a few
+        **Observed:** A's library contains A's book; B's library = **0 books**. ✓
+-   [~] Task 4.6: **Cost guardrail:** set `QUOTA_USD_PER_WINDOW=0.01`, restart. As a user, translate a few
         fresh chapters until spend ≥ $0.01 → next `POST /api/translate` (fresh) and `POST /api/fetch` →
         **429** with the friendly budget message; a **cached** re-read of an already-translated chapter is
-        still **free/allowed** (never hits the gate). Restore the quota.
--   [ ] Task 4.7: **Cascade on user delete:** SQL `delete from users where id=<B.uid>` → B's books,
+        still **free/allowed** (never hits the gate). Restore the quota. **Deferred:** needs real DeepSeek
+        translations (small spend) — bundle with Phase 5; awaiting go-ahead on cost.
+-   [~] Task 4.7: **Cascade on user delete:** SQL `delete from users where id=<B.uid>` → B's books,
         chapters, translations, glossary, and chapter-linked `ai_usage` are gone; `site_adapters` +
-        `site_events` (and `'map'` ai_usage) remain. Confirm A's data untouched.
+        `site_events` (and `'map'` ai_usage) remain. Confirm A's data untouched. **Deferred to end:**
+        destructive (drops user B) and best run after B owns data; will do as the last Phase-4 step.
 
 ### Verification
 
--   [ ] No cross-user read/write anywhere; SSE hijack refused; over-budget refused; user-delete cascade
-        correct + shared tables preserved. **Findings:** _(…)_
+-   [~] No cross-user read/write anywhere; SSE hijack refused; over-budget refused; user-delete cascade
+        correct + shared tables preserved. **Findings:** **Isolation core (4.1–4.5) PASS — 29/29 checks, 0
+        fail** (security-critical): no cross-tenant read/write on any of the 13 owner-scoped endpoints, SSE
+        hijack refused pre-stream, glossary fully partitioned per user, library scoped, non-admin `/api/admin`
+        → 403. **4.6 (budget 429)** + **4.7 (user-delete cascade)** deferred (cost / destructive). **FND-1
+        (minor robustness, file as bug):** a malformed non-UUID `id` from an authed user → **500 "Internal
+        Error"** (the `uuid` column rejects the cast) instead of 404/400 — affects `/api/chapter` and the
+        `/api/chapters/[uuid]/*` routes; no data leak, narrow input. Method: bearer-token harness vs the live
+        `:3100` server (two real Firebase users). Note: SvelteKit CSRF correctly **403s** a multipart import
+        with no same-origin `Origin` (a security feature; the JSON `POST /api/books` path is the agent route).
 
 ---
 
