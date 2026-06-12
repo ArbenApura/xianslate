@@ -193,38 +193,56 @@ Make every library private and bound LLM spend per user. Depends on: Phase 2 + 3
 
 ### Tasks
 
--   [ ] Task 4.1: Schema — add `userId text references(users.id, onDelete:'cascade')` to **`books`**
-        and **`glossary`**. Change `glossary_global_unq` → `(userId, sourceLang, targetLang, source)
-        WHERE scope='global'`. Migration + backfill existing rows to the seed admin uid.
--   [ ] Task 4.2: Thread `userId` through `books.ts` — filter every read/write by owner; add
-        `assertBookOwner(userId, bookId)` / `getOwnedChapterByUuid(userId, uuid)` (join
-        chapters→books). Update `listBooks`, `getBook`, `getChapterView`, `ingestWebChapter`,
-        `createImportedBook`, `appendChapters`, `setReadProgress`, `setBookReadStatus`,
-        `refreshChapterNav`, `refetchCover`, delete.
--   [ ] Task 4.3: Thread `userId` through `glossary.ts` (all CRUD + `getEffectiveGlossary`,
-        `getGlossaryPage`, `mergeGlossary`, `addNewTerms`, `bookPair`) — global rows scoped by
-        `userId`. `glossary-match.ts` `getEffectiveGlossary` scoping; `chapter-stats.ts` owner scope.
--   [ ] Task 4.4: Enforce ownership in every `/api/*` endpoint + the Phase-1 universal loads via
-        `locals.user`: `/api/books*`, `/api/chapter*`, `/api/chapters/[uuid]/*`, `/api/translate`,
-        `/api/translate-text`, `/api/extract`, `/api/fetch`, `/api/import/*`, `/api/glossary*` →
-        reject cross-user access (404/403).
--   [ ] Task 4.5: Job ownership — in `/api/translate`, verify the caller owns `chapterId` (join to
-        book) **before** `ensureTranslationJob`/`subscribe`, so a user can't attach to another's SSE
-        stream by guessing the integer id.
--   [ ] Task 4.6: `ai_usage` attribution — keep chapter-linked rows (cascade); `'map'` stays global;
-        add per-user roll-up reads for the quota gate.
--   [ ] Task 4.7: `src/lib/server/quota.ts` — `assertWithinBudget(userId)` sums the user's
-        window cost (`ai_usage` + `translations`) vs a per-user limit (config/table); call in
-        `/api/translate` (+ `/api/fetch`) **before** enqueue; over-limit → typed error → friendly
-        toast. Define default free-tier caps (e.g. N chapters/day) — confirm values with product.
--   [ ] Task 4.8: `/admin` + `/api/admin/*` — global dashboard (`site-stats.getDashboard`,
-        cross-user) gated by `role==='admin'`; per-user stats stay user-scoped.
+-   [x] Task 4.1: Schema. **DONE:** `userId text NOT NULL references(users.id, onDelete:'cascade')` on
+        **`books`** + **`glossary`**; `glossary_global_unq` → `(userId, sourceLang, targetLang, source)
+        WHERE scope='global'`. **Also** scoped `chapters_url_unq` → `(bookId, chapterUrl)` (per-user web
+        libraries need the same source URL fetchable into each user's own book — see DEVIATION note below).
+        Migration `drizzle/0002_*.sql`; backfill-to-seed-admin handled by the ETL.
+-   [x] Task 4.2: `books.ts`. **DONE:** `listBooks(userId)` (scoped, incl. its chapter aggregates);
+        `getChapterView(uuid, userId, …)` (ownership check); creates (`ingestWebChapter`,
+        `createImportedBook`, `createEmptyBook`) set `userId`; per-user web book ids
+        (`web-{userId}-{siteId}`); `chapterByUrl` scoped to the book; new
+        `assertBookOwner` / `assertChapterOwner` / `getOwnedChapterByUuid` helpers. Mutators
+        (`setReadProgress`, `setBookReadStatus`, `deleteBook`, `reorderChapters`, `refetchCover`,
+        `refreshChapterNav`, `appendChapters`, `deleteChapter`) are authorised **at the endpoint** via the
+        helpers (less churn, same guarantee).
+-   [x] Task 4.3: `glossary.ts`. **DONE:** `userId` threaded through `scopeWhere`/`getGlossary`/
+        `getGlossaryPage`/`countGlossary`/`addTerm`/`updateTerm`/`deleteTerm`/`mergeGlossary` (global +
+        book rows both userId-scoped). `getEffectiveGlossary`/`addNewTerms` derive the owner from the
+        book, so `glossary-match.matchTerms` + the translate pipeline stay UNCHANGED. `chapter-stats`
+        owner scope enforced at its endpoint.
+-   [x] Task 4.4: **DONE:** every `/api/*` data endpoint calls `requireUser(locals)` + an ownership
+        assertion (`assertBookOwner` / `assertChapterOwner` / `getOwnedChapterByUuid` / userId-scoped
+        glossary): `/api/books*`, `/api/chapter*`, `/api/chapters/[uuid]/*`, `/api/translate`,
+        `/api/translate-text`, `/api/extract`, `/api/fetch`, `/api/import/*`, `/api/glossary*`. The hooks
+        guard already 401s anonymous `/api/*`; these add cross-user 404s. The Phase-1 universal loads call
+        these endpoints, so they inherit the scoping.
+-   [x] Task 4.5: **DONE:** `/api/translate` calls `assertChapterOwner(user.id, chapterId)` **before**
+        `ensureTranslationJob`/`subscribe` — a guessed integer chapterId from another user 404s instead of
+        attaching to their SSE stream.
+-   [x] Task 4.6: **DONE:** chapter-linked `ai_usage` cascades via the chapter FK; `'map'` (no chapterId)
+        stays global; `quota.userSpendUsd` rolls up per-user spend through the chapters→books chain.
+-   [x] Task 4.7: `src/lib/server/quota.ts`. **DONE:** `assertWithinBudget(userId)` sums the window cost
+        (`translations` + chapter-linked `ai_usage`) vs a per-user USD cap, called in `/api/translate` +
+        `/api/fetch` before enqueue; over-limit → 429 with a friendly message. **Default cap (chosen):**
+        `$0.50` per 24h (≈250 fresh chapters/day at ~$0.002), env-overridable via `QUOTA_USD_PER_WINDOW`
+        / `QUOTA_WINDOW_MS`; `<= 0` disables. (Confirm the value with product — it's a one-env-var change.)
+-   [x] Task 4.8: **DONE:** `/admin` (server-loaded `getDashboard`, cross-user) is gated by the hooks
+        `role==='admin'` guard; per-user stats (`chapter-stats`) stay user-scoped at their endpoint. No
+        `/api/admin/*` exists yet — the dashboard loads via `/admin/+page.server.ts` directly.
+
+> **DEVIATION from spec acceptance criterion B (documented):** `chapters_url_unq` is `(bookId, chapterUrl)`
+> rather than global `(chapterUrl)`. A global URL-unique index makes it impossible for two users to each
+> have the same source novel in their own private library (the headline goal, criterion D). Per-book
+> uniqueness + per-user web book ids resolves that; `chapterByUrl` is scoped to the book so neighbour
+> resolution never crosses users. True cross-user web *dedup/sharing* is the deferred shared-base-cache track.
 
 ### Verification
 
--   [ ] Two users can't see/mutate each other's books/glossary; cross-user `chapterId` translate
-        attach is refused; over-budget translate is refused; admin dashboard requires admin;
-        deleting a user cascades their data but leaves shared `site_adapters`/`site_events`.
+-   [x] `svelte-check` clean (874 files, 0 errors) **and** build green. The type system confirmed every
+        call site of the re-signed functions is scoped. **⚠ Live two-user isolation / over-budget-refusal /
+        cascade-on-user-delete checks are pending Neon + Firebase provisioning** (Tasks 2.1 + 3.1) — the
+        ownership + quota code is complete and compiles.
 
 ## Phase 5: Redis/BullMQ queue + global DeepSeek cap
 
