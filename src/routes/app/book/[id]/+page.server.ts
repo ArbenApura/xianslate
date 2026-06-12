@@ -33,6 +33,6 @@ export const load: PageServerLoad = async ({ params }) => {
 		uuid = c?.uuid ?? null;
 	}
 	// EMPTY BOOK → SEND TO THE MANAGEMENT PAGE (ADD CHAPTERS / CURATE GLOSSARY) RATHER THAN 404
-	if (!uuid) throw redirect(307, `/book/${book.id}/manage/`);
-	throw redirect(307, `/book/${book.id}/${uuid}/`);
+	if (!uuid) throw redirect(307, `/app/book/${book.id}/manage/`);
+	throw redirect(307, `/app/book/${book.id}/${uuid}/`);
 };

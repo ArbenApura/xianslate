@@ -93,7 +93,7 @@
 	<!-- HEADER -->
 	<header class="mb-6 flex items-center gap-3">
 		<a
-			href="/"
+			href="/app/"
 			class="rounded-lg p-2 hover:bg-black/5 dark:hover:bg-white/10"
 			aria-label="Back to library"
 			use:ripple

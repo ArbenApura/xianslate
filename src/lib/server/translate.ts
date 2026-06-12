@@ -139,6 +139,7 @@ export async function translateTitle(
 	terms: TermDraft[],
 	pair: LangPair,
 	signal?: AbortSignal,
+	model: string = MODEL,
 ): Promise<{ text: string; usage: TranslationUsage }> {
 	if (!hasApiKey()) throw new Error('DEEPSEEK_API_KEY is not configured.');
 	const src = getLanguage(pair.sourceLang);
@@ -152,14 +153,11 @@ export async function translateTitle(
 
 	const res = await queued(() =>
 		withRetry(() =>
-			deepseek.chat.completions.create(
-				{ model: MODEL, temperature: 0.2, messages, ...thinkingParam() },
-				{ signal },
-			),
+			deepseek.chat.completions.create({ model, temperature: 0.2, messages, ...thinkingParam() }, { signal }),
 		),
 	);
 	const text = (res.choices[0]?.message?.content ?? '').trim().replace(/^["'""]|["'""]$/g, '');
-	return { text, usage: computeUsage(res.usage) };
+	return { text, usage: computeUsage(res.usage, model) };
 }
 
 /**
@@ -172,6 +170,7 @@ export async function translateTerm(
 	pair: LangPair,
 	terms: TermDraft[] = [],
 	signal?: AbortSignal,
+	model: string = MODEL,
 ): Promise<{ text: string; usage: TranslationUsage }> {
 	if (!hasApiKey()) throw new Error('DEEPSEEK_API_KEY is not configured.');
 	const src = getLanguage(pair.sourceLang);
@@ -184,14 +183,11 @@ export async function translateTerm(
 	messages.push({ role: 'user', content: sourceTerm });
 	const res = await queued(() =>
 		withRetry(() =>
-			deepseek.chat.completions.create(
-				{ model: MODEL, temperature: 0.2, messages, ...thinkingParam() },
-				{ signal },
-			),
+			deepseek.chat.completions.create({ model, temperature: 0.2, messages, ...thinkingParam() }, { signal }),
 		),
 	);
 	const text = (res.choices[0]?.message?.content ?? '').trim().replace(/^["'""]|["'""]$/g, '');
-	return { text, usage: computeUsage(res.usage) };
+	return { text, usage: computeUsage(res.usage, model) };
 }
 
 // GROUP WHOLE PARAGRAPHS INTO CHAR-BUDGETED CHUNKS, JOINED BY THE HARD MARKER (NOT BLANK LINES).
@@ -243,6 +239,7 @@ export async function repairSourceResidue(
 	terms: TermDraft[],
 	pair: LangPair,
 	signal?: AbortSignal,
+	model: string = MODEL,
 ): Promise<{ paras: string[]; usage: TranslationUsage; repaired: boolean }> {
 	if (!leakRepairApplies(pair.sourceLang)) return { paras, usage: ZERO, repaired: false };
 	const has = (p: string) => hasSourceResidue(p, pair.sourceLang);
@@ -268,7 +265,7 @@ export async function repairSourceResidue(
 			res = await queued(() =>
 				withRetry(() =>
 					deepseek.chat.completions.create(
-						{ model: MODEL, temperature: 0.2, messages, ...thinkingParam() },
+						{ model, temperature: 0.2, messages, ...thinkingParam() },
 						{ signal },
 					),
 				),
@@ -276,7 +273,7 @@ export async function repairSourceResidue(
 		} catch {
 			break; // REPAIR IS BEST-EFFORT — A FAILURE LEAVES THE LAST-KNOWN TEXT, IT NEVER BLOCKS DELIVERY
 		}
-		usage = addUsage(usage, computeUsage(res.usage));
+		usage = addUsage(usage, computeUsage(res.usage, model));
 		const fixed = (res.choices[0]?.message?.content ?? '')
 			.split(PARA_RE)
 			.map((p) => p.trim())
@@ -291,6 +288,90 @@ export async function repairSourceResidue(
 	return { paras: work, usage, repaired };
 }
 
+// TRANSLATE `srcParas` AND RETURN EXACTLY srcParas.length TRANSLATED PARAGRAPHS — GUARANTEED 1:1. THE MODEL
+// SOMETIMES MERGES A SHORT PARAGRAPH INTO ITS NEIGHBOUR (OR SPLITS A LONG ONE) DESPITE THE EXACT-MARKER
+// RULE, WHICH SHIFTS EVERY LATER PARAGRAPH OUT OF SYNC WITH THE SOURCE. WHEN A BATCH COMES BACK WITH THE
+// WRONG COUNT WE DIVIDE AND CONQUER: SPLIT THE PARAGRAPHS IN HALF AND RECURSE UNTIL EACH PIECE ALIGNS,
+// BOTTOMING OUT AT A SINGLE SOURCE PARAGRAPH (WHOSE TRANSLATION IS FORCED BACK INTO ONE). EVERY LEAF IS
+// 1:1, SO THE CONCATENATION IS 1:1 NO MATTER HOW THE MODEL MISBEHAVED.
+async function translateAligned(
+	srcParas: string[],
+	system: string,
+	glossary: string | null,
+	pair: LangPair,
+	signal: AbortSignal | undefined,
+	model: string,
+): Promise<{ paras: string[]; usage: TranslationUsage }> {
+	const zero: TranslationUsage = { model, promptTokens: 0, cachedTokens: 0, completionTokens: 0, costUsd: 0 };
+	if (srcParas.length === 0) return { paras: [], usage: zero };
+
+	const messages: { role: 'system' | 'user'; content: string }[] = [{ role: 'system', content: system }];
+	if (glossary) messages.push({ role: 'system', content: glossary });
+	messages.push({ role: 'user', content: srcParas.join(PARA) });
+
+	let usage = zero;
+	let out: string[] = [];
+	try {
+		const res = await queued(() =>
+			withRetry(() =>
+				deepseek.chat.completions.create({ model, temperature: 0.2, messages, ...thinkingParam() }, { signal }),
+			),
+		);
+		usage = computeUsage(res.usage, model);
+		out = (res.choices[0]?.message?.content ?? '')
+			.split(PARA_RE)
+			.map((p) => p.replace(STRAY_MARK, '').trim())
+			.filter((p) => p.length > 0);
+	} catch {
+		// A FAILED BATCH CAN'T BE ALIGNED — KEEP THE SOURCE PARAGRAPHS SO THE 1:1 COUNT HOLDS (THE RESIDUE
+		// PASS THAT RUNS AFTERWARD TRANSLATES ANY SOURCE SCRIPT LEFT BEHIND).
+		return { paras: srcParas.slice(), usage };
+	}
+
+	if (out.length === srcParas.length) return { paras: out, usage };
+	if (srcParas.length === 1) {
+		// THE MODEL SPLIT ONE SOURCE PARAGRAPH INTO SEVERAL — REJOIN SO THE COUNT IS EXACTLY ONE.
+		const joined = out.join(' ').replace(/\s+/g, ' ').trim();
+		return { paras: [joined || srcParas[0]], usage };
+	}
+
+	// COUNT DRIFTED ON A MULTI-PARAGRAPH BATCH — SPLIT AND RECURSE UNTIL EACH HALF ALIGNS.
+	const mid = Math.ceil(srcParas.length / 2);
+	const a = await translateAligned(srcParas.slice(0, mid), system, glossary, pair, signal, model);
+	const b = await translateAligned(srcParas.slice(mid), system, glossary, pair, signal, model);
+	return { paras: [...a.paras, ...b.paras], usage: addUsage(addUsage(usage, a.usage), b.usage) };
+}
+
+/**
+ * REPAIR PARAGRAPH-COUNT DRIFT: RE-TRANSLATE `contentSource` SO THE RESULT HAS EXACTLY ONE PARAGRAPH PER
+ * SOURCE PARAGRAPH (1:1). NO-OP WHEN THE COUNT ALREADY MATCHES OR THERE'S NO API KEY. USED BOTH AS A
+ * POST-STREAM SAFETY NET AND TO SELF-HEAL A LEGACY STORED TRANSLATION WHOSE PARAGRAPHS DRIFTED.
+ */
+export async function realignParagraphs(
+	contentSource: string,
+	currentParas: string[],
+	terms: TermDraft[],
+	pair: LangPair,
+	signal?: AbortSignal,
+	model: string = MODEL,
+): Promise<{ paras: string[]; usage: TranslationUsage; realigned: boolean }> {
+	const srcParas = contentSource
+		.split(/\n{2,}/)
+		.map((p) => p.trim())
+		.filter((p) => p.length > 0);
+	if (srcParas.length === 0 || srcParas.length === currentParas.length || !hasApiKey()) {
+		return { paras: currentParas, usage: ZERO, realigned: false };
+	}
+	const src = getLanguage(pair.sourceLang);
+	const tgt = getLanguage(pair.targetLang);
+	const system = systemPrompt(src, tgt);
+	const glossary = glossaryBlock(terms, src, tgt);
+	const r = await translateAligned(srcParas, system, glossary, pair, signal, model);
+	// translateAligned IS 1:1 BY CONSTRUCTION; THE GUARD IS BELT-AND-SUSPENDERS BEFORE WE OVERWRITE.
+	const realigned = r.paras.length === srcParas.length;
+	return { paras: realigned ? r.paras : currentParas, usage: r.usage, realigned };
+}
+
 /**
  * STREAM A CHAPTER TRANSLATION. CALLS onDelta WITH EACH TEXT FRAGMENT.
  * RESOLVES WITH THE FULL TEXT + SUMMED USAGE. CHUNKS LONG CHAPTERS BY PARAGRAPH,
@@ -303,6 +384,7 @@ export async function translateChapterStreaming(
 	onDelta: (text: string) => void,
 	signal?: AbortSignal,
 	onReplace?: (fullText: string) => void,
+	model: string = MODEL,
 ): Promise<{ text: string; usage: TranslationUsage }> {
 	if (!hasApiKey()) throw new Error('DEEPSEEK_API_KEY is not configured.');
 
@@ -315,7 +397,7 @@ export async function translateChapterStreaming(
 	let fullRaw = ''; // RAW MODEL OUTPUT INCLUDING ⟦¶⟧ MARKERS — SPLIT AT THE END FOR EXACT PARAGRAPHS
 	let pending = ''; // HELD-BACK TAIL THAT MIGHT BE A PARTIAL MARKER (SPANNING TWO DELTAS)
 	let promptChars = 0; // FOR A USAGE ESTIMATE IF THE API OMITS THE FINAL usage FRAME
-	let usage: TranslationUsage = { model: MODEL, promptTokens: 0, cachedTokens: 0, completionTokens: 0, costUsd: 0 };
+	let usage: TranslationUsage = { model, promptTokens: 0, cachedTokens: 0, completionTokens: 0, costUsd: 0 };
 
 	// STREAM CLEAN TEXT TO THE CLIENT: SHOW THE PARAGRAPH MARKER AS A BLANK LINE, NEVER LEAK A MARKER
 	// (COMPLETE OR PARTIAL), EVEN IF THE MODEL MANGLED ITS BRACKETS.
@@ -347,7 +429,7 @@ export async function translateChapterStreaming(
 			const stream = await withRetry(() =>
 				deepseek.chat.completions.create(
 					{
-						model: MODEL,
+						model,
 						temperature: 0.3,
 						stream: true,
 						stream_options: { include_usage: true },
@@ -370,7 +452,7 @@ export async function translateChapterStreaming(
 					emit(delta);
 				}
 				if (part.usage) {
-					usage = addUsage(usage, computeUsage(part.usage));
+					usage = addUsage(usage, computeUsage(part.usage, model));
 					sawUsage = true;
 				}
 			}
@@ -388,12 +470,24 @@ export async function translateChapterStreaming(
 		.map((p) => p.replace(STRAY_MARK, '').trim())
 		.filter((p) => p.length > 0);
 
+	// ALIGNMENT SAFETY NET: IF THE MODEL MERGED/SPLIT PARAGRAPHS (OUTPUT COUNT ≠ SOURCE COUNT), EVERY LATER
+	// PARAGRAPH IS SHIFTED OUT OF SYNC WITH THE SOURCE — RE-TRANSLATE WITH A 1:1-GUARANTEED PASS AND PUSH THE
+	// CORRECTED FULL TEXT TO THE CLIENT (onReplace) SO THE STORED/CACHED TEXT IS THE ALIGNED ONE.
+	if (sourceParaCount > 0 && paras.length !== sourceParaCount) {
+		const re = await realignParagraphs(contentSource, paras, terms, pair, signal, model);
+		if (re.realigned) {
+			paras = re.paras;
+			usage = addUsage(usage, re.usage);
+			onReplace?.(paras.join('\n\n'));
+		}
+	}
+
 	// SAFETY NET: THE MODEL OCCASIONALLY LEAVES SOURCE SCRIPT UNTRANSLATED MID-SENTENCE DESPITE THE
 	// TARGET-ONLY RULE. DETECT ANY RESIDUAL SOURCE SCRIPT AND RE-TRANSLATE JUST THOSE PARAGRAPHS, THEN
 	// PUSH THE CLEANED FULL TEXT TO THE CLIENT (onReplace) SO THE LIVE VIEW IS CORRECTED — AND IT'S THE
 	// CLEANED TEXT THAT GETS CACHED.
 	if (paras.some((p) => hasSourceResidue(p, pair.sourceLang))) {
-		const rep = await repairSourceResidue(paras, terms, pair, signal);
+		const rep = await repairSourceResidue(paras, terms, pair, signal, model);
 		if (rep.repaired) {
 			paras = rep.paras;
 			usage = addUsage(usage, rep.usage);
@@ -412,20 +506,23 @@ export async function translateChapterStreaming(
 	// FALLBACK USAGE: IF THE API NEVER SENT A usage FRAME (OR IT WAS DROPPED ON AN ABORTED STREAM), ESTIMATE
 	// TOKENS FROM CHAR COUNTS SO WE NEVER CACHE A costUsd:0 ROW THAT UNDER-REPORTS THE METER.
 	if (!sawUsage && fullRaw.length > 0) {
-		usage = estimateUsage(promptChars, fullRaw.length);
+		usage = estimateUsage(promptChars, fullRaw.length, model);
 	}
 	return { text, usage };
 }
 
 // ROUGH TOKEN ESTIMATE FOR THE COST METER WHEN THE API OMITS usage. CJK PROMPTS ARE ≈1 TOKEN/CHAR;
 // LATIN OUTPUT ≈1 TOKEN PER 4 CHARS. TREATS ALL PROMPT TOKENS AS CACHE MISSES (CONSERVATIVE/HIGH).
-function estimateUsage(promptChars: number, completionChars: number): TranslationUsage {
+function estimateUsage(promptChars: number, completionChars: number, model: string = MODEL): TranslationUsage {
 	const promptTokens = Math.ceil(promptChars / 2);
 	const completionTokens = Math.ceil(completionChars / 4);
-	const u = computeUsage({
-		prompt_tokens: promptTokens,
-		completion_tokens: completionTokens,
-		total_tokens: promptTokens + completionTokens,
-	} as Parameters<typeof computeUsage>[0]);
+	const u = computeUsage(
+		{
+			prompt_tokens: promptTokens,
+			completion_tokens: completionTokens,
+			total_tokens: promptTokens + completionTokens,
+		} as Parameters<typeof computeUsage>[0],
+		model,
+	);
 	return u;
 }

@@ -60,7 +60,11 @@
 			tabindex="-1"
 			transition:fly={{ y: 24, duration: 220, easing: cubicOut }}
 			class={cn(
-				'relative z-10 flex max-h-[92vh] w-full flex-col overflow-hidden rounded-t-2xl bg-white text-slate-900 shadow-2xl outline-none dark:bg-slate-900 dark:text-slate-100 sm:rounded-2xl',
+				'relative z-10 flex w-full flex-col overflow-hidden rounded-t-2xl bg-white text-slate-900 shadow-2xl outline-none dark:bg-slate-900 dark:text-slate-100 sm:rounded-2xl',
+				// MOBILE: A BOTTOM-SHEET DRAWER THAT STOPS WELL SHORT OF FULL HEIGHT (A STRIP OF THE PAGE STAYS
+				// VISIBLE ABOVE IT, SO IT READS AS A DRAWER, NOT A FULL-SCREEN DIALOG). TALLER ON DESKTOP WHERE
+				// IT'S A CENTERED CARD.
+				'max-h-[80vh] sm:max-h-[90vh]',
 				SIZES[size],
 			)}
 		>

@@ -7,13 +7,15 @@ import { z } from 'zod';
 // IMPORTED MODULES
 import { db } from '$lib/server/db';
 import { chapters } from '$lib/server/db/schema';
+import { resolveModel } from '$lib/server/deepseek';
 import { addNewTerms, bookPair, extractTerms, getEffectiveGlossary } from '$lib/server/glossary';
 import { matchTerms } from '$lib/server/glossary-match';
+import { recordAiUsage } from '$lib/server/site-stats';
 import { stripLeadingTitle } from '$lib/chapter-label';
 
 // -- CONSTANTS -- //
 
-const Body = z.object({ chapterId: z.number().int().positive() });
+const Body = z.object({ chapterId: z.number().int().positive(), model: z.string().optional() });
 
 // -- FUNCTIONS -- //
 
@@ -45,11 +47,16 @@ export const POST: RequestHandler = async ({ request }) => {
 		const body = stripLeadingTitle(chapter.contentSource, chapter.titleSource);
 		const pair = await bookPair(chapter.bookId);
 		// FEED THE EXISTING GLOSSARY AS CONTEXT SO NEW TERMS STAY CONSISTENT WITH ESTABLISHED ONES.
-		const terms = await extractTerms(
+		const { terms, usage } = await extractTerms(
 			`${chapter.titleSource}\n\n${body}`,
 			pair,
 			await getEffectiveGlossary(chapter.bookId),
+			undefined,
+			undefined,
+			resolveModel(parsed.data.model),
 		);
+		// THE MANUAL "Extract terms" ACTION BILLS A FULL CHAPTER READ TOO — LEDGER IT (kind='extract').
+		await recordAiUsage('extract', usage, chapter.id);
 		// ADDITIVE ONLY — SKIP TERMS ALREADY IN THE GLOSSARY (BOOK OR GLOBAL); NEVER OVERWRITE THEM.
 		const { added, skipped } = await addNewTerms(chapter.bookId, terms);
 		// MARK THE CHAPTER EXTRACTED SO THE TRANSLATE PIPELINE'S AUTO-EXTRACT (GATED ON extractedAt) DOESN'T

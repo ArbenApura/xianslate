@@ -1,6 +1,6 @@
 <script lang="ts">
 	// IMPORTED DEP-TYPES
-	import type { TermDraft, TranslationUsage } from '$lib/types';
+	import type { TermDraft } from '$lib/types';
 	// IMPORTED TYPES
 	import type { Phase } from '$lib/components/TranslationStatus.svelte';
 	import type { PageData } from './$types';
@@ -11,7 +11,7 @@
 	import { browser } from '$app/environment';
 	import { afterNavigate, goto } from '$app/navigation';
 	import { cjkStack, latinStack } from '$lib/fonts';
-	import { getLanguage } from '$lib/languages';
+	import { getLanguage, isMonolingual } from '$lib/languages';
 	import { settings, type LayoutMode, type Theme } from '$lib/stores/settings';
 	import { isMobile } from '$lib/stores/viewport';
 	import { cn } from '$lib/utils/cn';
@@ -22,9 +22,13 @@
 	import { ripple } from '$lib/actions/ripple';
 	// IMPORTED DEP-COMPONENTS
 	import ArrowLeft from 'lucide-svelte/icons/arrow-left';
+	import BarChart3 from 'lucide-svelte/icons/bar-chart-3';
+	import BookOpen from 'lucide-svelte/icons/book-open';
 	import ChevronDown from 'lucide-svelte/icons/chevron-down';
 	import ChevronLeft from 'lucide-svelte/icons/chevron-left';
 	import ChevronRight from 'lucide-svelte/icons/chevron-right';
+	import Check from 'lucide-svelte/icons/check';
+	import Circle from 'lucide-svelte/icons/circle';
 	import Coffee from 'lucide-svelte/icons/coffee';
 	import Contrast from 'lucide-svelte/icons/contrast';
 	import Clock from 'lucide-svelte/icons/clock';
@@ -33,7 +37,6 @@
 	import Languages from 'lucide-svelte/icons/languages';
 	import ListOrdered from 'lucide-svelte/icons/list-ordered';
 	import Menu from 'lucide-svelte/icons/menu';
-	import Minus from 'lucide-svelte/icons/minus';
 	import Moon from 'lucide-svelte/icons/moon';
 	import MoreHorizontal from 'lucide-svelte/icons/more-horizontal';
 	import PanelLeftClose from 'lucide-svelte/icons/panel-left-close';
@@ -47,10 +50,11 @@
 	import Type from 'lucide-svelte/icons/type';
 	import Volume2 from 'lucide-svelte/icons/volume-2';
 	// IMPORTED COMPONENTS
+	import AddChapterDialog from '$lib/components/AddChapterDialog.svelte';
 	import Badge from '$lib/components/ui/Badge.svelte';
 	import ChapterList from '$lib/components/ChapterList.svelte';
+	import ChapterStats from '$lib/components/ChapterStats.svelte';
 	import ConfirmDialog from '$lib/components/ui/ConfirmDialog.svelte';
-	import CostMeter from '$lib/components/CostMeter.svelte';
 	import GlossaryPanel from '$lib/components/GlossaryPanel.svelte';
 	import Modal from '$lib/components/ui/Modal.svelte';
 	import SettingsDrawer from '$lib/components/SettingsDrawer.svelte';
@@ -142,10 +146,7 @@
 	// createdAt SITS RIGHT NEXT TO THIS, i.e. IT WAS ADDED BY *THIS* CHAPTER'S EXTRACTION (NOT CARRIED
 	// OVER FROM AN EARLIER CHAPTER, WHOSE BATCH HAS A DIFFERENT TIMESTAMP).
 	let termsExtractedAt: number | null = null;
-	let usage: TranslationUsage | null = null;
-	let cached = false;
 	let matched = 0;
-	let runningCost = 0;
 	// DETAILED PIPELINE PROGRESS (DRIVES THE STEP CARD): CHAPTER SCOPE + TERM-SCAN PROGRESS. THE
 	// TRANSLATED-PARAGRAPH COUNT IS DERIVED FROM enText REACTIVELY (NO SERVER EVENT NEEDED).
 	let totalParas = 0;
@@ -157,6 +158,7 @@
 	let confirmAction: 'retranslate' | 'extract' | null = null;
 	let settingsOpen = false;
 	let glossaryOpen = false;
+	let statsOpen = false;
 	let tocOpen = false;
 	let ttsSettingsOpen = false;
 	// ONCE THE READER HAS USED TTS, RENDER THE SPOKEN PARAGRAPHS AS WORD SPANS (HIGHLIGHT + CLICK-TO-SEEK)
@@ -166,6 +168,9 @@
 	let shortcutsOpen = false;
 	// MOBILE: OVERFLOW ("MORE") ACTION SHEET + AUTO-HIDING CHROME FOR IMMERSIVE READING
 	let moreOpen = false;
+	// "ADD CHAPTER" DIALOG (PASTE / URL / EPUB / TXT) — APPENDS TO THIS BOOK FROM ANY SOURCE, NOT JUST THE
+	// SCRAPED NEXT URL. LETS A READER GROW A MANUAL/IMPORTED BOOK FROM WITHIN THE READER.
+	let addChapterOpen = false;
 	let chromeHidden = false;
 	let lastScrollY = 0;
 	// SUPPRESS SCROLL-SAVE WHILE WE PROGRAMMATICALLY RESTORE A SAVED POSITION
@@ -194,6 +199,11 @@
 	// THE BOOK'S LANGUAGE RECORDS — DRIVE LABELS, FONTS, TTS VOICE, AND READING-SPEED ESTIMATES.
 	$: srcLang = getLanguage(view?.sourceLang);
 	$: tgtLang = getLanguage(view?.targetLang);
+	// "READ IN ORIGINAL" BOOKS (targetLang = 'none') ARE MONOLINGUAL: NEVER TRANSLATED, ALWAYS SHOWN AS THE
+	// SOURCE TEXT, WITH THE TRANSLATE / COST / VIEW-MODE CONTROLS HIDDEN. THE APP IS THEN JUST A NICE READER.
+	$: monolingual = isMonolingual(view?.targetLang);
+	// THE SCRIPT DIRECTION OF WHAT'S ON SCREEN — RTL FOR ARABIC/HEBREW/URDU SO THE PROSE LAYS OUT CORRECTLY.
+	$: readingDir = (monolingual || $settings.layout === 'source' ? srcLang : tgtLang).rtl ? 'rtl' : 'ltr';
 	// CUT A REDUNDANT LEADING TITLE LINE FROM THE SOURCE (AND ANY ALREADY-BAKED-IN TARGET ONE)
 	$: zhBody = view ? stripLeadingTitle(view.contentSource, view.titleSource) : '';
 	// WHILE STREAMING, SHOW THE RAW TEXT — STRIPPING MID-STREAM WOULD MAKE THE FIRST PARAGRAPH SUDDENLY
@@ -219,24 +229,35 @@
 	}));
 	// ON THE ORIGINAL (SOURCE-ONLY) VIEW, SHOW THE RAW TITLE; OTHERWISE PREFER THE TRANSLATED TITLE.
 	$: displayTitle = stripChapterPrefix(
-		$settings.layout === 'source' ? view?.titleSource || '' : titleTarget || view?.titleSource || '',
+		monolingual || $settings.layout === 'source' ? view?.titleSource || '' : titleTarget || view?.titleSource || '',
 	);
-	// HIDE THE SOURCE SUBTITLE IN THE TARGET-ONLY AND SOURCE-ONLY VIEWS
+	// HIDE THE SOURCE SUBTITLE IN THE TARGET-ONLY AND SOURCE-ONLY VIEWS (AND ALWAYS FOR MONOLINGUAL BOOKS)
 	$: showZhTitle =
+		!monolingual &&
 		!!titleTarget &&
 		$settings.layout !== 'source' &&
 		$settings.layout !== 'target' &&
 		titleTarget !== view?.titleSource;
 	// SMART CHAPTER LABEL FROM THE TITLE (NOT THE ROW POSITION)
 	$: chLabel = view ? chapterLabel(view.titleSource, view.titleTarget) : ({ kind: 'plain' } as const);
+	// A CHAPTER COUNTS AS READ ONCE SCROLLED ~TO THE END (0.9 MATCHES THE MANAGE PAGE THRESHOLD).
+	$: chapterDone = chapterMax >= 0.9;
 	$: chapterText =
 		chLabel.kind === 'chapter'
 			? `Chapter ${chLabel.number}`
 			: chLabel.kind === 'special'
 				? chLabel.tag
 				: `Chapter ${(view?.seq ?? 0) + 1}`;
-	// CHAPTER NUMBER PREFIXED ONTO THE TITLE (E.G. "Chapter 5: The Duel")
-	$: headingTitle = displayTitle ? `${chapterText}: ${displayTitle}` : chapterText;
+	// CHAPTER NUMBER PREFIXED ONTO THE TITLE (E.G. "Chapter 5: The Duel"). IN THE ORIGINAL (SOURCE-ONLY)
+	// VIEW — AND FOR READ-IN-ORIGINAL BOOKS — SHOW THE SOURCE TITLE VERBATIM (IT ALREADY CARRIES ITS OWN
+	// "第N章" PREFIX) SO IT STAYS FULLY IN THE SOURCE LANGUAGE INSTEAD OF MIXING AN ENGLISH "Chapter N:"
+	// PREFIX WITH THE ORIGINAL TITLE BODY.
+	$: headingTitle =
+		monolingual || $settings.layout === 'source'
+			? view?.titleSource || chapterText
+			: displayTitle
+				? `${chapterText}: ${displayTitle}`
+				: chapterText;
 	// VIEW-MODE OPTIONS — LABELLED BY THE BOOK'S OWN LANGUAGES. DROP BILINGUAL ON MOBILE (NO ROOM FOR TWO
 	// COLUMNS; STACKED COVERS THE SAME NEED).
 	$: layouts = [
@@ -263,7 +284,8 @@
 		`font-size:${$settings.fontSizePx}px;line-height:${$settings.lineHeight};` +
 		`letter-spacing:${$settings.letterSpacingEm}em;text-align:${$settings.align};`;
 	$: pStyle = `margin-bottom:${$settings.paragraphSpacingEm}em;text-indent:${$settings.indent ? '2em' : '0'};`;
-	$: readingWidthCh = $settings.layout === 'sidebyside' ? $settings.measureCh * 2 + 6 : $settings.measureCh;
+	$: readingWidthCh =
+		!monolingual && $settings.layout === 'sidebyside' ? $settings.measureCh * 2 + 6 : $settings.measureCh;
 	// WIDTH IS IN ch — SET THE READING FONT/SIZE ON THE SAME CONTAINER SO ch MATCHES THE ACTUAL TEXT
 	$: containerStyle =
 		`max-width:${readingWidthCh}ch;` +
@@ -321,8 +343,6 @@
 		view = data.view;
 		enText = view.contentTarget ?? '';
 		titleTarget = view.titleTarget ?? '';
-		usage = null;
-		cached = false;
 		matched = 0;
 		extractedCount = null;
 		totalParas = 0;
@@ -354,7 +374,7 @@
 			});
 			if (!res.ok) throw new Error((await res.json().catch(() => ({}))).message ?? 'Fetch failed');
 			const v: ChapterView = await res.json();
-			goto(`/book/${v.bookId}/${v.uuid}/`, { noScroll: true });
+			goto(`/app/book/${v.bookId}/${v.uuid}/`, { noScroll: true });
 		} catch (e) {
 			toast.error(e instanceof Error ? e.message : 'Could not fetch that chapter.');
 		} finally {
@@ -383,7 +403,7 @@
 					url = dir === 'prev' ? fresh.prevUrl : fresh.nextUrl;
 				}
 			}
-			if (uuid) await goto(`/book/${fresh.bookId}/${uuid}/`, { noScroll: true });
+			if (uuid) await goto(`/app/book/${fresh.bookId}/${uuid}/`, { noScroll: true });
 			else if (url) await fetchByUrl(url, dir);
 			else toast.error(dir === 'prev' ? 'This is the first chapter.' : 'This is the last chapter.');
 		} finally {
@@ -432,12 +452,14 @@
 	async function warmTranslate(chapterId: number) {
 		// STARTS THE DETACHED SERVER JOB (TRANSLATE + CACHE), THEN RELEASES THE CONNECTION ONCE THE JOB
 		// IS CONFIRMED RUNNING — IT FINISHES SERVER-SIDE REGARDLESS. THE SIDEBAR POLLS FOR THE BADGE.
+		// NOTHING TO WARM FOR A READ-IN-ORIGINAL BOOK — READ `view` DIRECTLY (NOT THE LAGGING REACTIVE).
+		if (!view || isMonolingual(view.targetLang)) return;
 		const ctrl = new AbortController();
 		try {
 			const res = await fetch('/api/translate', {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ chapterId, autoExtract: $settings.autoExtract }),
+				body: JSON.stringify({ chapterId, autoExtract: $settings.autoExtract, model: $settings.model }),
 				signal: ctrl.signal,
 			});
 			await res.body?.getReader().read(); // FIRST CHUNK → JOB IS RUNNING
@@ -484,7 +506,11 @@
 	}
 
 	async function translate(force = false) {
-		if (!view || translating) return;
+		// MONOLINGUAL ("READ IN ORIGINAL") BOOKS ARE NEVER TRANSLATED — GUARD EVERY ENTRY POINT (AUTO-RUN,
+		// THE 't' SHORTCUT, RE-TRANSLATE) IN ONE PLACE. READ FROM `view` DIRECTLY (NOT THE REACTIVE
+		// `monolingual`): syncFromData() SETS view AND CALLS translate() SYNCHRONOUSLY, BEFORE THE REACTIVE
+		// PASS REFRESHES `monolingual` — SO ON A WARM CROSS-BOOK NAVIGATION THE DERIVED VALUE IS STILL STALE.
+		if (!view || translating || isMonolingual(view.targetLang)) return;
 		// SUPERSEDE ANY PRIOR STREAM AND BIND THIS RUN TO ITS OWN ABORT CONTROLLER
 		inflight?.abort();
 		const ctrl = new AbortController();
@@ -498,13 +524,16 @@
 		extractTotal = 0;
 		extractFound = 0;
 		enText = '';
-		usage = null;
-		cached = false;
 		try {
 			const res = await fetch('/api/translate', {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ chapterId: view.id, force, autoExtract: $settings.autoExtract }),
+				body: JSON.stringify({
+					chapterId: view.id,
+					force,
+					autoExtract: $settings.autoExtract,
+					model: $settings.model,
+				}),
 				signal: ctrl.signal,
 			});
 			if (!res.ok || !res.body) throw new Error('Translation request failed.');
@@ -559,11 +588,8 @@
 						matched = msg.matched;
 						phase = msg.cached ? 'cached' : 'translating';
 					} else if (msg.type === 'done') {
-						usage = msg.usage;
-						cached = msg.cached;
 						matched = msg.matched;
 						phase = 'done';
-						if (!msg.cached && usage) runningCost += usage.costUsd;
 						if (view) view.contentTarget = enText;
 					} else if (msg.type === 'error') {
 						throw new Error(msg.message);
@@ -592,7 +618,7 @@
 			const res = await fetch('/api/extract', {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ chapterId: view.id }),
+				body: JSON.stringify({ chapterId: view.id, model: $settings.model }),
 			});
 			const data = await res.json();
 			if (!res.ok) throw new Error(data.message ?? 'Extraction failed');
@@ -700,10 +726,20 @@
 
 	function selectChapter(uuid: string) {
 		tocOpen = false;
-		goto(`/book/${view.bookId}/${uuid}/`, { noScroll: true });
+		goto(`/app/book/${view.bookId}/${uuid}/`, { noScroll: true });
+	}
+
+	// AFTER ADDING CHAPTER(S) FROM THE READER (PASTE / URL / EPUB / TXT): JUMP TO THE FIRST NEW CHAPTER SO
+	// THE READER IMMEDIATELY SHOWS IT (THE LOAD RE-RUNS AND THE SIDEBAR REFRESHES ON THE NAVIGATION).
+	function onChapterAdded(e: CustomEvent<{ firstUuid: string | null; count: number }>) {
+		addChapterOpen = false;
+		if (e.detail.firstUuid && view) goto(`/app/book/${view.bookId}/${e.detail.firstUuid}/`, { noScroll: true });
 	}
 
 	function onScroll() {
+		// WHILE A DRAWER/MODAL IS OPEN THE SCROLL-LOCK PINS THE BODY AND THE PAGE REPORTS scrollTop:0. IGNORE
+		// THOSE SYNTHETIC EVENTS — OTHERWISE WE'D PERSIST "top of page" AND LOSE THE READER'S SAVED POSITION.
+		if (document.documentElement.classList.contains('scroll-locked')) return;
 		const h = document.documentElement;
 		const y = h.scrollTop;
 		const max = h.scrollHeight - h.clientHeight;
@@ -757,6 +793,28 @@
 			navigator.sendBeacon(`/api/chapters/${uuid}/progress`, blob);
 		} catch {
 			// IGNORE — BEST-EFFORT
+		}
+	}
+
+	// MARK THIS CHAPTER READ (→ 1) OR UNREAD (→ 0). A DIRECT, NON-MONOTONIC WRITE VIA THE BOOK READ
+	// ENDPOINT (THE PER-CHAPTER PROGRESS ENDPOINT IS MONOTONIC AND CAN'T LOWER IT). RESET THE LOCAL
+	// TRACKER SO IT STAYS IN SYNC AND DOES NOT IMMEDIATELY RE-RAISE A JUST-UNREAD CHAPTER.
+	async function setChapterRead(read: boolean) {
+		if (!view) return;
+		const value = read ? 1 : 0;
+		chapterMax = value;
+		lastSentProgress = value;
+		view.readProgress = value;
+		try {
+			const res = await fetch(`/api/books/${view.bookId}/read`, {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ uuid: view.uuid, scope: 'this', read }),
+			});
+			if (!res.ok) throw new Error();
+			toast.success(read ? 'Marked as read' : 'Marked as unread');
+		} catch {
+			toast.error('Could not update read status.');
 		}
 	}
 
@@ -890,7 +948,7 @@
 				class="flex shrink-0 items-center gap-1 border-b border-black/[0.06] px-2 py-2 text-sm dark:border-white/[0.045]"
 			>
 				<a
-					href="/"
+					href="/app/"
 					use:ripple
 					class="flex min-w-0 flex-1 items-center gap-2 px-1 font-semibold"
 					title="Library"
@@ -933,7 +991,7 @@
 		<!-- RUNTIME-DYNAMIC CONTAINER STYLE: FONT STACK, FONT SIZE, AND ch-BASED MAX-WIDTH FROM SETTINGS -->
 		<div class="mx-auto flex items-center gap-2 px-3 py-2.5 text-sm sm:px-6" style={containerStyle}>
 			<a
-				href="/"
+				href="/app/"
 				use:ripple
 				class="shrink-0 rounded-md p-2 opacity-70 hover:opacity-100"
 				title="Library"
@@ -960,25 +1018,8 @@
 				>
 					<svelte:component this={THEME_ICON[$settings.theme]} size={16} />
 				</button>
-				<!-- QUICK FONT SIZE (− / +); FULL TYPOGRAPHY CONTROLS LIVE IN SETTINGS -->
-				<div class="hidden items-center rounded-md sm:flex">
-					<button
-						use:ripple
-						on:click={() => bumpFont(-1)}
-						disabled={$settings.fontSizePx <= 12}
-						class="rounded-l-md py-1.5 pl-1.5 pr-1 opacity-70 hover:opacity-100 disabled:opacity-30"
-						title="Smaller text (−)"
-						aria-label="Smaller text"><Minus size={15} /></button
-					>
-					<button
-						use:ripple
-						on:click={() => bumpFont(1)}
-						disabled={$settings.fontSizePx >= 34}
-						class="rounded-r-md py-1.5 pl-1 pr-1.5 opacity-70 hover:opacity-100 disabled:opacity-30"
-						title="Larger text (+)"
-						aria-label="Larger text"><Plus size={15} /></button
-					>
-				</div>
+				<!-- FONT SIZE LIVES IN SETTINGS NOW (THE HEADER −/+ CLASHED WITH THE "ADD CHAPTER" +); THE −/+ KEYS
+				     STILL ADJUST IT. -->
 				<button
 					use:ripple
 					on:click={() => (tocOpen = true)}
@@ -1028,8 +1069,15 @@
 						aria-label="Read-aloud settings"><ChevronDown size={13} /></button
 					>
 				</div>
+				<button
+					use:ripple
+					on:click={() => (addChapterOpen = true)}
+					class="rounded-md p-1.5 opacity-70 hover:opacity-100"
+					title="Add chapter (paste / URL / EPUB / TXT)"
+					aria-label="Add chapter"><Plus size={16} /></button
+				>
 				<a
-					href="/book/{view?.bookId}/manage/"
+					href="/app/book/{view?.bookId}/manage/"
 					use:ripple
 					class="rounded-md p-1.5 opacity-70 hover:opacity-100"
 					title="Manage chapters"
@@ -1041,6 +1089,13 @@
 					class="rounded-md p-1.5 opacity-70 hover:opacity-100"
 					title="Glossary"
 					aria-label="Glossary"><Languages size={16} /></button
+				>
+				<button
+					use:ripple
+					on:click={() => (statsOpen = true)}
+					class="rounded-md p-1.5 opacity-70 hover:opacity-100"
+					title="Chapter statistics"
+					aria-label="Chapter statistics"><BarChart3 size={16} /></button
 				>
 				<button
 					use:ripple
@@ -1071,7 +1126,9 @@
 				{#if readMinutes > 0 || view.chapterUrl}
 					<div class="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
 						{#if readMinutes > 0}
-							<span class="inline-flex items-center gap-1 opacity-50"><Clock size={12} /> {readMinutes} min read</span>
+							<span class="inline-flex items-center gap-1 opacity-50"
+								><Clock size={12} /> {readMinutes} min read</span
+							>
 						{/if}
 						{#if view.chapterUrl}
 							<!-- LINK OUT TO THE ORIGINAL CHAPTER PAGE -->
@@ -1118,48 +1175,67 @@
 					title="Previous chapter"
 					aria-label="Previous chapter"><ChevronLeft size={16} /></button
 				>
-				<!-- VIEW MODE: FULL-WIDTH SEGMENTED CONTROL ON MOBILE, COMPACT INLINE ON DESKTOP -->
-				<div
-					class="flex w-full overflow-hidden rounded-lg border border-black/[0.12] text-xs dark:border-white/[0.08] sm:inline-flex sm:w-auto"
-				>
-					{#each visibleLayouts as l (l.id)}
-						<button
-							use:ripple
-							on:click={() => ($settings.layout = l.id)}
-							class={cn(
-								'flex-1 px-2.5 py-1.5 transition-colors sm:flex-none sm:py-1',
-								$settings.layout === l.id ? 'bg-sky-600 text-white' : 'opacity-70 hover:opacity-100',
-							)}>{l.label}</button
-						>
-					{/each}
-				</div>
-				<!-- SECONDARY ACTIONS — INLINE ON DESKTOP, MOVED INTO THE "MORE" SHEET ON MOBILE -->
+				{#if monolingual}
+					<!-- READ-IN-ORIGINAL: NO TRANSLATION CONTROLS — JUST A QUIET BADGE + PREV/NEXT -->
+					<span class="inline-flex items-center gap-1.5 text-xs opacity-50"
+						><BookOpen size={13} /> Reading in {srcLang.name}</span
+					>
+					<div class="ml-auto"></div>
+				{:else}
+					<!-- VIEW MODE: FULL-WIDTH SEGMENTED CONTROL ON MOBILE, COMPACT INLINE ON DESKTOP -->
+					<div
+						class="flex w-full overflow-hidden rounded-lg border border-black/[0.12] text-xs dark:border-white/[0.08] sm:inline-flex sm:w-auto"
+					>
+						{#each visibleLayouts as l (l.id)}
+							<button
+								use:ripple
+								on:click={() => ($settings.layout = l.id)}
+								class={cn(
+									'flex-1 px-2.5 py-1.5 transition-colors sm:flex-none sm:py-1',
+									$settings.layout === l.id
+										? 'bg-sky-600 text-white'
+										: 'opacity-70 hover:opacity-100',
+								)}>{l.label}</button
+							>
+						{/each}
+					</div>
+					<!-- SECONDARY ACTIONS — INLINE ON DESKTOP, MOVED INTO THE "MORE" SHEET ON MOBILE -->
+					<button
+						use:ripple
+						on:click={() => (confirmAction = 'retranslate')}
+						disabled={processing}
+						class="hidden items-center gap-1 opacity-70 hover:opacity-100 disabled:opacity-40 sm:inline-flex"
+						title="Translate again, ignoring cache"><RefreshCw size={14} /> Re-translate</button
+					>
+					<button
+						use:ripple
+						on:click={onExtractClick}
+						disabled={processing}
+						class="hidden items-center gap-1 opacity-70 hover:opacity-100 disabled:opacity-40 sm:inline-flex"
+						title={extractedAt
+							? 'See the glossary terms in this chapter'
+							: 'Scan this chapter for new glossary terms'}
+					>
+						<Sparkles size={14} />
+						{extracting ? 'Extracting…' : extractedAt ? 'View terms' : 'Extract terms'}
+					</button>
+					<button
+						use:ripple
+						on:click={() => (glossaryOpen = true)}
+						class="hidden items-center gap-1 opacity-70 hover:opacity-100 sm:inline-flex"
+						><Languages size={14} /> Glossary</button
+					>
+					<div class="ml-auto"></div>
+				{/if}
+				<!-- MARK THIS CHAPTER READ / UNREAD (LIKE THE MANAGE PAGE) -->
 				<button
 					use:ripple
-					on:click={() => (confirmAction = 'retranslate')}
-					disabled={processing}
-					class="hidden items-center gap-1 opacity-70 hover:opacity-100 disabled:opacity-40 sm:inline-flex"
-					title="Translate again, ignoring cache"><RefreshCw size={14} /> Re-translate</button
-				>
-				<button
-					use:ripple
-					on:click={onExtractClick}
-					disabled={processing}
-					class="hidden items-center gap-1 opacity-70 hover:opacity-100 disabled:opacity-40 sm:inline-flex"
-					title={extractedAt
-						? 'See the glossary terms in this chapter'
-						: 'Scan this chapter for new glossary terms'}
-				>
-					<Sparkles size={14} />
-					{extracting ? 'Extracting…' : extractedAt ? 'View terms' : 'Extract terms'}
-				</button>
-				<button
-					use:ripple
-					on:click={() => (glossaryOpen = true)}
+					on:click={() => setChapterRead(!chapterDone)}
 					class="hidden items-center gap-1 opacity-70 hover:opacity-100 sm:inline-flex"
-					><Languages size={14} /> Glossary</button
+					title={chapterDone ? 'Mark this chapter as unread' : 'Mark this chapter as read'}
 				>
-				<div class="ml-auto"><CostMeter {usage} {cached} {matched} {runningCost} /></div>
+					{#if chapterDone}<Circle size={14} /> Mark unread{:else}<Check size={14} /> Mark read{/if}
+				</button>
 				<!-- NEXT CHAPTER (WIDE VIEW) — SIMPLE ARROW PINNED TO THE RIGHT EDGE OF THE ACTION ROW -->
 				<button
 					use:ripple
@@ -1193,8 +1269,8 @@
 
 			<!-- CONTENT -->
 			<!-- RUNTIME-DYNAMIC FONT STYLE: FONT FAMILY, SIZE, LINE-HEIGHT, LETTER-SPACING, AND ALIGNMENT FROM SETTINGS -->
-			<article style={fontStyle}>
-				{#if $settings.layout === 'source'}
+			<article dir={readingDir} style={fontStyle}>
+				{#if monolingual || $settings.layout === 'source'}
 					{#each zhParas as p, i (i)}
 						{#if zhSpoken}
 							<!-- RUNTIME-DYNAMIC PARAGRAPH SPACING AND INDENT FROM SETTINGS -->
@@ -1278,10 +1354,8 @@
 								</p>
 							{:else}
 								<!-- RUNTIME-DYNAMIC PARAGRAPH SPACING AND INDENT FROM SETTINGS -->
-								<!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitized by renderMarkup() -->
-								<p style={pStyle}>
-									{#if pair.en}{@html enHtml[pair.i] ?? ''}{/if}
-								</p>
+								<!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitized by renderMarkup() (empty string when this row has no translation yet) -->
+								<p style={pStyle}>{@html enHtml[pair.i] ?? ''}</p>
 							{/if}
 						{/each}
 					</div>
@@ -1375,6 +1449,13 @@
 		on:close={() => (tocOpen = false)}
 		on:select={(e) => selectChapter(e.detail.uuid)}
 	/>
+	<!-- ADD A CHAPTER FROM ANY SOURCE (PASTE / URL / EPUB / TXT) WITHOUT LEAVING THE READER -->
+	<AddChapterDialog
+		bookId={view.bookId}
+		open={addChapterOpen}
+		on:close={() => (addChapterOpen = false)}
+		on:added={onChapterAdded}
+	/>
 {/if}
 
 <!-- GLOSSARY DIALOG -->
@@ -1394,6 +1475,9 @@
 		/>
 	{/if}
 </Modal>
+
+<!-- CHAPTER STATISTICS — CONTENT METRICS, TRANSLATION COST/TOKENS, GLOSSARY, AND TIMELINE (READ-ONLY) -->
+<ChapterStats open={statsOpen} uuid={view?.uuid ?? null} on:close={() => (statsOpen = false)} />
 
 <!-- CONFIRM BILLED ACTIONS (RE-TRANSLATE / EXTRACT) BEFORE THEY CALL THE MODEL -->
 <ConfirmDialog
@@ -1498,46 +1582,81 @@
 {#if view}
 	<Modal open={moreOpen} title="Actions" size="sm" on:close={() => (moreOpen = false)}>
 		<div class="flex flex-col">
+			{#if !monolingual}
+				<button
+					use:ripple
+					on:click={() => {
+						moreOpen = false;
+						confirmAction = 'retranslate';
+					}}
+					disabled={processing}
+					class="hover:bg-current/5 flex items-center gap-3 rounded-lg px-2 py-3 text-left text-sm disabled:opacity-40"
+				>
+					<RefreshCw size={18} class="opacity-70" /> Re-translate
+				</button>
+				<button
+					use:ripple
+					on:click={() => {
+						moreOpen = false;
+						onExtractClick();
+					}}
+					disabled={processing}
+					class="hover:bg-current/5 flex items-center gap-3 rounded-lg px-2 py-3 text-left text-sm disabled:opacity-40"
+				>
+					<Sparkles size={18} class="opacity-70" />
+					{extracting ? 'Extracting…' : extractedAt ? 'View terms' : 'Extract terms'}
+				</button>
+				<button
+					use:ripple
+					on:click={() => {
+						moreOpen = false;
+						glossaryOpen = true;
+					}}
+					class="hover:bg-current/5 flex items-center gap-3 rounded-lg px-2 py-3 text-left text-sm"
+				>
+					<Languages size={18} class="opacity-70" /> Book glossary
+				</button>
+			{/if}
 			<button
 				use:ripple
 				on:click={() => {
 					moreOpen = false;
-					confirmAction = 'retranslate';
-				}}
-				disabled={processing}
-				class="hover:bg-current/5 flex items-center gap-3 rounded-lg px-2 py-3 text-left text-sm disabled:opacity-40"
-			>
-				<RefreshCw size={18} class="opacity-70" /> Re-translate
-			</button>
-			<button
-				use:ripple
-				on:click={() => {
-					moreOpen = false;
-					onExtractClick();
-				}}
-				disabled={processing}
-				class="hover:bg-current/5 flex items-center gap-3 rounded-lg px-2 py-3 text-left text-sm disabled:opacity-40"
-			>
-				<Sparkles size={18} class="opacity-70" />
-				{extracting ? 'Extracting…' : extractedAt ? 'View terms' : 'Extract terms'}
-			</button>
-			<button
-				use:ripple
-				on:click={() => {
-					moreOpen = false;
-					glossaryOpen = true;
+					setChapterRead(!chapterDone);
 				}}
 				class="hover:bg-current/5 flex items-center gap-3 rounded-lg px-2 py-3 text-left text-sm"
 			>
-				<Languages size={18} class="opacity-70" /> Book glossary
+				{#if chapterDone}<Circle size={18} class="opacity-70" /> Mark as unread{:else}<Check
+						size={18}
+						class="opacity-70"
+					/> Mark as read{/if}
+			</button>
+			<button
+				use:ripple
+				on:click={() => {
+					moreOpen = false;
+					addChapterOpen = true;
+				}}
+				class="hover:bg-current/5 flex items-center gap-3 rounded-lg px-2 py-3 text-left text-sm"
+			>
+				<Plus size={18} class="opacity-70" /> Add chapter
 			</button>
 			<a
-				href="/book/{view.bookId}/manage/"
+				href="/app/book/{view.bookId}/manage/"
 				use:ripple
 				class="hover:bg-current/5 flex items-center gap-3 rounded-lg px-2 py-3 text-left text-sm"
 			>
 				<ListOrdered size={18} class="opacity-70" /> Manage chapters
 			</a>
+			<button
+				use:ripple
+				on:click={() => {
+					moreOpen = false;
+					statsOpen = true;
+				}}
+				class="hover:bg-current/5 flex items-center gap-3 rounded-lg px-2 py-3 text-left text-sm"
+			>
+				<BarChart3 size={18} class="opacity-70" /> Chapter statistics
+			</button>
 			<button
 				use:ripple
 				on:click={() => {

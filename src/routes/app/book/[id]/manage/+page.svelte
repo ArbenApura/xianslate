@@ -7,6 +7,7 @@
 	import { toast } from 'svelte-sonner';
 	// IMPORTED MODULES
 	import { goto } from '$app/navigation';
+	import { isMonolingual } from '$lib/languages';
 	import { chapterLabel, stripChapterPrefix } from '$lib/chapter-label';
 	import { cn } from '$lib/utils/cn';
 	import { ripple } from '$lib/actions/ripple';
@@ -102,7 +103,11 @@
 			const res = await fetch(`/api/books/${book.id}/chapters`, {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ kind: 'manual', titleSource: pasteTitle.trim(), contentSource: pasteContent.trim() }),
+				body: JSON.stringify({
+					kind: 'manual',
+					titleSource: pasteTitle.trim(),
+					contentSource: pasteContent.trim(),
+				}),
 			});
 			if (!res.ok) throw new Error((await res.json().catch(() => ({}))).message ?? 'Failed to add chapter');
 			pasteTitle = '';
@@ -176,7 +181,7 @@
 
 	// KEBAB MENU ROUTER — MAPS A CHOSEN ACTION TO ITS HANDLER FOR THIS ROW
 	function onAction(it: Item, action: string) {
-		if (action === 'open') goto(`/book/${book.id}/${it.uuid}/`);
+		if (action === 'open') goto(`/app/book/${book.id}/${it.uuid}/`);
 		else if (action === 'edit') startEdit(it);
 		else if (action === 'delete') pendingDelete = it;
 		else if (action === 'read') setReadStatus(it, 'this', true);
@@ -190,9 +195,7 @@
 		const value = read ? 1 : 0;
 		items = items.map((x) => {
 			const hit =
-				scope === 'all' ||
-				(scope === 'this' && x.uuid === it.uuid) ||
-				(scope === 'previous' && x.seq < it.seq);
+				scope === 'all' || (scope === 'this' && x.uuid === it.uuid) || (scope === 'previous' && x.seq < it.seq);
 			return hit ? { ...x, readProgress: value } : x;
 		});
 		try {
@@ -259,7 +262,9 @@
 				body: JSON.stringify({ titleSource, titleTarget: titleTarget || null }),
 			});
 			if (!res.ok) throw new Error();
-			items = items.map((x) => (x.uuid === it.uuid ? { ...x, titleSource, titleTarget: titleTarget || null } : x));
+			items = items.map((x) =>
+				x.uuid === it.uuid ? { ...x, titleSource, titleTarget: titleTarget || null } : x,
+			);
 			cancelEdit();
 		} catch {
 			toast.error('Could not save the chapter title.');
@@ -325,16 +330,17 @@
 		<!-- BACK TO THE READER (THE BOOK'S RESUME CHAPTER), NOT THE LIBRARY -->
 		<a
 			use:ripple
-			href="/book/{book.id}/"
+			href="/app/book/{book.id}/"
 			class="inline-flex items-center gap-1.5 text-sm opacity-70 hover:opacity-100"
 		>
 			<ArrowLeft size={15} /> Back to reading
 		</a>
 		<div class="flex items-center gap-2">
 			<!-- OPENS THE ADD-CHAPTER DIALOG -->
-			<Button variant="primary" size="sm" on:click={() => (addOpen = true)}><Plus size={14} /> Add chapter</Button>
+			<Button variant="primary" size="sm" on:click={() => (addOpen = true)}><Plus size={14} /> Add chapter</Button
+			>
 			{#if items.length}
-				<Button href="/book/{book.id}/" size="sm"><BookOpen size={14} /> Read</Button>
+				<Button href="/app/book/{book.id}/" size="sm"><BookOpen size={14} /> Read</Button>
 			{/if}
 			<Button on:click={() => (glossaryOpen = true)} size="sm"><Languages size={14} /> Glossary</Button>
 		</div>
@@ -349,7 +355,9 @@
 	<!-- ADD-CHAPTER DIALOG: TABBED PASTE / URL / FILE IMPORT -->
 	<Modal open={addOpen} title="Add chapter" size="lg" on:close={() => (addOpen = false)}>
 		<!-- ADD MODE TABS -->
-		<div class="mb-3 inline-flex overflow-hidden rounded-lg border border-black/[0.12] text-xs dark:border-white/[0.08]">
+		<div
+			class="mb-3 inline-flex overflow-hidden rounded-lg border border-black/[0.12] text-xs dark:border-white/[0.08]"
+		>
 			{#each ADD_MODES as m (m.id)}
 				<button
 					use:ripple
@@ -382,7 +390,7 @@
 					</Button>
 				</div>
 			</form>
-		<!-- URL MODE FORM -->
+			<!-- URL MODE FORM -->
 		{:else if addMode === 'url'}
 			<form class="flex flex-col gap-2 sm:flex-row" on:submit|preventDefault={addFromUrl}>
 				<input
@@ -391,10 +399,11 @@
 					placeholder="Paste a uukanshu.cc chapter URL…"
 					class="min-w-0 flex-1 rounded-lg border border-black/10 bg-transparent px-3 py-2 text-sm outline-none focus:border-sky-500 dark:border-white/[0.06]"
 				/>
-				<Button type="submit" variant="primary" size="sm" loading={busy} disabled={busy}>Fetch into book</Button>
+				<Button type="submit" variant="primary" size="sm" loading={busy} disabled={busy}>Fetch into book</Button
+				>
 			</form>
 			<p class="mt-2 text-xs opacity-50">Pulls just this page's content into this book as the next chapter.</p>
-		<!-- FILE IMPORT MODE -->
+			<!-- FILE IMPORT MODE -->
 		{:else}
 			<div class="flex flex-wrap items-center gap-2 text-sm">
 				<Button size="sm" disabled={busy} on:click={() => epubInput.click()}>Import EPUB</Button>
@@ -431,7 +440,9 @@
 	<!-- CHAPTER LIST -->
 	{#if items.length === 0}
 		<!-- EMPTY STATE -->
-		<div class="rounded-xl border border-dashed border-black/10 p-10 text-center text-sm opacity-60 dark:border-white/[0.06]">
+		<div
+			class="rounded-xl border border-dashed border-black/10 p-10 text-center text-sm opacity-60 dark:border-white/[0.06]"
+		>
 			<p>No chapters yet.</p>
 			<p class="mt-1">
 				Paste, fetch, or import one — or <button
@@ -443,12 +454,16 @@
 			</p>
 			<!-- PRIMARY EMPTY-STATE CTA: OPENS THE ADD-CHAPTER DIALOG -->
 			<div class="mt-4 flex justify-center">
-				<Button variant="primary" size="sm" on:click={() => (addOpen = true)}><Plus size={14} /> Add chapter</Button>
+				<Button variant="primary" size="sm" on:click={() => (addOpen = true)}
+					><Plus size={14} /> Add chapter</Button
+				>
 			</div>
 		</div>
 	{:else}
 		<!-- CHAPTER ROWS -->
-		<ul class="divide-y divide-black/[0.06] overflow-hidden rounded-xl border border-black/[0.06] dark:divide-white/[0.045] dark:border-white/[0.045]">
+		<ul
+			class="divide-y divide-black/[0.06] overflow-hidden rounded-xl border border-black/[0.06] dark:divide-white/[0.045] dark:border-white/[0.045]"
+		>
 			{#each items as it, i (it.uuid)}
 				{@const lbl = chapterLabel(it.titleSource, it.titleTarget)}
 				{@const isResume = it.uuid === data.resumeUuid}
@@ -471,7 +486,9 @@
 					)}
 				>
 					<!-- DRAG HANDLE -->
-					<span class="cursor-grab text-black/30 dark:text-white/30" title="Drag to reorder"><GripVertical size={16} /></span>
+					<span class="cursor-grab text-black/30 dark:text-white/30" title="Drag to reorder"
+						><GripVertical size={16} /></span
+					>
 
 					<!-- UP/DOWN MOVE BUTTONS -->
 					<div class="flex shrink-0 flex-col">
@@ -500,14 +517,15 @@
 					{#if isRead}
 						<Check size={14} class="shrink-0 text-emerald-500 opacity-90" />
 					{:else if partial}
-						<span class="shrink-0 text-[10px] font-semibold tabular-nums text-emerald-600 dark:text-emerald-400"
+						<span
+							class="shrink-0 text-[10px] font-semibold tabular-nums text-emerald-600 dark:text-emerald-400"
 							>{Math.round(it.readProgress * 100)}%</span
 						>
 					{/if}
 
 					<!-- CHAPTER LINK + BADGES + KEBAB MENU (EDIT / DELETE / OPEN) -->
 					<a
-						href="/book/{book.id}/{it.uuid}/"
+						href="/app/book/{book.id}/{it.uuid}/"
 						class={cn(
 							'min-w-0 flex-1 truncate text-sm hover:text-sky-600',
 							isResume && 'font-medium text-sky-600 dark:text-sky-300',
@@ -545,16 +563,19 @@
 		<div class="block">
 			<div class="mb-1 flex items-center justify-between gap-2">
 				<span class="text-xs font-medium opacity-60">Translated title</span>
-				<!-- AI-FILL FROM THE SOURCE TITLE -->
-				<button
-					use:ripple
-					type="button"
-					on:click={translateEditTitle}
-					disabled={translatingTitle || !editTitle.trim()}
-					class="inline-flex items-center gap-1 text-xs text-sky-600 hover:underline disabled:opacity-40 dark:text-sky-300"
-				>
-					<Languages size={12} /> {translatingTitle ? 'Translating…' : 'Translate'}
-				</button>
+				<!-- AI-FILL FROM THE SOURCE TITLE — HIDDEN FOR READ-IN-ORIGINAL BOOKS (NO TRANSLATION DIRECTION) -->
+				{#if !isMonolingual(book.targetLang)}
+					<button
+						use:ripple
+						type="button"
+						on:click={translateEditTitle}
+						disabled={translatingTitle || !editTitle.trim()}
+						class="inline-flex items-center gap-1 text-xs text-sky-600 hover:underline disabled:opacity-40 dark:text-sky-300"
+					>
+						<Languages size={12} />
+						{translatingTitle ? 'Translating…' : 'Translate'}
+					</button>
+				{/if}
 			</div>
 			<input
 				bind:value={editTitleTarget}

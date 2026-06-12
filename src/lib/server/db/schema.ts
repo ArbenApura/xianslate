@@ -198,9 +198,12 @@ export const aiUsage = sqliteTable(
 	'ai_usage',
 	{
 		id: integer('id').primaryKey({ autoIncrement: true }),
-		// 'map' = SITE SELECTOR LEARNING (ROOM FOR 'extract' ETC. LATER)
+		// 'map' = SITE SELECTOR LEARNING; 'extract' | 'title' | 'term' | 'repair' = PER-CHAPTER PIPELINE SPEND
 		kind: text('kind').notNull(),
 		host: text('host'),
+		// THE CHAPTER THIS SPEND BELONGS TO (NULL FOR NON-CHAPTER CALLS LIKE SITE MAPPING OR A BOOK-TITLE
+		// BACKFILL) — LETS THE CHAPTER STATS DIALOG COUNT EXTRACTION/TITLE/REPAIR ALONGSIDE THE BODY COST.
+		chapterId: integer('chapter_id').references(() => chapters.id, { onDelete: 'cascade' }),
 		model: text('model').notNull(),
 		promptTokens: integer('prompt_tokens').notNull().default(0),
 		cachedTokens: integer('cached_tokens').notNull().default(0),
@@ -213,6 +216,7 @@ export const aiUsage = sqliteTable(
 	(t) => ({
 		createdIdx: index('ai_usage_created_idx').on(t.createdAt),
 		kindIdx: index('ai_usage_kind_idx').on(t.kind),
+		chapterIdx: index('ai_usage_chapter_idx').on(t.chapterId),
 	}),
 );
 

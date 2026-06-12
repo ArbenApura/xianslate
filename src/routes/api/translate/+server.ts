@@ -4,6 +4,7 @@ import type { RequestHandler } from './$types';
 import { error } from '@sveltejs/kit';
 import { z } from 'zod';
 // IMPORTED MODULES
+import { resolveModel } from '$lib/server/deepseek';
 import { ensureTranslationJob, subscribe } from '$lib/server/translation-service';
 
 // -- CONSTANTS -- //
@@ -13,6 +14,8 @@ const Body = z.object({
 	force: z.boolean().optional(),
 	// AUTO-EXTRACT + SAVE GLOSSARY TERMS ONCE BEFORE TRANSLATING (READER PASSES THE USER'S SETTING)
 	autoExtract: z.boolean().optional(),
+	// THE GLOBAL MODEL PICK (flash/pro) — VALIDATED SERVER-SIDE; UNKNOWN VALUES FALL BACK TO THE DEFAULT.
+	model: z.string().optional(),
 });
 
 // -- FUNCTIONS -- //
@@ -26,6 +29,7 @@ export const POST: RequestHandler = async ({ request }) => {
 		parsed.data.chapterId,
 		parsed.data.force ?? false,
 		parsed.data.autoExtract ?? false,
+		resolveModel(parsed.data.model),
 	);
 
 	const encoder = new TextEncoder();

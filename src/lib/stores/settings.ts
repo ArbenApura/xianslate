@@ -35,13 +35,23 @@ export interface ReaderSettings {
 	// GLOBAL DEFAULT TRANSLATION DIRECTION FOR NEWLY FETCHED/IMPORTED BOOKS (PER-BOOK OVERRIDES AT CREATION)
 	newBookSourceLang: string;
 	newBookTargetLang: string;
+	// THE GLOBAL DEEPSEEK MODEL THE TRANSLATE/EXTRACT PIPELINE USES (flash = fast/cheap, pro = best). SENT
+	// WITH EVERY TRANSLATE/EXTRACT REQUEST; THE SERVER VALIDATES IT AGAINST ITS ALLOWLIST.
+	model: string;
 }
+
+// CLIENT-FACING MODEL CHOICES FOR THE GLOBAL PICKER. THE IDS MIRROR THE SERVER DEFAULTS IN
+// $lib/server/deepseek (resolveModel VALIDATES WHATEVER THE CLIENT SENDS, SO A STALE ID IS SAFE).
+export const TRANSLATION_MODELS: { id: string; label: string; blurb: string }[] = [
+	{ id: 'deepseek-v4-flash', label: 'Flash', blurb: 'Fast & economical — great for everyday reading' },
+	{ id: 'deepseek-v4-pro', label: 'Pro', blurb: 'Higher-quality prose — slower, costs more' },
+];
 
 // -- CONSTANTS -- //
 
 // BUMP version WHEN DEFAULTS CHANGE — TRIGGERS A ONE-TIME MIGRATION OF SAVED SETTINGS
 export const DEFAULTS: ReaderSettings = {
-	version: 4,
+	version: 5,
 	latinFont: 'literata',
 	cjkFont: 'noto-serif-tc',
 	fontSizePx: 19,
@@ -58,6 +68,7 @@ export const DEFAULTS: ReaderSettings = {
 	prefetchTranslate: false,
 	newBookSourceLang: DEFAULT_SOURCE_LANG,
 	newBookTargetLang: DEFAULT_TARGET_LANG,
+	model: 'deepseek-v4-flash',
 };
 
 const KEY = 'xianslate:settings';

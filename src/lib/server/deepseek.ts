@@ -14,6 +14,27 @@ const baseURL = env.DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com';
 
 export const MODEL = env.DEEPSEEK_MODEL ?? 'deepseek-v4-flash';
 
+// USER-SELECTABLE TRANSLATION MODELS (THE GLOBAL MODEL PICKER). FLASH = FAST/ECONOMICAL, PRO =
+// HIGHER-QUALITY/COSTLIER. THE IDS ARE ENV-OVERRIDABLE SO A DEPLOYMENT CAN REMAP THEM TO WHATEVER ITS
+// PROVIDER CALLS FLASH/PRO WITHOUT A CODE CHANGE. THE SELECTED MODEL PARTICIPATES IN THE TRANSLATION
+// CACHE KEY, SO SWITCHING MODELS NEVER COLLIDES WITH AN EXISTING CACHED TRANSLATION.
+export const MODEL_FLASH = env.DEEPSEEK_MODEL_FLASH ?? 'deepseek-v4-flash';
+
+export const MODEL_PRO = env.DEEPSEEK_MODEL_PRO ?? 'deepseek-v4-pro';
+
+export const TRANSLATION_MODELS: { id: string; label: string; blurb: string }[] = [
+	{ id: MODEL_FLASH, label: 'Flash', blurb: 'Fast & economical — great for everyday reading' },
+	{ id: MODEL_PRO, label: 'Pro', blurb: 'Higher-quality prose — slower and costs more' },
+];
+
+const ALLOWED_MODELS = new Set(TRANSLATION_MODELS.map((m) => m.id));
+
+// VALIDATE A REQUESTED MODEL AGAINST THE ALLOWLIST, FALLING BACK TO THE DEFAULT — NEVER LETS AN ARBITRARY
+// CLIENT-SUPPLIED STRING REACH THE API.
+export function resolveModel(model?: string | null): string {
+	return model && ALLOWED_MODELS.has(model) ? model : MODEL;
+}
+
 // DEEPSEEK IS OPENAI-COMPATIBLE — POINT THE SDK AT ITS BASE URL
 export const deepseek = new OpenAI({ apiKey, baseURL });
 
@@ -83,8 +104,12 @@ export async function withRetry<T>(fn: () => Promise<T>, retries = 4): Promise<T
 	throw lastErr;
 }
 
-// COMPUTE APPROXIMATE COST FROM A USAGE OBJECT (HANDLES DEEPSEEK CACHE FIELDS)
-export function computeUsage(usage: OpenAI.Completions.CompletionUsage | undefined): TranslationUsage {
+// COMPUTE APPROXIMATE COST FROM A USAGE OBJECT (HANDLES DEEPSEEK CACHE FIELDS). `model` LABELS THE
+// RESULTING USAGE ROW SO THE COST METER + CACHE ATTRIBUTE SPEND TO THE MODEL THAT WAS ACTUALLY USED.
+export function computeUsage(
+	usage: OpenAI.Completions.CompletionUsage | undefined,
+	model: string = MODEL,
+): TranslationUsage {
 	const promptTokens = usage?.prompt_tokens ?? 0;
 	const completionTokens = usage?.completion_tokens ?? 0;
 	// DEEPSEEK REPORTS prompt_cache_hit_tokens / prompt_cache_miss_tokens
@@ -96,5 +121,5 @@ export function computeUsage(usage: OpenAI.Completions.CompletionUsage | undefin
 	const cachedTokens = u?.prompt_cache_hit_tokens ?? u?.prompt_tokens_details?.cached_tokens ?? 0;
 	const missTokens = u?.prompt_cache_miss_tokens ?? Math.max(0, promptTokens - cachedTokens);
 	const costUsd = missTokens * PRICE_INPUT_MISS + cachedTokens * PRICE_INPUT_HIT + completionTokens * PRICE_OUTPUT;
-	return { model: MODEL, promptTokens, cachedTokens, completionTokens, costUsd };
+	return { model, promptTokens, cachedTokens, completionTokens, costUsd };
 }

@@ -101,16 +101,29 @@ async function toView(ch: Chapter, book: Book): Promise<ChapterView> {
 	let nextUrl = ch.nextUrl;
 
 	if (book.sourceType === 'web') {
-		const [p, n] = await Promise.all([chapterByUrl(ch.prevUrl), chapterByUrl(ch.nextUrl)]);
-		// A "prev" LINK MUST LEAD BACKWARD AND "next" FORWARD. SCRAPERS SOMETIMES DUPLICATE THE prev LINK INTO
-		// next (TYPICALLY ON THE NEWEST CHAPTER, WHICH HAS NO REAL next), WHICH WOULD POINT "Next" AT AN EARLIER
-		// CHAPTER AND CREATE A back-and-forth LOOP. REJECT ANY RESOLVED NEIGHBOR THAT DOESN'T MOVE THE RIGHT
-		// DIRECTION BY seq, AND DROP ITS URL SO THE FETCH-FALLBACK CAN'T FOLLOW IT EITHER. AN UNRESOLVED URL
-		// (NOT YET FETCHED) IS KEPT — IT'S A LEGITIMATE FETCH TARGET IN THAT DIRECTION.
-		prevUuid = p && p.seq < ch.seq ? p.uuid : null;
-		nextUuid = n && n.seq > ch.seq ? n.uuid : null;
-		if (p && p.seq >= ch.seq) prevUrl = null;
-		if (n && n.seq <= ch.seq) nextUrl = null;
+		const [p, n, seqPrev, seqNext] = await Promise.all([
+			chapterByUrl(ch.prevUrl),
+			chapterByUrl(ch.nextUrl),
+			neighborUuidByOrder(book.id, ch.seq, 'prev'),
+			neighborUuidByOrder(book.id, ch.seq, 'next'),
+		]);
+		// NAVIGATE BY THE LOCAL seq ORDER SO MANUAL REORDERING ON THE MANAGE PAGE IS RESPECTED. seq AND THE
+		// SCRAPED prev/next LINKS NORMALLY AGREE; THEY DIVERGE ONLY AFTER A REORDER, WHERE THE USER ORDER WINS.
+		// A prev/next URL THAT DOES NOT RESOLVE TO AN IMPORTED CHAPTER IS A FETCH TARGET (THE FRONTIER, OR A GAP)
+		// — KEEP THE URL AND LEAVE uuid NULL SO THE READER FETCHES THROUGH IT. OTHERWISE WALK seq (THE URL IS NO
+		// LONGER NEEDED, AND THIS NATURALLY IGNORES A MIS-SCRAPED LINK THAT RESOLVES BACKWARD BY seq).
+		if (ch.prevUrl && !p) {
+			prevUuid = null;
+		} else {
+			prevUuid = seqPrev ?? (p && p.seq < ch.seq ? p.uuid : null);
+			prevUrl = null;
+		}
+		if (ch.nextUrl && !n) {
+			nextUuid = null;
+		} else {
+			nextUuid = seqNext ?? (n && n.seq > ch.seq ? n.uuid : null);
+			nextUrl = null;
+		}
 	} else {
 		[prevUuid, nextUuid] = await Promise.all([
 			neighborUuidByOrder(book.id, ch.seq, 'prev'),

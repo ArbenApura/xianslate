@@ -1,6 +1,7 @@
 // IMPORTED DEP-TYPES
 import type { LangPair, TranslationUsage } from '$lib/types';
 // IMPORTED MODULES
+import { isMonolingual } from '$lib/languages';
 import { stripLeadingTitle } from '$lib/chapter-label';
 // IMPORTED DEP-MODULES
 import { eq } from 'drizzle-orm';
@@ -10,10 +11,12 @@ import { getCached, saveTranslation, translationCacheKey } from './cache';
 import { MODEL } from './deepseek';
 import { addNewTerms, bookPair, extractTerms, getEffectiveGlossary } from './glossary';
 import { matchTerms } from './glossary-match';
+import { recordAiUsage } from './site-stats';
 import {
 	addUsage,
 	containsSourceResidue,
 	PROMPT_VERSION,
+	realignParagraphs,
 	repairSourceResidue,
 	translateChapterStreaming,
 	translateTitle,
@@ -40,6 +43,9 @@ type Listener = (evt: TranslationEvent) => void;
 interface Job {
 	chapterId: number;
 	status: 'running' | 'done' | 'error';
+	// THE DEEPSEEK MODEL THIS JOB TRANSLATES/EXTRACTS WITH (FROM THE GLOBAL MODEL PICKER) — ALSO FOLDED INTO
+	// THE TRANSLATION CACHE KEY, SO A FLASH AND A PRO TRANSLATION OF THE SAME CHAPTER NEVER COLLIDE.
+	model: string;
 	events: TranslationEvent[]; // BUFFERED FOR REPLAY TO (RE)CONNECTING CLIENTS
 	listeners: Set<Listener>;
 	controller: AbortController; // ABORTS THE IN-FLIGHT LLM CALLS WHEN A force RE-RUN SUPERSEDES THIS JOB
@@ -102,6 +108,18 @@ async function run(job: Job, force: boolean, autoExtract: boolean) {
 		// TRANSLATION STARTS AT THE ACTUAL PROSE (THE READER STRIPS THE SAME LINE FROM THE SOURCE).
 		const body = stripLeadingTitle(chapter.contentSource, chapter.titleSource);
 
+		// READ-IN-ORIGINAL BOOK (targetLang='none'): NEVER TRANSLATE OR BILL. SERVE THE SOURCE TITLE/BODY AS A
+		// FREE "RESULT" SO ANY STRAY TRANSLATE REQUEST IS A HARMLESS NO-OP. THE READER RENDERS THE SOURCE
+		// DIRECTLY AND NEVER STARTS THIS JOB FOR SUCH BOOKS — THIS IS A SERVER-SIDE BACKSTOP.
+		if (isMonolingual(pair.targetLang)) {
+			emit(job, { type: 'meta', matched: 0, cached: true });
+			emit(job, { type: 'title', text: chapter.titleSource });
+			emit(job, { type: 'delta', text: body });
+			emit(job, { type: 'done', cached: true, matched: 0, usage: ZERO_USAGE });
+			job.status = 'done';
+			return;
+		}
+
 		// FAST PATH: ALREADY TRANSLATED → SERVE THE STORED TARGET TEXT. NEVER RE-BILL OR RE-EXTRACT ON A
 		// RE-READ/RE-NAVIGATION, REGARDLESS OF ANY GLOSSARY DRIFT SINCE IT WAS TRANSLATED. RE-TRANSLATE
 		// (force) IS THE ONLY WAY TO REDO IT. matchTerms IS LOCAL/FREE, SO THE METER STAYS ACCURATE.
@@ -119,6 +137,7 @@ async function run(job: Job, force: boolean, autoExtract: boolean) {
 					terms,
 					pair,
 					job.controller.signal,
+					job.model,
 				);
 				if (rep.repaired) {
 					const clean = rep.paras.join('\n\n');
@@ -128,7 +147,33 @@ async function run(job: Job, force: boolean, autoExtract: boolean) {
 						console.error(`[translate] failed to persist leak repair for chapter ${chapter.id}:`, e);
 					}
 					emit(job, { type: 'delta', text: clean });
+					await recordAiUsage('repair', rep.usage, chapter.id);
 					emit(job, { type: 'done', cached: false, matched: terms.length, usage: rep.usage });
+					job.status = 'done';
+					return;
+				}
+			}
+
+			// SELF-HEAL: A LEGACY TRANSLATION MAY HAVE DRIFTED OUT OF PARAGRAPH ALIGNMENT (THE MODEL MERGED OR
+			// SPLIT PARAGRAPHS), SHIFTING THE TARGET OUT OF SYNC WITH THE SOURCE FROM SOME PARAGRAPH ONWARD. IF
+			// THE STORED PARAGRAPH COUNT NO LONGER MATCHES THE SOURCE, REALIGN 1:1 NOW, PERSIST, AND SERVE IT.
+			const storedParas = chapter.contentTarget
+				.split(/\n{2,}/)
+				.map((p) => p.trim())
+				.filter((p) => p.length > 0);
+			const srcParaCount = body.split(/\n{2,}/).filter((p) => p.trim().length > 0).length;
+			if (srcParaCount > 0 && storedParas.length !== srcParaCount) {
+				const re = await realignParagraphs(body, storedParas, terms, pair, job.controller.signal, job.model);
+				if (re.realigned) {
+					const aligned = re.paras.join('\n\n');
+					try {
+						await db.update(chapters).set({ contentTarget: aligned }).where(eq(chapters.id, chapter.id));
+					} catch (e) {
+						console.error(`[translate] failed to persist alignment repair for chapter ${chapter.id}:`, e);
+					}
+					await recordAiUsage('repair', re.usage, chapter.id);
+					emit(job, { type: 'delta', text: aligned });
+					emit(job, { type: 'done', cached: false, matched: terms.length, usage: re.usage });
 					job.status = 'done';
 					return;
 				}
@@ -147,19 +192,25 @@ async function run(job: Job, force: boolean, autoExtract: boolean) {
 
 		// PIPELINE STAGE 1 — AUTO-EXTRACT + SAVE GLOSSARY TERMS, ONCE PER CHAPTER (extractedAt GATES IT).
 		// NON-FATAL: AN EXTRACTION FAILURE MUST NOT BLOCK THE TRANSLATION.
+		// EXTRACTION READS THE WHOLE CHAPTER THROUGH THE MODEL — A REAL EXPENSE. TRACK IT (ZERO IF SKIPPED/FAILED).
+		let extractUsage = ZERO_USAGE;
 		if (autoExtract && !chapter.extractedAt) {
 			emit(job, { type: 'stage', stage: 'extracting' });
 			try {
 				// FEED THE EXISTING GLOSSARY AS CONTEXT SO NEW TERMS STAY CONSISTENT WITH ESTABLISHED ONES.
 				// INCLUDE THE TITLE SO NAMES THAT APPEAR ONLY IN THE CHAPTER TITLE ARE CAPTURED TOO.
-				const drafts = await extractTerms(
+				const { terms: drafts, usage: exUsage } = await extractTerms(
 					`${chapter.titleSource}\n\n${body}`,
 					pair,
 					await getEffectiveGlossary(chapter.bookId),
 					job.controller.signal,
 					// STREAM PER-CHUNK SCAN PROGRESS TO THE READER ("scanned 2/5 · 14 terms").
 					(done, total, terms) => emit(job, { type: 'extract_progress', done, total, terms }),
+					job.model,
 				);
+				// LEDGER THE EXTRACTION SPEND AND FOLD IT INTO THIS CHAPTER'S REPORTED COST.
+				extractUsage = exUsage;
+				await recordAiUsage('extract', exUsage, chapter.id);
 				// ADDITIVE ONLY — NEVER OVERWRITE A TERM ALREADY IN THE GLOSSARY (KEEPS NAMES CONSISTENT).
 				const res = await addNewTerms(chapter.bookId, drafts);
 				const extractedAt = Date.now();
@@ -172,7 +223,7 @@ async function run(job: Job, force: boolean, autoExtract: boolean) {
 
 		// STAGE 2 — MATCH GLOSSARY TERMS PRESENT IN THE CHAPTER (PICKS UP ANY JUST-EXTRACTED TERMS)
 		const terms = await matchTerms(chapter.bookId, body);
-		const cacheKey = translationCacheKey(body, terms, MODEL, PROMPT_VERSION, pair);
+		const cacheKey = translationCacheKey(body, terms, job.model, PROMPT_VERSION, pair);
 		const cached = force ? null : await getCached(cacheKey);
 		emit(job, { type: 'meta', matched: terms.length, cached: !!cached });
 
@@ -185,9 +236,10 @@ async function run(job: Job, force: boolean, autoExtract: boolean) {
 				// MATCH THE TITLE SEPARATELY SO NAMES THAT APPEAR ONLY IN THE TITLE ARE STILL GLOSSARY-AWARE
 				// (THE BODY-MATCHED `terms` ABOVE CAN MISS THEM) — SAME BEHAVIOR AS THE MANUAL TITLE TRANSLATE.
 				const titleTerms = await matchTerms(chapter.bookId, chapter.titleSource);
-				const r = await translateTitle(chapter.titleSource, titleTerms, pair, job.controller.signal);
+				const r = await translateTitle(chapter.titleSource, titleTerms, pair, job.controller.signal, job.model);
 				titleTarget = r.text || chapter.titleSource;
 				titleUsage = r.usage;
+				await recordAiUsage('title', r.usage, chapter.id);
 				await db.update(chapters).set({ titleTarget }).where(eq(chapters.id, chapter.id));
 			} catch {
 				titleTarget = chapter.titleSource;
@@ -216,7 +268,7 @@ async function run(job: Job, force: boolean, autoExtract: boolean) {
 						completionTokens: cached.completionTokens ?? 0,
 						costUsd: 0,
 					},
-					titleUsage,
+					addUsage(titleUsage, extractUsage),
 				),
 			});
 			job.status = 'done';
@@ -232,6 +284,7 @@ async function run(job: Job, force: boolean, autoExtract: boolean) {
 			(d) => emit(job, { type: 'delta', text: d }),
 			job.controller.signal,
 			(full) => emit(job, { type: 'replace', text: full }),
+			job.model,
 		);
 		// PERSISTENCE IS ISOLATED FROM THE TRANSLATION RESULT: THE STREAM SUCCEEDED AND THE USER ALREADY SAW
 		// (AND PAID FOR) THE FULL TEXT, SO A DB WRITE FAILURE MUST STILL EMIT `done` — NOT `error` (WHICH
@@ -241,7 +294,12 @@ async function run(job: Job, force: boolean, autoExtract: boolean) {
 		} catch (saveErr) {
 			console.error(`[translate] failed to persist chapter ${chapter.id}:`, saveErr);
 		}
-		emit(job, { type: 'done', cached: false, matched: terms.length, usage: addUsage(usage, titleUsage) });
+		emit(job, {
+			type: 'done',
+			cached: false,
+			matched: terms.length,
+			usage: addUsage(addUsage(usage, titleUsage), extractUsage),
+		});
 		job.status = 'done';
 	} catch (e) {
 		emit(job, { type: 'error', message: e instanceof Error ? e.message : 'Translation failed.' });
@@ -258,7 +316,12 @@ async function run(job: Job, force: boolean, autoExtract: boolean) {
 }
 
 /** START OR ATTACH TO THE TRANSLATION JOB FOR A CHAPTER (IDEMPOTENT) */
-export function ensureTranslationJob(chapterId: number, force = false, autoExtract = false): Job {
+export function ensureTranslationJob(
+	chapterId: number,
+	force = false,
+	autoExtract = false,
+	model: string = MODEL,
+): Job {
 	const existing = jobs.get(chapterId);
 	if (existing && existing.status === 'running') {
 		// A NON-FORCED REQUEST ATTACHES TO THE IN-FLIGHT JOB (NO DOUBLE WORK). A force REQUEST SUPERSEDES
@@ -274,6 +337,7 @@ export function ensureTranslationJob(chapterId: number, force = false, autoExtra
 	const job: Job = {
 		chapterId,
 		status: 'running',
+		model,
 		events: [],
 		listeners: new Set(),
 		controller: new AbortController(),

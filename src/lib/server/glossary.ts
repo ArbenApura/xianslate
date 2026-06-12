@@ -1,14 +1,15 @@
 // IMPORTED DEP-TYPES
 import type { SQLiteColumn } from 'drizzle-orm/sqlite-core';
 // IMPORTED TYPES
-import type { Gender, GlossaryScope, LangPair, TermDraft } from '$lib/types';
+import type { Gender, GlossaryScope, LangPair, TermDraft, TranslationUsage } from '$lib/types';
 // IMPORTED DEP-MODULES
 import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 // IMPORTED MODULES
 import { getLanguage, type Language } from '$lib/languages';
 import { db } from './db';
 import { books, glossary, type GlossaryEntry } from './db/schema';
-import { deepseek, MODEL, hasApiKey, queued, thinkingParam, withRetry } from './deepseek';
+import { computeUsage, deepseek, MODEL, hasApiKey, queued, thinkingParam, withRetry } from './deepseek';
+import { addUsage } from './translate';
 import { invalidateAll, invalidateBook } from './glossary-match';
 
 // -- CONSTANTS -- //
@@ -395,13 +396,17 @@ export async function extractTerms(
 	signal?: AbortSignal,
 	// PROGRESS CALLBACK — FIRED AFTER EACH CHUNK SO THE READER CAN SHOW "scanned 2/5 · 14 terms".
 	onProgress?: (done: number, total: number, terms: number) => void,
-): Promise<TermDraft[]> {
+	model: string = MODEL,
+): Promise<{ terms: TermDraft[]; usage: TranslationUsage }> {
 	if (!hasApiKey()) throw new Error('DEEPSEEK_API_KEY is not configured.');
 	const src = getLanguage(pair.sourceLang);
 	const tgt = getLanguage(pair.targetLang);
 	const system = extractSystem(src, tgt);
 	const chunks = chunkForExtraction(contentSource);
 	const bySource = new Map<string, TermDraft>();
+	// SUM THE TOKENS/COST OF EVERY EXTRACTION CHUNK SO THIS PASS'S SPEND CAN BE BILLED — IT READS THE WHOLE
+	// CHAPTER THROUGH THE MODEL ONCE AND WAS PREVIOUSLY DISCARDED, SILENTLY UNDER-REPORTING TOTAL COST.
+	let usage: TranslationUsage = { model, promptTokens: 0, cachedTokens: 0, completionTokens: 0, costUsd: 0 };
 	// ANNOUNCE THE TOTAL WORK UP FRONT (0 DONE) SO THE READER CAN SHOW THE FULL SCOPE IMMEDIATELY.
 	onProgress?.(0, chunks.length, 0);
 
@@ -433,15 +438,18 @@ export async function extractTerms(
 			// "source" KEYS AS THEY ARRIVE FOR A RUNNING FOUND-COUNT; THE DEDUPED COUNT IS REPORTED AFTER THE
 			// FINAL PARSE BELOW.
 			let acc = '';
+			// THE STREAMED usage FRAME (EMPTY delta, FINAL CHUNK) — REQUIRES stream_options.include_usage.
+			let usageRaw: Parameters<typeof computeUsage>[0] = undefined;
 			await queued(async () => {
 				const stream = await withRetry(() =>
 					deepseek.chat.completions.create(
 						{
-							model: MODEL,
+							model,
 							temperature: 0,
 							max_tokens: 4096,
 							response_format: { type: 'json_object' },
 							stream: true,
+							stream_options: { include_usage: true },
 							messages,
 							...thinkingParam(),
 						},
@@ -449,6 +457,8 @@ export async function extractTerms(
 					),
 				);
 				for await (const part of stream) {
+					// CAPTURE usage BEFORE THE `continue` BELOW — ITS FRAME CARRIES NO delta CONTENT.
+					if (part.usage) usageRaw = part.usage;
 					const d = part.choices[0]?.delta?.content ?? '';
 					if (!d) continue;
 					acc += d;
@@ -456,6 +466,8 @@ export async function extractTerms(
 					onProgress?.(i, chunks.length, live);
 				}
 			});
+			// FOLD THIS CHUNK'S TOKENS INTO THE RUN TOTAL (DEDUPING IS LOCAL/FREE — ONLY THE API CALL BILLS).
+			usage = addUsage(usage, computeUsage(usageRaw, model));
 			text = acc || '{}';
 		} catch {
 			// ONE CHUNK FAILING MUST NOT LOSE THE TERMS FROM THE REST OF THE CHAPTER — text STAYS '{}'
@@ -477,5 +489,5 @@ export async function extractTerms(
 		}
 		onProgress?.(i + 1, chunks.length, bySource.size);
 	}
-	return [...bySource.values()];
+	return { terms: [...bySource.values()], usage };
 }

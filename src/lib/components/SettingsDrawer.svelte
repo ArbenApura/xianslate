@@ -3,8 +3,7 @@
 	import { createEventDispatcher } from 'svelte';
 	// IMPORTED MODULES
 	import { CJK_FONTS, LATIN_FONTS } from '$lib/fonts';
-	import { languageOptions } from '$lib/languages';
-	import { resetSettings, settings, type LayoutMode, type Theme } from '$lib/stores/settings';
+	import { resetSettings, settings, TRANSLATION_MODELS, type LayoutMode, type Theme } from '$lib/stores/settings';
 	import { isMobile } from '$lib/stores/viewport';
 	import { cn } from '$lib/utils/cn';
 	import { ripple } from '$lib/actions/ripple';
@@ -13,6 +12,7 @@
 	import RotateCcw from 'lucide-svelte/icons/rotate-ccw';
 	// IMPORTED COMPONENTS
 	import Button from '$lib/components/ui/Button.svelte';
+	import LanguagePicker from '$lib/components/ui/LanguagePicker.svelte';
 	import Modal from '$lib/components/ui/Modal.svelte';
 	import RangeField from '$lib/components/ui/RangeField.svelte';
 	import Select from '$lib/components/ui/Select.svelte';
@@ -39,8 +39,6 @@
 	];
 	const latinOptions = LATIN_FONTS.map((f) => ({ value: f.key, label: f.label }));
 	const cjkOptions = CJK_FONTS.map((f) => ({ value: f.key, label: f.label }));
-	// SOURCE/TARGET LANGUAGE OPTIONS FOR THE "NEW BOOK DEFAULT DIRECTION" PICKERS.
-	const langItems = languageOptions();
 
 	// -- REACTIVE STATES -- //
 
@@ -116,28 +114,17 @@
 			</div>
 		</div>
 
-		<!-- DEFAULT TRANSLATION DIRECTION FOR NEW BOOKS (PER-BOOK OVERRIDES AT FETCH/IMPORT TIME) -->
+		<!-- DEFAULT TARGET LANGUAGE FOR NEW BOOKS (PER-BOOK OVERRIDE IN THE ADD-BOOK DIALOG). THE SOURCE IS
+		     ALWAYS AUTO-DETECTED FROM THE CONTENT, SO THERE'S NO SOURCE PICKER. -->
 		<div>
-			<span class="mb-1.5 block text-xs font-medium opacity-60">New book languages</span>
-			<div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-				<div class="min-w-0">
-					<span class="mb-1 block text-xs opacity-50">Source (original)</span>
-					<Select
-						items={langItems}
-						value={$settings.newBookSourceLang}
-						on:change={(e) => ($settings.newBookSourceLang = e.detail)}
-					/>
-				</div>
-				<div class="min-w-0">
-					<span class="mb-1 block text-xs opacity-50">Target (translation)</span>
-					<Select
-						items={langItems}
-						value={$settings.newBookTargetLang}
-						on:change={(e) => ($settings.newBookTargetLang = e.detail)}
-					/>
-				</div>
-			</div>
-			<p class="mt-1 text-xs opacity-50">The default direction applied to books you fetch or import next.</p>
+			<span class="mb-1.5 block text-xs font-medium opacity-60">Default target language</span>
+			<LanguagePicker
+				value={$settings.newBookTargetLang}
+				on:change={(e) => ($settings.newBookTargetLang = e.detail)}
+			/>
+			<p class="mt-1 text-xs opacity-50">
+				Applied to books you fetch or import next; the original language is detected automatically.
+			</p>
 		</div>
 
 		<!-- SLIDERS -->
@@ -204,7 +191,32 @@
 		<!-- TRANSLATION PIPELINE -->
 		<div class="border-t border-black/[0.06] pt-4 dark:border-white/[0.045]">
 			<span class="mb-1.5 block text-xs font-medium opacity-60">Translation</span>
-			<label class="flex items-start gap-2 text-sm">
+
+			<!-- GLOBAL MODEL PICKER — APPLIES TO EVERY TRANSLATE/EXTRACT CALL. SWITCHING IS SAFE: EACH MODEL
+			     HAS ITS OWN TRANSLATION CACHE, SO IT NEVER REUSES THE OTHER MODEL'S OUTPUT. -->
+			<span class="mb-1.5 block text-xs opacity-60">Model</span>
+			<div class="grid grid-cols-2 gap-2">
+				{#each TRANSLATION_MODELS as m (m.id)}
+					<button
+						use:ripple
+						on:click={() => ($settings.model = m.id)}
+						class={cn(
+							'flex flex-col items-start gap-0.5 rounded-lg border px-3 py-2 text-left transition-colors',
+							$settings.model === m.id
+								? 'border-sky-500 bg-sky-500/10'
+								: 'hover:bg-current/5 border-black/10 dark:border-white/[0.06]',
+						)}
+					>
+						<span class="flex items-center gap-1.5 text-sm font-medium">
+							{m.label}
+							{#if $settings.model === m.id}<Check size={13} class="text-sky-500" />{/if}
+						</span>
+						<span class="text-[11px] leading-tight opacity-50">{m.blurb}</span>
+					</button>
+				{/each}
+			</div>
+
+			<label class="mt-4 flex items-start gap-2 text-sm">
 				<input type="checkbox" class="mt-0.5 accent-sky-600" bind:checked={$settings.autoExtract} />
 				<span>
 					Auto-extract glossary terms before translating
@@ -232,7 +244,9 @@
 						>
 					{/each}
 				</div>
-				<p class="mt-1 text-xs opacity-50">Downloads the next chapter(s) while you read, so "Next" is instant.</p>
+				<p class="mt-1 text-xs opacity-50">
+					Downloads the next chapter(s) while you read, so "Next" is instant.
+				</p>
 			</div>
 			<label class="mt-2 flex items-start gap-2 text-sm" class:opacity-40={$settings.prefetch === 0}>
 				<input

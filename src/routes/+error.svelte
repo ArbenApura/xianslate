@@ -30,7 +30,7 @@
 	// PREFER THE BROWSER HISTORY WHEN THERE IS ONE; OTHERWISE FALL BACK TO THE LIBRARY
 	function goBack() {
 		if (browser && window.history.length > 1) window.history.back();
-		else goto('/');
+		else goto('/app/');
 	}
 </script>
 
@@ -61,7 +61,7 @@
 
 	<!-- ACTION BUTTONS -->
 	<div class="mt-8 flex flex-wrap items-center justify-center gap-3">
-		<Button variant="primary" href="/"><Home size={16} /> Back to library</Button>
+		<Button variant="primary" href="/app/"><Home size={16} /> Back to library</Button>
 		<Button on:click={goBack}><ArrowLeft size={16} /> Go back</Button>
 	</div>
 </div>

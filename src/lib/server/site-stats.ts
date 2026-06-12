@@ -54,6 +54,18 @@ export type Dashboard = {
 	totals: { fetches: number; ok: number; errors: number };
 };
 
+// -- CONSTANTS -- //
+
+// HUMAN LABEL PER ai_usage.kind FOR THE DASHBOARD COST BREAKDOWN. AN UNKNOWN KIND FALLS BACK TO ITS RAW
+// VALUE, SO ADDING A NEW LEDGER KIND NEVER VANISHES FROM THE TOTAL — IT JUST SHOWS UNDER ITS OWN NAME.
+const AI_KIND_LABELS: Record<string, string> = {
+	map: 'Site mapping',
+	extract: 'Term extraction',
+	title: 'Title translation',
+	term: 'Glossary terms',
+	repair: 'Leak repair',
+};
+
 // -- FUNCTIONS -- //
 
 function hostOf(url: string): string {
@@ -104,12 +116,34 @@ export async function recordMapUsage(host: string, usage: TranslationUsage): Pro
 	}
 }
 
+// LEDGER ONE NON-TRANSLATION-CACHE MODEL CALL (kind = 'extract' | 'title' | 'term' | 'repair'). THESE ARE
+// PER-CHAPTER PIPELINE EXPENSES THAT DON'T LAND IN THE translations CACHE ROW, SO WITHOUT THIS THEY WERE
+// SPENT BUT NEVER COUNTED. PASS chapterId FOR CHAPTER-SCOPED CALLS SO THE STATS DIALOG CAN ATTRIBUTE THEM
+// (NULL FOR BOOK/TEXT-LEVEL CALLS LIKE A TITLE BACKFILL). A ZERO-COST / NO-OP CALL (CACHED TITLE REUSE,
+// NO-RESIDUE REPAIR) IS SKIPPED SO THE LEDGER STAYS MEANINGFUL.
+export async function recordAiUsage(kind: string, usage: TranslationUsage, chapterId?: number | null): Promise<void> {
+	if (!usage || (usage.promptTokens === 0 && usage.completionTokens === 0 && usage.costUsd === 0)) return;
+	try {
+		await db.insert(aiUsage).values({
+			kind,
+			chapterId: chapterId ?? null,
+			model: usage.model,
+			promptTokens: usage.promptTokens,
+			cachedTokens: usage.cachedTokens,
+			completionTokens: usage.completionTokens,
+			costUsd: usage.costUsd,
+		});
+	} catch {
+		// BEST-EFFORT — LEDGER WRITES MUST NEVER BREAK THE PIPELINE.
+	}
+}
+
 const N = (v: unknown): number => Number(v ?? 0);
 
 // AGGREGATE EVERYTHING THE DASHBOARD SHOWS IN ONE CALL: PER-HOST FETCH STATS (JOINED WITH LEARNED
 // ADAPTERS), ERRORS GROUPED BY KIND + RECENT FAILURES, AND TOTAL AI SPEND (MAPPING ∪ TRANSLATION).
 export async function getDashboard(): Promise<Dashboard> {
-	const [adapters, okRows, errRows, errByKind, recent, mapAgg, trAgg] = await Promise.all([
+	const [adapters, okRows, errRows, errByKind, recent, aiAgg, trAgg] = await Promise.all([
 		db.select().from(siteAdapters),
 		db
 			.select({
@@ -146,13 +180,14 @@ export async function getDashboard(): Promise<Dashboard> {
 			.limit(50),
 		db
 			.select({
+				kind: aiUsage.kind,
 				calls: sql<number>`count(*)`,
 				pt: sql<number>`coalesce(sum(${aiUsage.promptTokens}),0)`,
 				ct: sql<number>`coalesce(sum(${aiUsage.completionTokens}),0)`,
 				cost: sql<number>`coalesce(sum(${aiUsage.costUsd}),0)`,
 			})
 			.from(aiUsage)
-			.where(eq(aiUsage.kind, 'map')),
+			.groupBy(aiUsage.kind),
 		db
 			.select({
 				calls: sql<number>`count(*)`,
@@ -187,16 +222,11 @@ export async function getDashboard(): Promise<Dashboard> {
 		})
 		.sort((a, b) => b.fetches - a.fetches || a.host.localeCompare(b.host));
 
-	const map = mapAgg[0];
 	const tr = trAgg[0];
+	// ONE BUCKET PER ai_usage KIND (SITE MAPPING, TERM EXTRACTION, TITLE/TERM TRANSLATION, LEAK REPAIR) PLUS
+	// THE PER-CHAPTER BODY TRANSLATION FROM THE translations CACHE — TOGETHER THE COMPLETE AI SPEND. SORTED
+	// BY COST SO THE BIGGEST LINE ITEMS LEAD.
 	const buckets: DashboardCostBucket[] = [
-		{
-			label: 'Site mapping',
-			calls: N(map?.calls),
-			promptTokens: N(map?.pt),
-			completionTokens: N(map?.ct),
-			costUsd: N(map?.cost),
-		},
 		{
 			label: 'Translation',
 			calls: N(tr?.calls),
@@ -204,7 +234,14 @@ export async function getDashboard(): Promise<Dashboard> {
 			completionTokens: N(tr?.ct),
 			costUsd: N(tr?.cost),
 		},
-	];
+		...aiAgg.map((r) => ({
+			label: AI_KIND_LABELS[r.kind] ?? r.kind,
+			calls: N(r.calls),
+			promptTokens: N(r.pt),
+			completionTokens: N(r.ct),
+			costUsd: N(r.cost),
+		})),
+	].sort((a, b) => b.costUsd - a.costUsd);
 
 	const okTotal = okRows.reduce((s, r) => s + N(r.n), 0);
 	const errTotal = errRows.reduce((s, r) => s + N(r.n), 0);
