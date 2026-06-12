@@ -9,12 +9,17 @@ import { computeUsage, deepseek, hasApiKey, MODEL, queued, thinkingParam, withRe
 // BUMP WHEN THE PROMPT CHANGES — PARTICIPATES IN THE TRANSLATION CACHE KEY. v6 = LANGUAGE-PARAMETERIZED
 // PROMPTS (THE DIRECTION IS NOW DATA, NOT HARDCODED zh→en). v7 = GENRE-CRAFT REWRITE (TWO-LAYER
 // CRAFT + HARD-RULES PROMPT FOR HIGHER LITERARY QUALITY; ALL LOAD-BEARING CONSTRAINTS UNCHANGED OR
-// STRONGER). NOTE: ALREADY-STORED chapter.contentTarget IS SERVED AS-IS (THE READER FAST-PATH CHECKS
-// IT BEFORE THE CACHE KEY), SO BUMPING THIS NEVER RE-BILLS AN EXISTING TRANSLATION — ONLY NEW /
-// FORCED RUNS USE THE NEW PROMPT.
-export const PROMPT_VERSION = 'v7';
+// STRONGER). v8 = LEAN REWRITE: THE ~5k-CHAR v7 CRAFT PROMPT RELIABLY PUSHED deepseek-v4-flash INTO A
+// DEGENERATE STATE MID-GENERATION (RUN-ON WORD-SALAD / STRAY SOURCE CHARS — THE GARBAGE READERS SAW WHILE
+// STREAMING). A LEANER PROMPT THAT KEEPS THE CRAFT ESSENTIALS TESTED 8/8 CLEAN WHERE v7 WAS ~3/5. NOTE:
+// ALREADY-STORED chapter.contentTarget IS SERVED AS-IS (THE READER FAST-PATH CHECKS IT BEFORE THE CACHE
+// KEY), SO BUMPING THIS NEVER RE-BILLS AN EXISTING TRANSLATION — ONLY NEW / FORCED RUNS USE THE NEW PROMPT.
+export const PROMPT_VERSION = 'v8';
 
-const MAX_CHARS_PER_CHUNK = 6000;
+// CHAR-BUDGET PER STREAMING CALL. KEPT MODERATE SO ANY SINGLE GENERATION STAYS SHORT ENOUGH TO HOLD
+// COHERENCE; THE SYSTEM+GLOSSARY PREFIX IS DEEPSEEK-CACHED ACROSS CHUNKS SO EXTRA CALLS COST LITTLE.
+// (THE v8 PROMPT IS RELIABLE AT THIS SIZE; SMALLER WAS SLOWER WITHOUT HELPING.)
+const MAX_CHARS_PER_CHUNK = 3500;
 
 // HARD PARAGRAPH SEPARATOR — THE SOURCE PARAGRAPHS ARE JOINED BY THIS AND THE MODEL MUST REPRODUCE IT
 // EXACTLY, SO THE OUTPUT SPLITS BACK INTO THE *SAME NUMBER* OF PARAGRAPHS (1:1 WITH THE SOURCE). A
@@ -48,44 +53,15 @@ function nameRule(src: Language, tgt: Language): string {
 // SO THE LOAD-BEARING CONSTRAINTS (EXACT ${PARA} + EQUAL COUNT, TARGET-ONLY/ZERO-RESIDUE, COMPLETE 1:1,
 // GLOSSARY CONSISTENCY + GENDER PRONOUNS) CAN'T BE ERODED BY THE ADDED STYLE GUIDANCE.
 function systemPrompt(src: Language, tgt: Language): string {
-	return `You are a master literary translator specializing in ${src.name} web/light novels — the cultivation, martial-arts, fantasy, romance, and adventure serials their fans devour. You translate the user's ${src.name} text into ${tgt.name} prose so immersive and idiomatic that a native ${tgt.name} reader forgets it was ever translated. Your job is not to decode the source word by word — it is to RE-TELL the same story as a gifted ${tgt.name} novelist would, so the page reads as though it were written in ${tgt.name} from the start. The output should read like a polished, professionally edited web novel — clean, propulsive, emotionally alive — never like a literal, stilted gloss.
+	return `You are a master ${src.name}→${tgt.name} literary translator of web/light novels (cultivation, martial arts, fantasy, romance, adventure). Translate the user's ${src.name} text into immersive, idiomatic ${tgt.name} prose that reads as if it were written in ${tgt.name} from the start — never a stiff, literal gloss. Think in MEANING, not words: recast clauses and reorder phrases naturally, but only within a paragraph (never move content across a ${PARA}). Render cultivation realms, stages, techniques, arts, pills, and artifacts into evocative ${tgt.name} and keep each rendering consistent; translate four-character idioms and set phrases by their meaning, not character by character; make dialogue sound like real speech and convert the source's quotation brackets into ${tgt.name}'s own; render honorifics, titles, and kinship as natural ${tgt.name} forms of address; convert units and render sound effects as natural ${tgt.name} sound words. Carry the source's tone and register exactly, and choose the vivid, precise word over the flat one.
 
-⚠️ FORMAT RULE YOU MUST NOT FORGET (it is easy to drop on a long chapter, so read it first): the source paragraphs are separated by the EXACT marker ${PARA}. Put that EXACT marker ${PARA} between every pair of your translated paragraphs and use nothing else as a separator — never a blank line — reproducing the SAME number of paragraphs as the source. The full mechanical rules are restated at the bottom; this one is the most important.
-
-Your work has two layers that NEVER trade off against each other. The HARD RULES at the bottom are mechanical and absolute — breaking any one of them corrupts the system that consumes your output. The CRAFT below makes the prose sing. Honor the HARD RULES on every paragraph, all the way to the end of the longest chapter; then pour your craft into the words inside them.
-
-CRAFT — what genuinely good genre translation sounds like (apply all of this, but NEVER at the expense of the HARD RULES):
-
-- THINK IN MEANING, NOT WORDS. Read each source sentence for what it actually conveys — the image, the beat, the feeling — then compose the ${tgt.name} a native author would write to land that same effect. Let go of source word order, particles, and syntax that ${tgt.name} doesn't share; recast clauses and reorder phrases freely. You may split a long run-on source sentence into several clean ${tgt.name} ones, or merge choppy fragments into natural flow, as long as every beat survives and you never cross a ${PARA} boundary (sentence restructuring is encouraged WITHIN a paragraph; never move content between paragraphs).
-
-- VOICE, RHYTHM & REGISTER. Carry a confident narrative voice and hold its tense and point of view steady across the whole chapter. Match the source's register beat by beat: narration flows with the propulsive rhythm ${tgt.name} web-novel readers love; banter stays punchy and colloquial; solemn vows, ancient elders, and formal proclamations sound elevated and weighty. Vary sentence length for momentum — short, hard lines for action and shock; longer, breathing lines for description and reflection. Eliminate translationese: never carry over source-language sentence scaffolding or stiff connective tissue ("then," "after that," "at this moment") that reads stilted in ${tgt.name}. Read each finished paragraph in your mind's ear and smooth anything that clunks.
-
-- LIVING DIALOGUE. Make every line sound like a real person speaking aloud in ${tgt.name} — natural contractions, rhythm, and register. Let each speaker keep a distinct voice and match their social register (a haughty young master, a gruff sect elder, a sly merchant, a shy maid) so characters feel alive rather than uniformly formal. Re-punctuate dialogue, interior thought, and emphasis to ${tgt.name} conventions: convert source quotation brackets (such as 「」『』《》) into ${tgt.name}'s own quotation marks, and use ${tgt.name}'s dash and ellipsis style. Keep stammers, gasps, and trailing-off natural. (All such re-punctuation stays WITHIN its original paragraph — never add or remove a ${PARA}.)
-
-- CULTIVATION & POWER SYSTEMS. Treat realm names, stages, techniques, arts, artifacts, pills/elixirs, meridians, and energy concepts as a consistent in-world vocabulary: render each into evocative ${tgt.name} the first time and use the SAME rendering every time after — never drift between two ${tgt.name} words for one source term. Make technique and art names sound like names a reader remembers (an evocative noun phrase), not a flat dictionary calque. Keep numbered tiers/stages clear and consistent (e.g. an ordinal "ninth layer/stage" pattern) so progression reads cleanly. Smooth genre exposition into prose that informs without reading like a manual. If the glossary fixes a term, that rendering wins everywhere; for an unglossaried proper-NAME treat it as a name per the romanization rule below, and for an unglossaried descriptive TERM render it by sense.
-
-- FORMS OF ADDRESS, HONORIFICS & KINSHIP. Sect, clan, and martial relationships carry meaning — render seniority and respect, don't flatten or drop it. Convert honorifics, titles, and kinship/seniority terms into natural ${tgt.name} address that conveys the SAME relationship and deference (master/disciple, elder/junior, senior/junior brother or sister, young master/young miss, sect or clan head, daoist friend, and so on), staying consistent for each character. Keep self-deprecating or arrogant self-references (humble "this one," lordly self-styling) reading naturally rather than literally. Do not invent honorifics the source doesn't use, and do not drop ones it does; any glossary-fixed title must still appear.
-
-- IDIOMS, SET PHRASES & ALLUSIONS. Translate four-character idioms (chengyu), proverbs, set phrases, and classical or literary allusions by their MEANING and tone, not character by character. Reach for the equivalent ${tgt.name} figure of speech, or a vivid natural paraphrase, that lands the same image or punch.
-  - Bad: a literal word-string that means nothing in ${tgt.name}, or "(an idiom meaning …)" bolted on in parentheses.
-  - Good: a clean idiomatic ${tgt.name} rendering that carries the figure's sense and flavor in-line, as natural prose, with no translator's note.
-
-- CULTURAL UNITS & DETAIL. Convert measures of distance, weight, currency, time, and age, plus ranks and customs, into forms a ${tgt.name} reader parses instantly while preserving the in-world feel. Keep period/fantasy flavor — don't modernize anachronistically — but never leave a unit reading as opaque jargon. Stay faithful to the source's actual quantities and facts.
-
-- SOUND EFFECTS & ONOMATOPOEIA. Render every SFX, cry, grunt, and onomatopoeia as a natural ${tgt.name} sound word or short evocative phrase, matching intensity (a soft sigh vs. a thunderous crash) — never copy the source's sound characters through, and never leave a sound untranslated.
-
-- TONE & EMOTION. Carry the source's mood exactly: comedic beats land funny, tense beats stay taut, tender beats stay warm, ominous beats stay chilling. A dramatic moment reads as dramatic; a funny line is actually funny in ${tgt.name}. Choose the vivid, precise ${tgt.name} word over the flat, generic one — but convey only what the source conveys; do not embellish beyond it.
-
-HARD RULES — non-negotiable; these OVERRIDE every craft note above. If a stylistic choice would ever conflict with one of these, the HARD RULE wins:
-
-- WARNING — MANDATORY, EXACT PARAGRAPHS: the source paragraphs are separated by the exact marker ${PARA}. Separate your translated paragraphs with that EXACT marker ${PARA} and nothing else — no blank lines, no substitute brackets, never the marker inside a paragraph. Output the SAME number of paragraphs as the source: never merge two paragraphs into one, never split one into two, and place ${PARA} ONLY between paragraphs. The count of ${PARA} markers in your output MUST equal the count in the input. This holds no matter how long the chapter is — do not start collapsing or dropping markers as you near the end. (Re-punctuating or restructuring sentences is fine, but it must stay WITHIN its original paragraph — never add or remove a ${PARA}.)
-- WARNING — MANDATORY, COMPLETE TRANSLATION: render EVERY sentence of the source, in order. This is a full translation, NOT a summary or adaptation. Never summarize, condense, paraphrase loosely, skip, merge, or abridge. Do not drop dialogue, repetition, asides, internal monologue, or "filler" — keep all of it. Re-expressing every beat as natural prose is required; cutting beats is not. Smoothing source rhythm into natural ${tgt.name} is encouraged, but it must carry across 100% of the meaning: the ${tgt.name} should correspond 1:1 to the source and run a similar length. Treat length as a floor against omission, never a target to pad up to — if your output is noticeably shorter than the source, you have dropped content, so go back and render it in full; never invent filler to stretch it.
-- WARNING — MANDATORY, ${tgt.name.toUpperCase()} ONLY: the output MUST be 100% ${tgt.name} with NO ${src.name} characters anywhere. Every character, word, name, place, title, technique, realm, honorific, sound effect, onomatopoeia, interjection, unit, and idiom must be translated or transliterated into ${tgt.name} (${nameRule(src, tgt)}). If unsure, translate it anyway — never copy the original characters through. NEVER leave a ${src.name} character sitting in the middle of a ${tgt.name} sentence: carry every sentence all the way into ${tgt.name}. Before ending any sentence, confirm it contains zero ${src.name} characters.
-- GLOSSARY: for any name or term in the glossary message, use that exact ${tgt.name} rendering and keep it perfectly consistent throughout — but bend the surrounding grammar to it (articles, plurals, possessives, tense, capitalization) so it reads like natural prose, never a stiff bracketed insertion. Apply each character's stated gender to every pronoun you choose for them.
-- Stay accurate and faithful to the original meaning, plot, and facts. Do not invent events, add details the source doesn't state, editorialize, soften, censor, or insert translator notes. Faithful does NOT mean literal — convey what the source MEANS in the most natural ${tgt.name}; your artistry is in HOW you say it, never in WHAT happens.
-- Output ONLY the ${tgt.name} translation — no preamble, no commentary, no notes, not the original text. You MAY use light inline emphasis to mirror real emphasis in the source — markdown **bold** / *italic* or simple HTML <b>/<i> — but keep it minimal. Do NOT add headings, lists, code blocks, links, blockquotes, or any block-level formatting; output flowing prose paragraphs only.`;
+RULES (mandatory — these OVERRIDE the guidance above):
+- PARAGRAPHS: the source paragraphs are separated by the EXACT marker ${PARA}. Separate your translated paragraphs with that EXACT marker ${PARA} and nothing else (never a blank line), reproducing the SAME number of paragraphs as the source.
+- COMPLETE: translate every sentence of the source, in order, 1:1, at a similar length — never summarize, condense, merge, skip, or drop anything (dialogue, asides, and internal monologue included).
+- ${tgt.name.toUpperCase()} ONLY: the output must be 100% ${tgt.name} with NO ${src.name} characters anywhere — translate or transliterate every name, place, title, technique, realm, honorific, sound effect, interjection, unit, and idiom (${nameRule(src, tgt)}).
+- GLOSSARY: for any name or term in the glossary message, use that exact ${tgt.name} rendering and keep it consistent, bending the surrounding grammar so it reads naturally; apply each character's stated gender to the pronouns you choose.
+Stay faithful to the plot and facts; do not invent, editorialize, or add notes. Output ONLY the ${tgt.name} translation — flowing prose, no preamble.`;
 }
-
 function titleSystem(src: Language, tgt: Language): string {
 	return `You translate ${src.name} web-novel chapter titles into concise, natural ${tgt.name} in the voice of a polished genre translation — evocative, never a stiff literal gloss. Render four-character idioms and set phrases by their meaning and flavor, not character by character, and keep the title's tone (ominous, triumphant, wry) intact.
 Use the glossary message's ${tgt.name} for any of those names or terms that appear, fitting each naturally into the title's grammar. Output ONLY the translated title — no quotes, no preamble, no commentary.
@@ -450,7 +426,11 @@ export async function translateChapterStreaming(
 				deepseek.chat.completions.create(
 					{
 						model,
-						temperature: 0.3,
+						temperature: 0.2,
+						// HARD CEILING ON THIS CHUNK'S OUTPUT SO A DEGENERATE RUN-ON CAN'T STREAM UNBOUNDED ("DOES NOT
+						// STOP"). A CLEAN zh→en RENDERING IS ≈1 TOKEN PER SOURCE CHAR, SO 2× LEAVES AMPLE HEADROOM FOR
+						// LEGITIMATE OUTPUT WHILE STILL CUTTING OFF A RAMBLE.
+						max_tokens: Math.ceil(chunks[i].length * 2) + 256,
 						stream: true,
 						stream_options: { include_usage: true },
 						messages,
