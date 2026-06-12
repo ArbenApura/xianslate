@@ -4,7 +4,10 @@ import type { RequestHandler } from './$types';
 import { error } from '@sveltejs/kit';
 import { z } from 'zod';
 // IMPORTED MODULES
+import { requireUser } from '$lib/server/auth/user';
+import { assertChapterOwner } from '$lib/server/books';
 import { resolveModel } from '$lib/server/deepseek';
+import { assertWithinBudget } from '$lib/server/quota';
 import { ensureTranslationJob, subscribe } from '$lib/server/translation-service';
 
 // -- CONSTANTS -- //
@@ -20,9 +23,18 @@ const Body = z.object({
 
 // -- FUNCTIONS -- //
 
-export const POST: RequestHandler = async ({ request }) => {
+export const POST: RequestHandler = async ({ request, locals }) => {
+	const user = requireUser(locals);
 	const parsed = Body.safeParse(await request.json().catch(() => null));
 	if (!parsed.success) throw error(400, 'A numeric chapterId is required.');
+
+	// OWNERSHIP: VERIFY THE CALLER OWNS chapterId (JOIN TO book) *BEFORE* ATTACHING — STOPS A USER FROM
+	// SUBSCRIBING TO ANOTHER USER'S TRANSLATION STREAM BY GUESSING A NUMERIC chapterId. 404 IF NOT OWNED.
+	await assertChapterOwner(user.id, parsed.data.chapterId);
+	// COST GATE: REFUSE TO ENQUEUE A (BILLED) TRANSLATION WHEN THE USER IS OVER THEIR BUDGET. A RE-READ OF
+	// AN ALREADY-TRANSLATED CHAPTER NEVER REACHES HERE (THE READER SERVES THE STORED contentTarget), SO ONLY
+	// FRESH / FORCED TRANSLATIONS ARE GATED.
+	await assertWithinBudget(user.id);
 
 	// START (OR ATTACH TO) THE PERSISTENT JOB — IT RUNS DETACHED AND SURVIVES THIS REQUEST
 	const job = ensureTranslationJob(

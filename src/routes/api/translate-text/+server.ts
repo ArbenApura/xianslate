@@ -5,6 +5,8 @@ import { error, json } from '@sveltejs/kit';
 import { z } from 'zod';
 // IMPORTED MODULES
 import { DEFAULT_SOURCE_LANG, DEFAULT_TARGET_LANG, isMonolingual } from '$lib/languages';
+import { requireUser } from '$lib/server/auth/user';
+import { assertBookOwner } from '$lib/server/books';
 import { resolveModel } from '$lib/server/deepseek';
 import { bookPair } from '$lib/server/glossary';
 import { matchTerms } from '$lib/server/glossary-match';
@@ -26,11 +28,14 @@ const Body = z.object({
 // -- FUNCTIONS -- //
 
 // ONE-OFF SHORT-STRING TRANSLATION (TITLE OR GLOSSARY TERM) — USED BY THE INLINE "Translate" HELPERS.
-export const POST: RequestHandler = async ({ request }) => {
+export const POST: RequestHandler = async ({ request, locals }) => {
+	const user = requireUser(locals);
 	const parsed = Body.safeParse(await request.json().catch(() => null));
 	if (!parsed.success) throw error(400, 'Text is required.');
 	const { text, kind, bookId } = parsed.data;
 	const model = resolveModel(parsed.data.model);
+	// OWNERSHIP: A bookId-SCOPED CALL (GLOSSARY-AWARE) MUST REFERENCE THE CALLER'S OWN BOOK.
+	if (bookId) await assertBookOwner(user.id, bookId);
 
 	try {
 		// THE DIRECTION: A BOOK-SCOPED CALL USES THE BOOK'S PAIR; OTHERWISE THE APP DEFAULT (zh-Hant → en).

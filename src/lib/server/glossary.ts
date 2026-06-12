@@ -75,6 +75,13 @@ export async function bookPair(bookId: string): Promise<LangPair> {
 	return { sourceLang: b?.sourceLang ?? 'zh-Hant', targetLang: b?.targetLang ?? 'en' };
 }
 
+// THE OWNER (userId) OF A BOOK — LETS THE BOOK-SCOPED ENTRY POINTS (getEffectiveGlossary, addNewTerms)
+// DERIVE THE OWNER FROM THE BOOK SO THE TRANSLATE PIPELINE NEED NOT THREAD userId. null IF THE BOOK IS GONE.
+async function bookOwner(bookId: string): Promise<string | null> {
+	const [b] = await db.select({ userId: books.userId }).from(books).where(eq(books.id, bookId)).limit(1);
+	return b?.userId ?? null;
+}
+
 // SPLIT THE WHOLE CHAPTER INTO PARAGRAPH-ALIGNED CHUNKS SO EVERY PART IS SCANNED FOR TERMS.
 function chunkForExtraction(content: string): string[] {
 	const paras = content.split(/\n{2,}/).filter((p) => p.trim().length > 0);
@@ -119,30 +126,36 @@ function parseTermObjects(text: string): unknown[] {
 
 // WHERE CLAUSE FOR ONE SCOPE. GLOBAL ROWS ARE FILTERED TO A LANGUAGE PAIR SO A CHINESE GLOSSARY NEVER
 // SHOWS UP WHILE EDITING A JAPANESE ONE; BOOK ROWS ARE IMPLICITLY SINGLE-PAIR (TIED TO THE BOOK).
-function scopeWhere(scope: GlossaryScope, bookId: string | null, pair?: LangPair) {
+function scopeWhere(scope: GlossaryScope, bookId: string | null, userId: string, pair?: LangPair) {
+	// EVERY GLOSSARY QUERY IS userId-SCOPED (Phase 4): global ROWS ARE PARTITIONED PER USER, AND book ROWS
+	// CARRY THE OWNER TOO — SO A GUESSED bookId FROM ANOTHER USER MATCHES NOTHING.
 	if (scope === 'global') {
-		const base = and(eq(glossary.scope, 'global'), isNull(glossary.bookId));
+		const base = and(eq(glossary.scope, 'global'), isNull(glossary.bookId), eq(glossary.userId, userId));
 		if (!pair) return base;
 		return and(base, eq(glossary.sourceLang, pair.sourceLang), eq(glossary.targetLang, pair.targetLang));
 	}
-	return and(eq(glossary.scope, 'book'), eq(glossary.bookId, bookId!));
+	return and(eq(glossary.scope, 'book'), eq(glossary.bookId, bookId!), eq(glossary.userId, userId));
 }
 
 // ROWS FOR A SINGLE SCOPE (EDITOR VIEW)
 export async function getGlossary(
 	scope: GlossaryScope,
 	bookId: string | null,
+	userId: string,
 	pair?: LangPair,
 ): Promise<GlossaryEntry[]> {
 	return db
 		.select()
 		.from(glossary)
-		.where(scopeWhere(scope, bookId, pair))
+		.where(scopeWhere(scope, bookId, userId, pair))
 		.orderBy(glossary.source);
 }
 
-// EFFECTIVE GLOSSARY FOR A BOOK = global(SAME PAIR) ∪ book, WITH book OVERRIDING global ON THE SAME source.
+// EFFECTIVE GLOSSARY FOR A BOOK = global(BOOK OWNER + SAME PAIR) ∪ book, WITH book OVERRIDING global ON THE
+// SAME source. DERIVES THE OWNER FROM THE BOOK SO THE TRANSLATE PIPELINE (matchTerms) NEEDN'T THREAD userId.
 export async function getEffectiveGlossary(bookId: string): Promise<TermDraft[]> {
+	const userId = await bookOwner(bookId);
+	if (!userId) return [];
 	const pair = await bookPair(bookId);
 	const globals = await db
 		.select()
@@ -151,6 +164,7 @@ export async function getEffectiveGlossary(bookId: string): Promise<TermDraft[]>
 			and(
 				eq(glossary.scope, 'global'),
 				isNull(glossary.bookId),
+				eq(glossary.userId, userId),
 				eq(glossary.sourceLang, pair.sourceLang),
 				eq(glossary.targetLang, pair.targetLang),
 			),
@@ -186,9 +200,10 @@ export async function getEffectiveGlossary(bookId: string): Promise<TermDraft[]>
 export async function getGlossaryPage(
 	scope: GlossaryScope,
 	bookId: string | null,
+	userId: string,
 	opts: { q?: string; limit: number; offset: number; pair?: LangPair },
 ): Promise<{ rows: GlossaryEntry[]; total: number }> {
-	const base = scopeWhere(scope, bookId, opts.pair);
+	const base = scopeWhere(scope, bookId, userId, opts.pair);
 	const q = opts.q?.trim();
 	const where = q ? and(base, or(likeContains(glossary.source, q), likeContains(glossary.target, q))) : base;
 
@@ -206,11 +221,16 @@ export async function getGlossaryPage(
 	return { rows, total: Number(c?.n ?? 0) };
 }
 
-export async function countGlossary(scope: GlossaryScope, bookId: string | null, pair?: LangPair): Promise<number> {
+export async function countGlossary(
+	scope: GlossaryScope,
+	bookId: string | null,
+	userId: string,
+	pair?: LangPair,
+): Promise<number> {
 	const [r] = await db
 		.select({ n: sql<number>`count(*)` })
 		.from(glossary)
-		.where(scopeWhere(scope, bookId, pair));
+		.where(scopeWhere(scope, bookId, userId, pair));
 	return Number(r?.n ?? 0);
 }
 
@@ -219,10 +239,12 @@ export async function addTerm(
 	bookId: string | null,
 	draft: TermDraft,
 	pair: LangPair,
+	userId: string,
 ): Promise<GlossaryEntry> {
 	const [row] = await db
 		.insert(glossary)
 		.values({
+			userId,
 			scope,
 			bookId: scope === 'global' ? null : bookId,
 			sourceLang: pair.sourceLang,
@@ -238,8 +260,17 @@ export async function addTerm(
 	return row;
 }
 
-export async function updateTerm(id: number, patch: Partial<TermDraft>): Promise<GlossaryEntry | null> {
-	const [existing] = await db.select().from(glossary).where(eq(glossary.id, id)).limit(1);
+export async function updateTerm(
+	id: number,
+	patch: Partial<TermDraft>,
+	userId: string,
+): Promise<GlossaryEntry | null> {
+	// OWNER-SCOPED: A USER CAN ONLY EDIT THEIR OWN TERM (A GUESSED id FROM ANOTHER USER RETURNS null → 404).
+	const [existing] = await db
+		.select()
+		.from(glossary)
+		.where(and(eq(glossary.id, id), eq(glossary.userId, userId)))
+		.limit(1);
 	if (!existing) return null;
 	const [row] = await db
 		.update(glossary)
@@ -258,10 +289,15 @@ export async function updateTerm(id: number, patch: Partial<TermDraft>): Promise
 	return row;
 }
 
-export async function deleteTerm(id: number): Promise<void> {
-	const [existing] = await db.select().from(glossary).where(eq(glossary.id, id)).limit(1);
+export async function deleteTerm(id: number, userId: string): Promise<void> {
+	// OWNER-SCOPED: ONLY THE OWNER CAN DELETE THEIR TERM.
+	const [existing] = await db
+		.select()
+		.from(glossary)
+		.where(and(eq(glossary.id, id), eq(glossary.userId, userId)))
+		.limit(1);
 	if (!existing) return;
-	await db.delete(glossary).where(eq(glossary.id, id));
+	await db.delete(glossary).where(and(eq(glossary.id, id), eq(glossary.userId, userId)));
 	invalidate(existing.scope, existing.bookId);
 }
 
@@ -271,12 +307,13 @@ export async function mergeGlossary(
 	bookId: string | null,
 	terms: TermDraft[],
 	pair: LangPair,
+	userId: string,
 ): Promise<{ added: number; updated: number }> {
 	if (terms.length === 0) return { added: 0, updated: 0 };
 	const effBookId = scope === 'global' ? null : bookId;
 
 	// DE-DUPE BY source (LAST-WINS) BEFORE BATCHING: TWO ROWS WITH THE SAME source IN ONE INSERT THROW
-	// SQLite's "ON CONFLICT ... cannot affect row a second time" AND 400 THE WHOLE IMPORT.
+	// "ON CONFLICT ... cannot affect row a second time" AND 400 THE WHOLE IMPORT.
 	const now = Date.now();
 	const bySource = new Map<string, typeof glossary.$inferInsert>();
 	for (const t of terms) {
@@ -284,6 +321,7 @@ export async function mergeGlossary(
 		const target = t.target.trim();
 		if (!source || !target) continue;
 		bySource.set(source, {
+			userId,
 			scope,
 			bookId: effBookId,
 			sourceLang: pair.sourceLang,
@@ -313,7 +351,7 @@ export async function mergeGlossary(
 	// THE added/updated ACCOUNTING.
 	const CHUNK = 200;
 	const counts = await db.transaction(async (tx) => {
-		const where = scopeWhere(scope, bookId, scope === 'global' ? pair : undefined);
+		const where = scopeWhere(scope, bookId, userId, scope === 'global' ? pair : undefined);
 		const [b] = await tx
 			.select({ n: sql<number>`count(*)` })
 			.from(glossary)
@@ -327,7 +365,8 @@ export async function mergeGlossary(
 					.insert(glossary)
 					.values(slice)
 					.onConflictDoUpdate({
-						target: [glossary.sourceLang, glossary.targetLang, glossary.source],
+						// MATCHES THE PARTIAL UNIQUE INDEX glossary_global_unq (userId, sourceLang, targetLang, source).
+						target: [glossary.userId, glossary.sourceLang, glossary.targetLang, glossary.source],
 						targetWhere: sql`${glossary.scope} = 'global'`,
 						set,
 					});
@@ -359,8 +398,11 @@ export async function mergeGlossary(
 // TRANSLATIONS STABLE SO EXTRACTION CAN'T "TAMPER" A TERM YOU ALREADY HAVE; IT ONLY ADDS WHAT'S MISSING.
 export async function addNewTerms(bookId: string, terms: TermDraft[]): Promise<{ added: number; skipped: number }> {
 	if (terms.length === 0) return { added: 0, skipped: 0 };
+	// OWNER DERIVED FROM THE BOOK (THE TRANSLATE/EXTRACT PIPELINE DOESN'T THREAD userId). NO OWNER → NO-OP.
+	const userId = await bookOwner(bookId);
+	if (!userId) return { added: 0, skipped: terms.length };
 	const pair = await bookPair(bookId);
-	// LOOK UP ONLY THE sources WE'RE ABOUT TO ADD (BOOK ∪ GLOBAL-OF-PAIR), NOT THE WHOLE GLOSSARY.
+	// LOOK UP ONLY THE sources WE'RE ABOUT TO ADD (THIS USER'S BOOK ∪ GLOBAL-OF-PAIR), NOT THE WHOLE GLOSSARY.
 	const sourceList = [...new Set(terms.map((t) => t.source.trim()).filter(Boolean))];
 	const existing = sourceList.length
 		? await db
@@ -369,6 +411,7 @@ export async function addNewTerms(bookId: string, terms: TermDraft[]): Promise<{
 				.where(
 					and(
 						inArray(glossary.source, sourceList),
+						eq(glossary.userId, userId),
 						or(
 							and(
 								eq(glossary.scope, 'global'),
@@ -384,7 +427,7 @@ export async function addNewTerms(bookId: string, terms: TermDraft[]): Promise<{
 	const known = new Set(existing.map((e) => e.source));
 	const fresh = terms.filter((t) => !known.has(t.source.trim()));
 	const skipped = terms.length - fresh.length;
-	const { added } = await mergeGlossary('book', bookId, fresh, pair);
+	const { added } = await mergeGlossary('book', bookId, fresh, pair, userId);
 	return { added, skipped };
 }
 

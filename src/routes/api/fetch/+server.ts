@@ -4,8 +4,10 @@ import type { RequestHandler } from './$types';
 import { error, json } from '@sveltejs/kit';
 import { z } from 'zod';
 // IMPORTED MODULES
+import { requireUser } from '$lib/server/auth/user';
 import { ingestWebChapter } from '$lib/server/books';
 import { isFetchError } from '$lib/server/fetch-error';
+import { assertWithinBudget } from '$lib/server/quota';
 
 // -- CONSTANTS -- //
 
@@ -23,15 +25,18 @@ const Body = z.object({
 
 // -- FUNCTIONS -- //
 
-export const POST: RequestHandler = async ({ request }) => {
+export const POST: RequestHandler = async ({ request, locals }) => {
+	const user = requireUser(locals);
 	const parsed = Body.safeParse(await request.json().catch(() => null));
 	if (!parsed.success) throw error(400, 'A valid chapter URL is required.');
+	// COST GATE BEFORE A FETCH THAT MAY TRIGGER (BILLED) SITE-SELECTOR LEARNING + AUTO-TRANSLATE DOWNSTREAM.
+	await assertWithinBudget(user.id);
 	try {
 		const { url, fromChapterId, dir, targetBookId, sourceLang, targetLang } = parsed.data;
 		const anchor = fromChapterId && dir ? { fromChapterId, dir } : undefined;
 		const pair =
 			sourceLang && targetLang ? { sourceLang, targetLang } : undefined;
-		const view = await ingestWebChapter(url, anchor, targetBookId, pair);
+		const view = await ingestWebChapter(url, user.id, anchor, targetBookId, pair);
 		return json(view);
 	} catch (e) {
 		// TYPED FAILURE → ITS OWN STATUS + HUMAN MESSAGE (INVALID / BLOCKED / UNSUPPORTED / NOT FOUND …)

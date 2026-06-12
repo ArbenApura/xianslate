@@ -5,7 +5,8 @@ import { error, json } from '@sveltejs/kit';
 import { asc, eq, sql } from 'drizzle-orm';
 // IMPORTED MODULES
 import { isMonolingual } from '$lib/languages';
-import { deleteBook, getBook } from '$lib/server/books';
+import { requireUser } from '$lib/server/auth/user';
+import { assertBookOwner, deleteBook } from '$lib/server/books';
 import { db } from '$lib/server/db';
 import { books, chapters } from '$lib/server/db/schema';
 import { matchTerms } from '$lib/server/glossary-match';
@@ -14,9 +15,9 @@ import { translateTerm, translateTitle } from '$lib/server/translate';
 
 // -- FUNCTIONS -- //
 
-export const GET: RequestHandler = async ({ params }) => {
-	const book = await getBook(params.id);
-	if (!book) throw error(404, 'Book not found.');
+export const GET: RequestHandler = async ({ params, locals }) => {
+	const user = requireUser(locals);
+	const book = await assertBookOwner(user.id, params.id);
 	// COMPUTE hasTarget IN SQL — DON'T TRANSFER EVERY CHAPTER'S FULL contentTarget (POTENTIALLY MEGABYTES)
 	// JUST TO TEST IT FOR null.
 	const list = await db
@@ -45,9 +46,9 @@ export const GET: RequestHandler = async ({ params }) => {
 };
 
 // TRANSLATE THE BOOK TITLE (NOVEL NAME) + ROMANIZE THE AUTHOR ONCE, GLOSSARY-AWARE, AND CACHE BOTH
-export const POST: RequestHandler = async ({ params }) => {
-	const book = await getBook(params.id);
-	if (!book) throw error(404, 'Book not found.');
+export const POST: RequestHandler = async ({ params, locals }) => {
+	const user = requireUser(locals);
+	const book = await assertBookOwner(user.id, params.id);
 	// READ-IN-ORIGINAL BOOK: NO TRANSLATION DIRECTION — RETURN THE SOURCE TITLE/AUTHOR AS-IS SO THE LIBRARY
 	// SHOWS THEM UNCHANGED INSTEAD OF TRANSLATING INTO THE FALLBACK LANGUAGE. (DEFENSE IN DEPTH — THE CLIENT
 	// ALREADY SKIPS THESE; THIS GUARANTEES IT EVEN IF SOMETHING ELSE CALLS THIS ENDPOINT.)
@@ -87,7 +88,9 @@ export const POST: RequestHandler = async ({ params }) => {
 	}
 };
 
-export const DELETE: RequestHandler = async ({ params }) => {
+export const DELETE: RequestHandler = async ({ params, locals }) => {
+	const user = requireUser(locals);
+	await assertBookOwner(user.id, params.id);
 	await deleteBook(params.id);
 	return json({ ok: true });
 };

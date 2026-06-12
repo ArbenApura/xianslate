@@ -4,7 +4,8 @@ import type { RequestHandler } from './$types';
 import { error, json } from '@sveltejs/kit';
 import { z } from 'zod';
 // IMPORTED MODULES
-import { setReadProgress } from '$lib/server/books';
+import { requireUser } from '$lib/server/auth/user';
+import { getOwnedChapterByUuid, setReadProgress } from '$lib/server/books';
 
 // -- CONSTANTS -- //
 
@@ -14,9 +15,12 @@ const Body = z.object({ progress: z.number().min(0).max(1) });
 
 // RECORD HOW FAR THE READER HAS READ THIS CHAPTER (0..1). CALLED FREQUENTLY (DEBOUNCED) WHILE READING AND
 // VIA navigator.sendBeacon ON LEAVE — SO IT MUST BE TINY AND TOLERANT OF A beacon's text/plain BODY.
-export const POST: RequestHandler = async ({ params, request }) => {
+export const POST: RequestHandler = async ({ params, request, locals }) => {
+	const user = requireUser(locals);
 	const parsed = Body.safeParse(await request.json().catch(() => null));
 	if (!parsed.success) throw error(400, 'A numeric progress (0..1) is required.');
+	// OWNERSHIP: ONLY RECORD PROGRESS FOR A CHAPTER IN THE CALLER'S LIBRARY.
+	if (!(await getOwnedChapterByUuid(user.id, params.uuid))) throw error(404, 'Chapter not found.');
 	await setReadProgress(params.uuid, parsed.data.progress);
 	return json({ ok: true });
 };

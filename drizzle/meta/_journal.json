@@ -15,6 +15,13 @@
       "when": 1781284596455,
       "tag": "0001_mushy_ezekiel_stane",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1781286004279,
+      "tag": "0002_big_johnny_blaze",
+      "breakpoints": true
     }
   ]
 }

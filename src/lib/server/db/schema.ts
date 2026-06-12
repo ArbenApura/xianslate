@@ -37,10 +37,16 @@ export const users = pgTable('users', {
 });
 
 // A LIBRARY ENTRY FROM ANY SOURCE. id IS THE SITE BOOK id FOR web, A GENERATED id FOR epub/txt.
-export const books = pgTable('books', {
-	id: text('id').primaryKey(),
-	// OWNERSHIP IS ADDED IN PHASE 4 (userId → users.id). UNTIL THEN EVERY BOOK IS GLOBAL.
-	sourceType: text('source_type', { enum: ['web', 'epub', 'txt', 'manual'] }).notNull(),
+export const books = pgTable(
+	'books',
+	{
+		id: text('id').primaryKey(),
+		// OWNERSHIP ROOT (Phase 4). chapters/translations/chapter-linked ai_usage INHERIT OWNERSHIP THROUGH
+		// THE FK CHAIN; site_adapters/site_events STAY GLOBAL. DELETING THE USER CASCADES THEIR WHOLE LIBRARY.
+		userId: text('user_id')
+			.notNull()
+			.references(() => users.id, { onDelete: 'cascade' }),
+		sourceType: text('source_type', { enum: ['web', 'epub', 'txt', 'manual'] }).notNull(),
 	// THE BOOK'S OWN TRANSLATION DIRECTION — BCP-47-ISH CODES FROM $lib/languages. PRE-EXISTING BOOKS ARE
 	// BACKFILLED TO zh-Hant → en (THE APP'S ORIGINAL HARDCODED DIRECTION) BY THE MIGRATION.
 	sourceLang: text('source_lang').notNull(),
@@ -57,10 +63,12 @@ export const books = pgTable('books', {
 	lastChapterId: bigint('last_chapter_id', { mode: 'number' }),
 	// WHEN ANY CHAPTER OF THIS BOOK WAS LAST OPENED — DRIVES THE "CONTINUE READING" PICK (MOST RECENT WINS)
 	lastReadAt: epochMs('last_read_at'),
-	createdAt: epochMs('created_at')
-		.notNull()
-		.$defaultFn(() => Date.now()),
-});
+		createdAt: epochMs('created_at')
+			.notNull()
+			.$defaultFn(() => Date.now()),
+	},
+	(t) => [index('books_user_idx').on(t.userId)],
+);
 
 // CACHE OF FETCHED/IMPORTED CHAPTERS. WEB NAV USES prevUrl/nextUrl; EPUB/TXT NAV USES seq.
 export const chapters = pgTable(
@@ -98,8 +106,10 @@ export const chapters = pgTable(
 		uniqueIndex('chapters_uuid_unq').on(t.uuid),
 		// UNIQUE PER BOOK+SEQ FOR ORDERED IMPORTS
 		uniqueIndex('chapters_book_seq_unq').on(t.bookId, t.seq),
-		// UNIQUE WEB URL (NULLS ARE DISTINCT IN POSTGRES UNIQUE INDEXES, SO IMPORTS ARE UNAFFECTED)
-		uniqueIndex('chapters_url_unq').on(t.chapterUrl),
+		// UNIQUE WEB URL *PER BOOK* (Phase 4): PER-USER LIBRARIES MEAN TWO USERS CAN EACH FETCH THE SAME SOURCE
+		// URL INTO THEIR OWN (PER-USER) WEB BOOK, SO URL UNIQUENESS IS SCOPED TO THE BOOK, NOT GLOBAL. NULLS
+		// ARE DISTINCT (epub/txt CHAPTERS HAVE NO URL), SO IMPORTS ARE UNAFFECTED.
+		uniqueIndex('chapters_url_unq').on(t.bookId, t.chapterUrl),
 		index('chapters_book_idx').on(t.bookId),
 	],
 );
@@ -137,6 +147,12 @@ export const glossary = pgTable(
 	'glossary',
 	{
 		id: bigserial('id', { mode: 'number' }).primaryKey(),
+		// OWNER (Phase 4). global ROWS HAVE NO bookId, SO THE GLOBAL GLOSSARY IS PARTITIONED PER USER VIA THIS;
+		// book ROWS ALSO CARRY IT (= THE BOOK OWNER) SO A USER-DELETE CASCADES THEM AND SO EVERY GLOSSARY QUERY
+		// CAN BE userId-SCOPED (A GUESSED bookId FROM ANOTHER USER MATCHES NOTHING).
+		userId: text('user_id')
+			.notNull()
+			.references(() => users.id, { onDelete: 'cascade' }),
 		scope: text('scope', { enum: ['global', 'book'] }).notNull(),
 		bookId: text('book_id').references(() => books.id, { onDelete: 'cascade' }),
 		// THE PAIR THIS TERM BELONGS TO — FILTERS THE EFFECTIVE GLOSSARY TO THE READING BOOK'S DIRECTION.
@@ -160,14 +176,15 @@ export const glossary = pgTable(
 			.$defaultFn(() => Date.now()),
 	},
 	(t) => [
-		// PARTIAL UNIQUE INDEXES — ONE GLOBAL source PER LANGUAGE PAIR, ONE source PER BOOK
+		// PARTIAL UNIQUE INDEXES — ONE GLOBAL source PER (USER, LANGUAGE PAIR), ONE source PER BOOK.
 		uniqueIndex('glossary_global_unq')
-			.on(t.sourceLang, t.targetLang, t.source)
+			.on(t.userId, t.sourceLang, t.targetLang, t.source)
 			.where(sql`${t.scope} = 'global'`),
 		uniqueIndex('glossary_book_unq')
 			.on(t.bookId, t.source)
 			.where(sql`${t.scope} = 'book'`),
 		index('glossary_book_idx').on(t.bookId),
+		index('glossary_user_idx').on(t.userId),
 	],
 );
 

@@ -4,15 +4,17 @@ import { error, json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 // IMPORTED MODULES
 import { DEFAULT_SOURCE_LANG, DEFAULT_TARGET_LANG } from '$lib/languages';
+import { requireUser } from '$lib/server/auth/user';
+import { assertBookOwner } from '$lib/server/books';
 import { parseGlossaryCsv } from '$lib/server/glossary-csv';
 import { bookPair, mergeGlossary } from '$lib/server/glossary';
-import { getBook } from '$lib/server/books';
 import { decodeTextBytes } from '$lib/server/charset';
 import { assertMaxSize, MB } from '$lib/server/uploads';
 
 // -- FUNCTIONS -- //
 
-export const POST: RequestHandler = async ({ request }) => {
+export const POST: RequestHandler = async ({ request, locals }) => {
+	const user = requireUser(locals);
 	const form = await request.formData().catch(() => null);
 	const file = form?.get('file');
 	const scope = String(form?.get('scope') ?? 'global');
@@ -21,8 +23,8 @@ export const POST: RequestHandler = async ({ request }) => {
 	assertMaxSize(file, 10 * MB);
 	if (scope !== 'global' && scope !== 'book') throw error(400, 'scope must be "global" or "book".');
 	if (scope === 'book' && !bookId) throw error(400, 'bookId is required for book scope.');
-	// VALIDATE THE TARGET BOOK EXISTS — OTHERWISE BOOK-SCOPE ROWS EITHER ORPHAN OR HIT AN FK 500.
-	if (scope === 'book' && bookId && !(await getBook(bookId))) throw error(404, 'Target book not found.');
+	// VALIDATE THE TARGET BOOK EXISTS *AND* IS OWNED BY THIS USER — OTHERWISE BOOK-SCOPE ROWS ORPHAN / LEAK.
+	if (scope === 'book' && bookId) await assertBookOwner(user.id, bookId);
 
 	// THE PAIR THESE ROWS BELONG TO: BOOK SCOPE INHERITS THE BOOK'S; GLOBAL USES THE FORM PAIR (DEFAULT).
 	const pair =
@@ -44,6 +46,6 @@ export const POST: RequestHandler = async ({ request }) => {
 	}
 	if (terms.length === 0) throw error(400, 'No valid rows found (need source,target columns).');
 
-	const result = await mergeGlossary(scope, bookId, terms, pair);
+	const result = await mergeGlossary(scope, bookId, terms, pair, user.id);
 	return json({ ...result, parsed: terms.length });
 };

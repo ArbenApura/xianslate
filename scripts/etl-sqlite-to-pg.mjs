@@ -18,6 +18,12 @@ if (!PG_URL) {
 	process.exit(1);
 }
 
+// PHASE 4 BACKFILL: THE OLD SINGLE-USER DATA HAS NO OWNER, SO ASSIGN IT ALL TO A SEED ADMIN. SET THESE TO
+// *YOUR* FIREBASE uid + EMAIL SO YOUR EXISTING LIBRARY BELONGS TO YOUR ACCOUNT AFTER YOU SIGN IN; OTHERWISE
+// A PLACEHOLDER ADMIN IS CREATED (RE-ASSIGN ITS uid LATER VIA SQL IF NEEDED).
+const SEED_ADMIN_UID = process.env.SEED_ADMIN_UID ?? 'seed-admin';
+const SEED_ADMIN_EMAIL = process.env.SEED_ADMIN_EMAIL ?? 'admin@example.com';
+
 // FK-DEPENDENCY ORDER — PARENTS BEFORE CHILDREN.
 const TABLES = ['books', 'chapters', 'translations', 'glossary', 'site_adapters', 'site_events', 'ai_usage'];
 // TABLES WHOSE bigserial id SEQUENCE MUST BE RESET AFTER EXPLICIT-id INSERTS (ELSE THE NEXT INSERT COLLIDES).
@@ -28,11 +34,21 @@ const lite = createClient({ url: SQLITE_URL });
 const pg = postgres(PG_URL, { max: 1 });
 
 try {
+	// 1) SEED ADMIN USER — books/glossary.user_id IS NOT NULL + FK users.id, SO THE OWNER MUST EXIST FIRST.
+	await pg`
+		insert into users (id, email, email_verified, name, role, created_at)
+		values (${SEED_ADMIN_UID}, ${SEED_ADMIN_EMAIL}, true, ${'Seed Admin'}, ${'admin'}, ${Date.now()})
+		on conflict (id) do nothing
+	`;
+	console.log(`users: seed admin ${SEED_ADMIN_UID}`);
+
+	// 2) COPY EVERY TABLE. books + glossary GET user_id = THE SEED ADMIN (THEY HAD NO OWNER ON SQLite).
 	for (const table of TABLES) {
 		const res = await lite.execute(`SELECT * FROM ${table}`);
 		const cols = res.columns;
 		// BUILD PLAIN OBJECTS KEYED BY THE SNAKE_CASE COLUMN NAMES (= THE POSTGRES COLUMN NAMES).
-		const rows = res.rows.map((r) => Object.fromEntries(cols.map((c, i) => [c, r[i]])));
+		let rows = res.rows.map((r) => Object.fromEntries(cols.map((c, i) => [c, r[i]])));
+		if (table === 'books' || table === 'glossary') rows = rows.map((row) => ({ ...row, user_id: SEED_ADMIN_UID }));
 		if (rows.length === 0) {
 			console.log(`${table}: 0 rows`);
 			continue;

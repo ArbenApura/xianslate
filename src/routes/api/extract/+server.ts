@@ -5,6 +5,8 @@ import { error, json } from '@sveltejs/kit';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 // IMPORTED MODULES
+import { requireUser } from '$lib/server/auth/user';
+import { assertChapterOwner } from '$lib/server/books';
 import { db } from '$lib/server/db';
 import { chapters } from '$lib/server/db/schema';
 import { resolveModel } from '$lib/server/deepseek';
@@ -21,12 +23,13 @@ const Body = z.object({ chapterId: z.number().int().positive(), model: z.string(
 
 // FREE LOOKUP (NO MODEL CALL): THE GLOSSARY TERMS THAT ACTUALLY APPEAR IN THIS CHAPTER — THE SAME SET THE
 // TRANSLATOR USES. POWERS THE "TERMS IN THIS CHAPTER" DIALOG FOR AN ALREADY-EXTRACTED CHAPTER.
-export const GET: RequestHandler = async ({ url }) => {
+export const GET: RequestHandler = async ({ url, locals }) => {
+	const user = requireUser(locals);
 	const chapterId = Number(url.searchParams.get('chapterId'));
 	if (!Number.isInteger(chapterId) || chapterId <= 0) throw error(400, 'A numeric chapterId is required.');
 
-	const [chapter] = await db.select().from(chapters).where(eq(chapters.id, chapterId)).limit(1);
-	if (!chapter) throw error(404, 'Chapter not found.');
+	// OWNERSHIP: assertChapterOwner 404s IF THE CHAPTER ISN'T IN THIS USER'S LIBRARY.
+	const chapter = await assertChapterOwner(user.id, chapterId);
 
 	// INCLUDE THE TITLE SO TERMS THAT APPEAR ONLY THERE ARE COUNTED AS "IN THIS CHAPTER" TOO
 	const body = stripLeadingTitle(chapter.contentSource, chapter.titleSource);
@@ -34,12 +37,12 @@ export const GET: RequestHandler = async ({ url }) => {
 	return json({ terms, extractedAt: chapter.extractedAt });
 };
 
-export const POST: RequestHandler = async ({ request }) => {
+export const POST: RequestHandler = async ({ request, locals }) => {
+	const user = requireUser(locals);
 	const parsed = Body.safeParse(await request.json().catch(() => null));
 	if (!parsed.success) throw error(400, 'A numeric chapterId is required.');
 
-	const [chapter] = await db.select().from(chapters).where(eq(chapters.id, parsed.data.chapterId)).limit(1);
-	if (!chapter) throw error(404, 'Chapter not found.');
+	const chapter = await assertChapterOwner(user.id, parsed.data.chapterId);
 
 	try {
 		// MATCH THE TRANSLATION PIPELINE: STRIP THE REDUNDANT LEADING TITLE LINE SO EXTRACTION SEES THE

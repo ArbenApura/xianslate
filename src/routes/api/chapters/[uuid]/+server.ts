@@ -3,7 +3,8 @@ import { error, json } from '@sveltejs/kit';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 // IMPORTED MODULES
-import { deleteChapter } from '$lib/server/books';
+import { requireUser } from '$lib/server/auth/user';
+import { deleteChapter, getOwnedChapterByUuid } from '$lib/server/books';
 import { db } from '$lib/server/db';
 import { chapters } from '$lib/server/db/schema';
 // IMPORTED TYPES
@@ -26,8 +27,10 @@ const PatchBody = z
 // -- FUNCTIONS -- //
 
 // RENAME OR EDIT A CHAPTER. CHANGING THE SOURCE CONTENT CLEARS THE STALE TRANSLATION SO IT RE-TRANSLATES.
-export const PATCH: RequestHandler = async ({ params, request }) => {
-	const [row] = await db.select().from(chapters).where(eq(chapters.uuid, params.uuid)).limit(1);
+export const PATCH: RequestHandler = async ({ params, request, locals }) => {
+	const user = requireUser(locals);
+	// OWNERSHIP: getOwnedChapterByUuid JOINS chapters→books AND FILTERS BY OWNER.
+	const row = await getOwnedChapterByUuid(user.id, params.uuid);
 	if (!row) throw error(404, 'Chapter not found.');
 
 	const parsed = PatchBody.safeParse(await request.json().catch(() => null));
@@ -47,7 +50,10 @@ export const PATCH: RequestHandler = async ({ params, request }) => {
 	return json({ ok: true });
 };
 
-export const DELETE: RequestHandler = async ({ params }) => {
+export const DELETE: RequestHandler = async ({ params, locals }) => {
+	const user = requireUser(locals);
+	// OWNERSHIP: ONLY DELETE A CHAPTER IN THE CALLER'S LIBRARY.
+	if (!(await getOwnedChapterByUuid(user.id, params.uuid))) throw error(404, 'Chapter not found.');
 	await deleteChapter(params.uuid);
 	return json({ ok: true });
 };

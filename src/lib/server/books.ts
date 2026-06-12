@@ -1,6 +1,7 @@
 // IMPORTED TYPES
 import type { ImportedBook, LangPair, SourceType } from '$lib/types';
 // IMPORTED DEP-MODULES
+import { error } from '@sveltejs/kit';
 import { randomUUID } from 'node:crypto';
 import { and, asc, desc, eq, gt, gte, inArray, lt, lte, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
@@ -72,12 +73,14 @@ type ChapterInsert = typeof chapters.$inferInsert;
 
 // RESOLVE A SCRAPED NEIGHBOR URL TO THE EXISTING CHAPTER IT POINTS AT (uuid + seq), OR null IF NOT FETCHED
 // YET. seq LETS US VERIFY THE LINK ACTUALLY MOVES IN THE INTENDED DIRECTION (chapterUrl IS GLOBALLY UNIQUE).
-async function chapterByUrl(url: string | null): Promise<{ uuid: string; seq: number } | null> {
+async function chapterByUrl(bookId: string, url: string | null): Promise<{ uuid: string; seq: number } | null> {
 	if (!url) return null;
+	// SCOPED TO THE BOOK: chapterUrl IS UNIQUE PER BOOK (Phase 4), SO NEIGHBOR RESOLUTION STAYS WITHIN THIS
+	// BOOK AND NEVER RESOLVES TO ANOTHER USER'S CHAPTER THAT HAPPENS TO SHARE THE SAME SOURCE URL.
 	const row = await db
 		.select({ uuid: chapters.uuid, seq: chapters.seq })
 		.from(chapters)
-		.where(eq(chapters.chapterUrl, url))
+		.where(and(eq(chapters.bookId, bookId), eq(chapters.chapterUrl, url)))
 		.limit(1);
 	return row[0]?.uuid ? { uuid: row[0].uuid, seq: row[0].seq } : null;
 }
@@ -102,8 +105,8 @@ async function toView(ch: Chapter, book: Book): Promise<ChapterView> {
 
 	if (book.sourceType === 'web') {
 		const [p, n, seqPrev, seqNext] = await Promise.all([
-			chapterByUrl(ch.prevUrl),
-			chapterByUrl(ch.nextUrl),
+			chapterByUrl(book.id, ch.prevUrl),
+			chapterByUrl(book.id, ch.nextUrl),
 			neighborUuidByOrder(book.id, ch.seq, 'prev'),
 			neighborUuidByOrder(book.id, ch.seq, 'next'),
 		]);
@@ -231,9 +234,11 @@ export async function setBookReadStatus(
 		.where(and(eq(chapters.bookId, bookId), lt(chapters.seq, anchor.seq)));
 }
 
-export async function listBooks(): Promise<BookSummary[]> {
-	const rows = await db.select().from(books).orderBy(desc(books.createdAt));
+export async function listBooks(userId: string): Promise<BookSummary[]> {
+	const rows = await db.select().from(books).where(eq(books.userId, userId)).orderBy(desc(books.createdAt));
 	if (rows.length === 0) return [];
+	// SCOPE EVERY CHAPTER AGGREGATE TO THIS USER'S BOOKS — NEVER COUNT/PEEK INTO ANOTHER USER'S CHAPTERS.
+	const bookIds = rows.map((b) => b.id);
 
 	// CHAPTER COUNT + TRANSLATED COUNT PER BOOK (PURE AGGREGATES — VALID UNDER GROUP BY IN POSTGRES).
 	const agg = await db
@@ -243,6 +248,7 @@ export async function listBooks(): Promise<BookSummary[]> {
 			translated: sql<number>`sum(case when ${chapters.contentTarget} is not null then 1 else 0 end)`,
 		})
 		.from(chapters)
+		.where(inArray(chapters.bookId, bookIds))
 		.groupBy(chapters.bookId);
 	const byBook = new Map(agg.map((a) => [a.bookId, a]));
 
@@ -252,6 +258,7 @@ export async function listBooks(): Promise<BookSummary[]> {
 	const firstRows = await db
 		.selectDistinctOn([chapters.bookId], { bookId: chapters.bookId, uuid: chapters.uuid })
 		.from(chapters)
+		.where(inArray(chapters.bookId, bookIds))
 		.orderBy(chapters.bookId, asc(chapters.seq));
 	const firstUuidByBook = new Map(firstRows.map((r) => [r.bookId, r.uuid]));
 
@@ -273,7 +280,7 @@ export async function listBooks(): Promise<BookSummary[]> {
 		.from(chapters)
 		.innerJoin(books, eq(books.id, chapters.bookId))
 		.innerJoin(rc, eq(rc.id, books.lastChapterId))
-		.where(lte(chapters.seq, rc.seq))
+		.where(and(lte(chapters.seq, rc.seq), eq(books.userId, userId)))
 		.groupBy(chapters.bookId);
 	const readByBook = new Map(readRows.map((r) => [r.bookId, Number(r.readN)]));
 
@@ -329,15 +336,60 @@ export async function refetchCover(
  * `recordResume` MUST ONLY BE SET ON A REAL PAGE VIEW (THE SSR LOAD) — NOT FROM PREFETCH / JSON
  * LOOKUPS, OTHERWISE BACKGROUND PREFETCH WOULD SILENTLY ADVANCE THE BOOK'S "RESUME" POINTER.
  */
-export async function getChapterView(uuid: string, recordResume = false): Promise<ChapterView | null> {
+export async function getChapterView(
+	uuid: string,
+	userId: string,
+	recordResume = false,
+): Promise<ChapterView | null> {
 	const row = await db.select().from(chapters).where(eq(chapters.uuid, uuid)).limit(1);
 	if (!row[0]) return null;
 	const book = await getBook(row[0].bookId);
-	if (!book) return null;
+	// OWNERSHIP: A CHAPTER IS ONLY VISIBLE TO THE USER WHO OWNS ITS BOOK — A GUESSED uuid FROM ANOTHER
+	// USER'S LIBRARY RETURNS null (404 AT THE ENDPOINT), NOT THEIR CONTENT.
+	if (!book || book.userId !== userId) return null;
 	if (recordResume) {
 		await db.update(books).set({ lastChapterId: row[0].id, lastReadAt: Date.now() }).where(eq(books.id, book.id));
 	}
 	return toView(row[0], book);
+}
+
+// -- OWNERSHIP HELPERS (Phase 4) -- //
+
+// THE BOOK IF OWNED BY userId, ELSE THROW 404 (NEVER REVEAL ANOTHER USER'S BOOK EXISTS). USE AT THE START
+// OF EVERY /api ENDPOINT THAT TAKES A bookId BEFORE TOUCHING THE BOOK / ITS CHAPTERS / ITS GLOSSARY.
+export async function assertBookOwner(userId: string, bookId: string): Promise<Book> {
+	const [book] = await db
+		.select()
+		.from(books)
+		.where(and(eq(books.id, bookId), eq(books.userId, userId)))
+		.limit(1);
+	if (!book) throw error(404, 'Book not found.');
+	return book;
+}
+
+// THE CHAPTER ROW IF IT (VIA ITS BOOK) IS OWNED BY userId, ELSE null. JOINS chapters→books SO A GUESSED
+// uuid OR INTEGER chapterId CAN'T REACH ANOTHER USER'S CHAPTER.
+export async function getOwnedChapterByUuid(userId: string, uuid: string): Promise<Chapter | null> {
+	const [row] = await db
+		.select({ chapter: chapters })
+		.from(chapters)
+		.innerJoin(books, eq(books.id, chapters.bookId))
+		.where(and(eq(chapters.uuid, uuid), eq(books.userId, userId)))
+		.limit(1);
+	return row?.chapter ?? null;
+}
+
+// THE CHAPTER ROW IF ITS BOOK IS OWNED BY userId, BY INTEGER chapterId — ELSE throw 404. STOPS A USER
+// ATTACHING TO ANOTHER USER'S TRANSLATION SSE STREAM BY GUESSING A NUMERIC chapterId.
+export async function assertChapterOwner(userId: string, chapterId: number): Promise<Chapter> {
+	const [row] = await db
+		.select({ chapter: chapters })
+		.from(chapters)
+		.innerJoin(books, eq(books.id, chapters.bookId))
+		.where(and(eq(chapters.id, chapterId), eq(books.userId, userId)))
+		.limit(1);
+	if (!row) throw error(404, 'Chapter not found.');
+	return row.chapter;
 }
 
 /**
@@ -350,21 +402,28 @@ export async function getChapterView(uuid: string, recordResume = false): Promis
  */
 export async function ingestWebChapter(
 	url: string,
+	userId: string,
 	anchor?: { fromChapterId: number; dir: 'prev' | 'next' },
 	targetBookId?: string,
 	pair: LangPair = DEFAULT_PAIR,
 ): Promise<ChapterView> {
 	// NOTE: THE RESUME POINTER (books.lastChapterId) IS RECORDED ONLY BY THE REAL CHAPTER PAGE VIEW,
 	// NOT HERE — SO PREFETCH/FETCH-AHEAD CAN PULL CHAPTERS WITHOUT MOVING WHERE THE READER LEFT OFF.
-	const existing = await db.select().from(chapters).where(eq(chapters.chapterUrl, url)).limit(1);
+	// SCOPED TO THIS USER: chapterUrl IS UNIQUE PER BOOK, SO LOOK FOR *THIS USER'S* COPY OF THE URL.
+	const existing = await db
+		.select({ chapter: chapters })
+		.from(chapters)
+		.innerJoin(books, eq(books.id, chapters.bookId))
+		.where(and(eq(chapters.chapterUrl, url), eq(books.userId, userId)))
+		.limit(1);
 	if (existing[0]) {
-		const book = await getBook(existing[0].bookId);
-		if (book) return toView(existing[0], book);
+		const book = await getBook(existing[0].chapter.bookId);
+		if (book) return toView(existing[0].chapter, book);
 	}
 
-	// RESOLVE THE DIRECTION BEFORE FETCHING: AN EXISTING TARGET BOOK DICTATES IT (SO A NEIGHBOUR INHERITS
-	// THE BOOK'S LANGUAGES); OTHERWISE USE THE CALLER'S PAIR. THE SOURCE LANG TUNES FETCH CHARSET/HEADERS.
-	const preBook = targetBookId ? await getBook(targetBookId) : null;
+	// AN EXPLICIT TARGET BOOK MUST EXIST *AND* BE OWNED BY THIS USER (404 OTHERWISE). AN EXISTING TARGET
+	// BOOK DICTATES THE DIRECTION (A NEIGHBOUR INHERITS ITS LANGUAGES); OTHERWISE USE THE CALLER'S PAIR.
+	const preBook = targetBookId ? await assertBookOwner(userId, targetBookId) : null;
 	const effPair: LangPair = preBook ? { sourceLang: preBook.sourceLang, targetLang: preBook.targetLang } : pair;
 
 	// 'auto' SOURCE → FETCH WITH NEUTRAL HEADERS (CHARSET STILL AUTO-DETECTS), THEN INFER THE SOURCE
@@ -373,7 +432,9 @@ export async function ingestWebChapter(
 	if (effPair.sourceLang === AUTO_SOURCE) {
 		effPair.sourceLang = detectSourceLang(`${parsed.titleSource}\n${parsed.contentSource}`);
 	}
-	const bookId = targetBookId ?? parsed.bookId ?? `web-${randomUUID()}`;
+	// PER-USER WEB BOOK id: PREFIX THE SITE'S DETERMINISTIC id WITH THE OWNER SO TWO USERS READING THE SAME
+	// NOVEL GET SEPARATE (PRIVATE) BOOKS RATHER THAN COLLIDING ON A SHARED books.id.
+	const bookId = targetBookId ?? `web-${userId}-${parsed.bookId ?? randomUUID()}`;
 
 	let book = await getBook(bookId);
 	if (!book) {
@@ -385,6 +446,7 @@ export async function ingestWebChapter(
 			.insert(books)
 			.values({
 				id: bookId,
+				userId,
 				sourceType: 'web',
 				sourceLang: effPair.sourceLang,
 				targetLang: effPair.targetLang,
@@ -413,7 +475,11 @@ export async function ingestWebChapter(
 	// AND COLLIDE ON (book_id, seq), OR (b) BOTH PASS THE chapterUrl EXISTENCE CHECK AND COLLIDE ON THE
 	// UNIQUE URL. THE LOSER OF A chapterUrl RACE RE-READS THE WINNER'S ROW INSTEAD OF THROWING A 500.
 	const inserted = await db.transaction(async (tx) => {
-		const dup = await tx.select().from(chapters).where(eq(chapters.chapterUrl, url)).limit(1);
+		const dup = await tx
+			.select()
+			.from(chapters)
+			.where(and(eq(chapters.bookId, bookId), eq(chapters.chapterUrl, url)))
+			.limit(1);
 		if (dup[0]) return dup[0];
 
 		let seq: number;
@@ -463,8 +529,12 @@ export async function ingestWebChapter(
 			.onConflictDoNothing()
 			.returning();
 		if (ins[0]) return ins[0];
-		// LOST THE chapterUrl RACE — RETURN THE ROW THE WINNER INSERTED.
-		const [row] = await tx.select().from(chapters).where(eq(chapters.chapterUrl, url)).limit(1);
+		// LOST THE (book_id, chapterUrl) RACE — RETURN THE ROW THE WINNER INSERTED (WITHIN THIS BOOK).
+		const [row] = await tx
+			.select()
+			.from(chapters)
+			.where(and(eq(chapters.bookId, bookId), eq(chapters.chapterUrl, url)))
+			.limit(1);
 		return row;
 	});
 
@@ -474,6 +544,7 @@ export async function ingestWebChapter(
 /** PERSIST AN EPUB/TXT IMPORT; RETURNS THE NEW BOOK id + FIRST CHAPTER uuid */
 export async function createImportedBook(
 	imported: ImportedBook,
+	userId: string,
 	sourceUrl: string | null = null,
 	pair: LangPair = DEFAULT_PAIR,
 ): Promise<{ bookId: string; firstChapterUuid: string }> {
@@ -494,6 +565,7 @@ export async function createImportedBook(
 	const firstChapterUuid = await db.transaction(async (tx) => {
 		await tx.insert(books).values({
 			id: bookId,
+			userId,
 			sourceType: imported.sourceType,
 			sourceLang,
 			targetLang: pair.targetLang,
@@ -536,6 +608,7 @@ async function batchInsertChapters(
 /** CREATE AN EMPTY, MANUALLY-MANAGED BOOK (NO CHAPTERS YET) — CURATE THE GLOSSARY FIRST */
 export async function createEmptyBook(input: {
 	title: string;
+	userId: string;
 	author?: string | null;
 	pair?: LangPair;
 }): Promise<{ id: string }> {
@@ -545,6 +618,7 @@ export async function createEmptyBook(input: {
 	const sourceLang = pair.sourceLang === AUTO_SOURCE ? DEFAULT_SOURCE_LANG : pair.sourceLang;
 	await db.insert(books).values({
 		id,
+		userId: input.userId,
 		sourceType: 'manual',
 		sourceLang,
 		targetLang: pair.targetLang,

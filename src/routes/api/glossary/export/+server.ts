@@ -5,12 +5,15 @@ import type { TermDraft } from '$lib/types';
 import type { RequestHandler } from './$types';
 // IMPORTED MODULES
 import { DEFAULT_SOURCE_LANG, DEFAULT_TARGET_LANG } from '$lib/languages';
+import { requireUser } from '$lib/server/auth/user';
+import { assertBookOwner } from '$lib/server/books';
 import { getEffectiveGlossary, getGlossary } from '$lib/server/glossary';
 import { toGlossaryCsv } from '$lib/server/glossary-csv';
 
 // -- FUNCTIONS -- //
 
-export const GET: RequestHandler = async ({ url }) => {
+export const GET: RequestHandler = async ({ url, locals }) => {
+	const user = requireUser(locals);
 	const scope = url.searchParams.get('scope') ?? 'global';
 	const bookId = url.searchParams.get('bookId');
 	// GLOBAL EXPORT IS SCOPED TO A LANGUAGE PAIR (DEFAULT zh-Hant → en).
@@ -23,15 +26,17 @@ export const GET: RequestHandler = async ({ url }) => {
 	let name: string;
 	if (scope === 'effective') {
 		if (!bookId) throw error(400, 'bookId is required for effective export.');
+		await assertBookOwner(user.id, bookId);
 		terms = await getEffectiveGlossary(bookId);
 		name = `glossary-effective-${bookId}.csv`;
 	} else if (scope === 'book') {
 		if (!bookId) throw error(400, 'bookId is required for book export.');
-		const rows = await getGlossary('book', bookId);
+		await assertBookOwner(user.id, bookId);
+		const rows = await getGlossary('book', bookId, user.id);
 		terms = rows.map((r) => ({ source: r.source, target: r.target, gender: r.gender, context: r.context, tags: r.tags }));
 		name = `glossary-book-${bookId}.csv`;
 	} else if (scope === 'global') {
-		const rows = await getGlossary('global', null, pair);
+		const rows = await getGlossary('global', null, user.id, pair);
 		terms = rows.map((r) => ({ source: r.source, target: r.target, gender: r.gender, context: r.context, tags: r.tags }));
 		name = 'glossary-global.csv';
 	} else {
