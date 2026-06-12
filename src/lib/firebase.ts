@@ -19,10 +19,20 @@ const config = {
 	appId: env.PUBLIC_FIREBASE_APP_ID,
 };
 
+// -- STATES -- //
+
+let auth: Auth | undefined;
+
 // -- FUNCTIONS -- //
 
-// THE FIREBASE WEB APP + Auth SINGLETONS (getApps() GUARDS HMR DOUBLE-INIT). initializeApp DOESN'T CONNECT
-// EAGERLY, SO IMPORTING THIS MODULE IS CHEAP; ACTUAL SIGN-IN CALLS HAPPEN IN browser-ONLY EVENT HANDLERS.
-export const firebaseApp: FirebaseApp = getApps().length ? getApp() : initializeApp(config);
-
-export const firebaseAuth: Auth = getAuth(firebaseApp);
+// THE FIREBASE Auth SINGLETON — INITIALISED LAZILY ON FIRST CALL (NOT AT IMPORT). getAuth() THROWS
+// `auth/invalid-api-key` WHEN THE CONFIG IS UNSET, SO IT MUST NOT RUN AT MODULE LOAD (THAT WOULD BREAK
+// `vite build`, WHICH IMPORTS THIS MODULE TRANSITIVELY VIA apiFetch). EVERY CALLER IS A browser-ONLY
+// EVENT HANDLER, SO THE LAZY INIT ONLY EVER RUNS IN THE BROWSER WITH A REAL CONFIG.
+export function firebaseAuth(): Auth {
+	if (!auth) {
+		const app: FirebaseApp = getApps().length ? getApp() : initializeApp(config);
+		auth = getAuth(app);
+	}
+	return auth;
+}

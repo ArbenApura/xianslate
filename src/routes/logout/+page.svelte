@@ -14,7 +14,7 @@
 	onMount(async () => {
 		if (!browser) return;
 		await apiFetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
-		await signOut(firebaseAuth).catch(() => {});
+		await signOut(firebaseAuth()).catch(() => {});
 		await goto('/login/');
 	});
 </script>

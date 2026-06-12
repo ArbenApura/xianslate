@@ -19,7 +19,7 @@
 	// -- FUNCTIONS -- //
 
 	async function resend() {
-		const user = firebaseAuth.currentUser;
+		const user = firebaseAuth().currentUser;
 		if (!user || busy) return;
 		busy = true;
 		try {
@@ -35,7 +35,7 @@
 	// -- LIFECYCLES -- //
 
 	onMount(() => {
-		if (browser) email = firebaseAuth.currentUser?.email ?? '';
+		if (browser) email = firebaseAuth().currentUser?.email ?? '';
 	});
 </script>
 

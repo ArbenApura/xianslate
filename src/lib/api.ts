@@ -1,8 +1,29 @@
-// THIN WRAPPER FOR CLIENT-INITIATED /api CALLS. ON WEB IT'S A SAME-ORIGIN fetch — THE httpOnly SESSION
-// COOKIE RIDES ALONG AUTOMATICALLY, SO NOTHING EXTRA IS NEEDED. PHASE 6 EXTENDS THIS FOR THE NATIVE
-// (CAPACITOR) BUILD: PREPEND PUBLIC_API_BASE AND ATTACH THE FIREBASE ID TOKEN AS `Authorization: Bearer`
-// (NO COOKIES CROSS-ORIGIN). ROUTING CLIENT FETCHES THROUGH HERE NOW MEANS THE NATIVE BEHAVIOUR IS A
-// ONE-FILE CHANGE LATER.
-export function apiFetch(path: string, init?: RequestInit): Promise<Response> {
-	return fetch(path, init);
+// IMPORTED ENVS ($env/...)
+import { env } from '$env/dynamic/public';
+// IMPORTED MODULES
+import { browser } from '$app/environment';
+import { firebaseAuth } from '$lib/firebase';
+
+// -- CONSTANTS -- //
+
+// THE HOSTED API ORIGIN FOR THE NATIVE (CAPACITOR) BUILD (e.g. https://xianslate.com). EMPTY ON WEB, WHERE
+// /api IS SAME-ORIGIN. TRAILING SLASH TRIMMED SO `${API_BASE}/api/x` IS CLEAN.
+const API_BASE = (env.PUBLIC_API_BASE ?? '').replace(/\/$/, '');
+
+// -- FUNCTIONS -- //
+
+// THE ONE CLIENT ENTRY POINT FOR /api CALLS.
+//  - WEB: a same-origin fetch — the httpOnly session cookie rides along automatically; nothing extra.
+//  - NATIVE (capacitor): prepend PUBLIC_API_BASE and attach the Firebase ID token as `Authorization: Bearer`
+//    (no cookies cross-origin). Streaming responses (the translate SSE) pass straight through.
+export async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
+	if (!__CAPACITOR_BUILD__) return fetch(path, init);
+
+	const url = /^https?:\/\//.test(path) ? path : `${API_BASE}${path}`;
+	const headers = new Headers(init.headers);
+	if (browser) {
+		const token = await firebaseAuth().currentUser?.getIdToken().catch(() => null);
+		if (token) headers.set('Authorization', `Bearer ${token}`);
+	}
+	return fetch(url, { ...init, headers });
 }

@@ -1,10 +1,11 @@
 <script lang="ts">
 	// IMPORTED DEP-MODULES
 	import { toast } from 'svelte-sonner';
-	import { createUserWithEmailAndPassword, GoogleAuthProvider, sendEmailVerification, signInWithPopup } from 'firebase/auth';
+	import { createUserWithEmailAndPassword, sendEmailVerification } from 'firebase/auth';
 	// IMPORTED MODULES
 	import { firebaseAuth } from '$lib/firebase';
 	import { authErrorMessage, establishSession } from '$lib/auth-client';
+	import { googleSignIn } from '$lib/native-auth';
 	import { cn } from '$lib/utils/cn';
 	import { ripple } from '$lib/actions/ripple';
 	// IMPORTED DEP-COMPONENTS
@@ -22,7 +23,7 @@
 		if (busy || !email.trim() || !password) return;
 		busy = true;
 		try {
-			const cred = await createUserWithEmailAndPassword(firebaseAuth, email.trim(), password);
+			const cred = await createUserWithEmailAndPassword(firebaseAuth(), email.trim(), password);
 			// FIRE THE VERIFICATION EMAIL, THEN START THE SESSION AND SEND THEM TO THE VERIFY NOTICE.
 			await sendEmailVerification(cred.user).catch(() => {});
 			await establishSession(cred, '/verify-email/');
@@ -37,7 +38,7 @@
 		if (busy) return;
 		busy = true;
 		try {
-			const cred = await signInWithPopup(firebaseAuth, new GoogleAuthProvider());
+			const cred = await googleSignIn();
 			await establishSession(cred, '/app/');
 		} catch (e) {
 			toast.error(authErrorMessage(e, 'Could not sign you up with Google.'));

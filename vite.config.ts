@@ -3,6 +3,11 @@ import { defineConfig } from 'vite';
 
 export default defineConfig({
 	plugins: [sveltekit()],
+	// COMPILE-TIME FLAG FOR THE CAPACITOR STATIC-SPA BUILD (BUILD_TARGET=capacitor). DRIVES ssr=false IN THE
+	// ROOT LAYOUT SO THE NATIVE BUNDLE IS A PURE CLIENT SPA AGAINST THE HOSTED /api. INLINED BY VITE.
+	define: {
+		__CAPACITOR_BUILD__: JSON.stringify(process.env.BUILD_TARGET === 'capacitor'),
+	},
 	// LIBSQL SHIPS NATIVE PREBUILT BINDINGS — KEEP IT EXTERNAL FROM SSR BUNDLING
 	ssr: {
 		external: ['@libsql/client', 'libsql'],

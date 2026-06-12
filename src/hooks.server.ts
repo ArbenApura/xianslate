@@ -19,18 +19,41 @@ import { THEME_BG, THEME_COOKIE } from '$lib/stores/settings';
 
 const DARK = ['dark', 'oled', 'contrast'];
 
-// -- LIFECYCLES -- //
-
-// CROSS-INSTANCE CACHE INVALIDATION: EVERY PROCESS (WEB + WORKER) LISTENS SO A GLOSSARY EDIT / SITE-ADAPTER
-// RE-LEARN ON ONE INSTANCE DROPS STALE CACHES EVERYWHERE. NO-OP WITHOUT REDIS.
-startCacheBus();
-
-// START THE BullMQ TRANSLATION WORKER IN THIS PROCESS WHEN RUN_TRANSLATE_WORKER=1 (THE Fly
-// `translation-worker` PROCESS GROUP, OR A SINGLE-INSTANCE BRIDGE). THE WEB PROCESS GROUP LEAVES IT UNSET
-// AND ONLY ENQUEUES. NO-OP WITHOUT REDIS (THEN THE APP USES THE IN-MEMORY SINGLE-INSTANCE PATH).
-if (hasRedis() && env.RUN_TRANSLATE_WORKER === '1') void startTranslateWorker();
+// ORIGINS ALLOWED TO CALL /api CROSS-ORIGIN WITH A BEARER TOKEN (THE CAPACITOR WEBVIEW). THE WEB APP IS
+// SAME-ORIGIN AND DOESN'T NEED CORS. EXTEND VIA CORS_ALLOWED_ORIGINS (COMMA-SEPARATED).
+const CORS_ORIGINS = new Set(
+	['https://localhost', 'capacitor://localhost', 'http://localhost', ...(env.CORS_ALLOWED_ORIGINS ?? '').split(',')]
+		.map((o) => o.trim())
+		.filter(Boolean),
+);
 
 // -- FUNCTIONS -- //
+
+function corsHeaders(origin: string): Record<string, string> {
+	return {
+		'access-control-allow-origin': origin,
+		'access-control-allow-methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
+		'access-control-allow-headers': 'authorization, content-type',
+		// NO access-control-allow-credentials — NATIVE USES A BEARER TOKEN, NOT COOKIES.
+		vary: 'origin',
+	};
+}
+
+// CROSS-ORIGIN /api ACCESS FOR THE CAPACITOR APP (BEARER, NO COOKIES). ANSWERS THE PREFLIGHT AND TAGS /api
+// RESPONSES WITH CORS HEADERS FOR ALLOWED ORIGINS. THE SAME-ORIGIN WEB APP SENDS NO Origin → UNAFFECTED.
+const corsHandle: Handle = async ({ event, resolve }) => {
+	const origin = event.request.headers.get('origin');
+	const isApi = event.url.pathname.startsWith('/api/');
+	const allowed = !!origin && CORS_ORIGINS.has(origin);
+
+	if (isApi && event.request.method === 'OPTIONS') {
+		return new Response(null, { status: 204, headers: allowed ? corsHeaders(origin) : {} });
+	}
+
+	const res = await resolve(event);
+	if (isApi && allowed) for (const [k, v] of Object.entries(corsHeaders(origin))) res.headers.set(k, v);
+	return res;
+};
 
 // RESOLVE THE AUTHENTICATED USER AND ENFORCE ROUTE GUARDS. ACCEPTS EITHER A BEARER ID TOKEN (NATIVE) OR THE
 // SAME-ORIGIN SESSION COOKIE (WEB). NO COOKIE + NO BEARER → ZERO AUTH WORK (ANONYMOUS ASSET/LANDING HITS
@@ -84,5 +107,16 @@ const themeHandle: Handle = async ({ event, resolve }) => {
 	});
 };
 
-// AUTH FIRST (CAN SHORT-CIRCUIT WITH 401/403/REDIRECT BEFORE ANY THEME WORK), THEN THEME (DOES THE RENDER).
-export const handle = sequence(authHandle, themeHandle);
+// -- LIFECYCLES -- //
+
+// CROSS-INSTANCE CACHE INVALIDATION: EVERY PROCESS (WEB + WORKER) LISTENS SO A GLOSSARY EDIT / SITE-ADAPTER
+// RE-LEARN ON ONE INSTANCE DROPS STALE CACHES EVERYWHERE. NO-OP WITHOUT REDIS.
+startCacheBus();
+
+// START THE BullMQ TRANSLATION WORKER IN THIS PROCESS WHEN RUN_TRANSLATE_WORKER=1 (THE Fly
+// `translation-worker` PROCESS GROUP, OR A SINGLE-INSTANCE BRIDGE). THE WEB PROCESS GROUP LEAVES IT UNSET
+// AND ONLY ENQUEUES. NO-OP WITHOUT REDIS (THEN THE APP USES THE IN-MEMORY SINGLE-INSTANCE PATH).
+if (hasRedis() && env.RUN_TRANSLATE_WORKER === '1') void startTranslateWorker();
+
+// CORS FIRST (PREFLIGHT SHORT-CIRCUIT), THEN AUTH (401/403/REDIRECT), THEN THEME (RENDER).
+export const handle = sequence(corsHandle, authHandle, themeHandle);

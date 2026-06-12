@@ -1,11 +1,12 @@
 <script lang="ts">
 	// IMPORTED DEP-MODULES
 	import { toast } from 'svelte-sonner';
-	import { GoogleAuthProvider, sendPasswordResetEmail, signInWithEmailAndPassword, signInWithPopup } from 'firebase/auth';
+	import { sendPasswordResetEmail, signInWithEmailAndPassword } from 'firebase/auth';
 	// IMPORTED MODULES
 	import { page } from '$app/stores';
 	import { firebaseAuth } from '$lib/firebase';
 	import { authErrorMessage, establishSession } from '$lib/auth-client';
+	import { googleSignIn } from '$lib/native-auth';
 	import { cn } from '$lib/utils/cn';
 	import { ripple } from '$lib/actions/ripple';
 	// IMPORTED DEP-COMPONENTS
@@ -30,7 +31,7 @@
 		if (busy || !email.trim() || !password) return;
 		busy = true;
 		try {
-			const cred = await signInWithEmailAndPassword(firebaseAuth, email.trim(), password);
+			const cred = await signInWithEmailAndPassword(firebaseAuth(), email.trim(), password);
 			await establishSession(cred, redirectTo);
 		} catch (e) {
 			toast.error(authErrorMessage(e, 'Could not sign you in.'));
@@ -43,7 +44,7 @@
 		if (busy) return;
 		busy = true;
 		try {
-			const cred = await signInWithPopup(firebaseAuth, new GoogleAuthProvider());
+			const cred = await googleSignIn();
 			await establishSession(cred, redirectTo);
 		} catch (e) {
 			toast.error(authErrorMessage(e, 'Could not sign you in with Google.'));
@@ -58,7 +59,7 @@
 			return;
 		}
 		try {
-			await sendPasswordResetEmail(firebaseAuth, email.trim());
+			await sendPasswordResetEmail(firebaseAuth(), email.trim());
 			toast.success('Password reset email sent — check your inbox.');
 		} catch (e) {
 			toast.error(authErrorMessage(e, 'Could not send the reset email.'));

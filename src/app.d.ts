@@ -2,6 +2,11 @@
 import type { AuthUser } from '$lib/server/auth/user';
 
 declare global {
+	// COMPILE-TIME FLAG INJECTED BY vite.config.ts `define` — true ONLY IN THE CAPACITOR STATIC-SPA BUILD.
+	// READ AS A GLOBAL BY +layout.ts PAGE OPTIONS (ssr) AND THE NATIVE-vs-WEB apiFetch BRANCH.
+	// eslint-disable-next-line no-var
+	var __CAPACITOR_BUILD__: boolean;
+
 	namespace App {
 		// interface Error {}
 		interface Locals {
