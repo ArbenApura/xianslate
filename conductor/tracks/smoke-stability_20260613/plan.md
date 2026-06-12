@@ -3,22 +3,24 @@
 **Track ID:** smoke-stability_20260613
 **Spec:** [spec.md](./spec.md)
 **Created:** 2026-06-13
-**Status:** [~] In Progress — **Phases 1, 2, 4, 5 PASS; Phase 3 API-half PASS.** Verified against the live
-Neon+Firebase stack (bridge mode) via a bearer-token harness. Remaining: Phase 3 browser bits, **Phase 6
-(Redis)**, **Phase 7 (Android)**, **Phase 8 (Fly/CF)**, Phase 9–10. **Findings:** FND-1 (malformed-uuid →
-500, minor — file a bug track).
+**Status:** [~] In Progress — **Phases 1, 2, 4, 5, 6 PASS; Phase 3 API-half PASS.** Verified against the live
+Neon + Firebase + Upstash stack. Remaining: Phase 3 browser bits, **Phase 7 (Android)**, **Phase 8 (Fly/CF)**,
+Phase 9–10. **Findings:** FND-1 (malformed-uuid → 500, minor); **FND-2 (BullMQ numeric-jobId → all queued
+translates 500) — FOUND + FIXED + re-verified**; FND-3 (queue glossary-edit-on-retry, candidate).
 
-> **⏳ Execution status (2026-06-13).** **Done (≈80 checks, 0 real failures):** **Phase 2** offline gate (5/5);
-> **Phase 1** Neon (Singapore `ap-southeast-1`, migrated+verified, Fly `sin`) + Firebase live, app boots in
-> bridge mode on `:3100`; **Phase 3** API-half (sign-up provider enabled, bearer→Neon upsert, all signed-out
-> + non-admin guards); **Phase 4** FULL (43/43 — tenancy isolation, SSE-hijack refused, glossary per-user,
-> budget 429, user-delete cascade); **Phase 5** pipeline (web-ingest + AI selector-learn, extract, fresh
-> translate, cached fast-path, ILIKE, progress, book + per-book-URL uniqueness). Total DeepSeek spend < $0.001.
-> **Still needs operator:** `🌐` browser bits (Phase 3 Google-OAuth popup / verification+reset emails, 5.2
-> EPUB/TXT import, 5.8 resume redirect); **Upstash/Redis** (Phase 6); **Fly/Cloudflare** (Phase 8); **Android
-> SDK** (Phase 7). A local server is running on `:3100` against Neon+Firebase for those browser checks.
-> **Open finding:** FND-1 (malformed-uuid → 500). **Test artifacts:** Firebase users `smoke-a`/`smoke-b` +
-> their Neon rows (delete at sign-off).
+> **⏳ Execution status (2026-06-13).** Done (~95 checks, against the live stack): **Phase 2** offline gate
+> (5/5); **Phase 1** Neon (Singapore `ap-southeast-1`, Fly `sin`) + Firebase live, boots clean; **Phase 3**
+> API-half (sign-up provider, bearer→Neon upsert, signed-out + non-admin guards); **Phase 4** FULL (43/43 —
+> tenancy isolation, SSE-hijack refused, glossary per-user, budget 429, user-delete cascade); **Phase 5**
+> pipeline (web-ingest + AI selector-learn, extract, translate, cached fast-path, ILIKE, progress, cascades,
+> per-book URL); **Phase 6** distributed queue (BullMQ enqueue+stream, duplicate-collapse, cross-instance
+> reconnect-replay, active-ids — all PASS after fixing **FND-2**). DeepSeek spend < $0.005 total.
+> **Out-of-band fix:** the operator reported garbled translations — root-caused to the flash model dropping
+> the `⟦¶⟧` marker → forced realign amplifying intermittent degeneration; fixed in `translate.ts` (commit
+> `27d56de`, verified 5/5 clean on the reported chapter). **Still needs operator:** `🌐` Phase 3 browser bits
+> (Google OAuth popup, verification/reset emails, EPUB/TXT import, resume redirect); **Fly/Cloudflare** (P8);
+> **Android SDK** (P7). **Open:** FND-1, FND-3. **Test artifacts:** Firebase users `smoke-a`/`smoke-b` + Neon
+> rows + Upstash keys (delete at sign-off).
 
 ## Overview
 
@@ -62,22 +64,22 @@ Stand up the external services and get the app to boot against them. Depends on:
         to 28 real lines). `/login/` renders both "Continue with Google" + email/password. Provider toggles
         (Email/Password, Google) confirmed enabled by the rendered UI; a real sign-in is exercised in Phase 3.
 -   [~] Task 1.3: Provision **Upstash Redis** → `REDIS_URL` (keep it handy; Phases 1–5 run with it
-        **unset** to test the bridge, Phase 6 turns it on). Set `DEEPSEEK_API_KEY`. **Observed:**
-        `DEEPSEEK_API_KEY` set ✓; **Upstash deliberately deferred to Phase 6** (Phases 1–5 require `REDIS_URL`
-        unset — confirmed unset, server booted in bridge mode with no worker/Redis startup).
+    **unset** to test the bridge, Phase 6 turns it on). Set `DEEPSEEK_API_KEY`. **Observed:**
+    `DEEPSEEK_API_KEY` set ✓; **Upstash deliberately deferred to Phase 6** (Phases 1–5 require `REDIS_URL`
+    unset — confirmed unset, server booted in bridge mode with no worker/Redis startup).
 -   [x] Task 1.4: ⌨ `npm run db:migrate` → applies `drizzle/0000…0002` to Neon with **no error**; tables
         `users, books, chapters, translations, glossary, site_adapters, site_events, ai_usage` exist with
         the partial unique indexes (`glossary_global_unq WHERE scope='global'`, `chapters_url_unq` on
         `(book_id, chapter_url)`). Inspect via Neon SQL editor or `drizzle-kit studio`. **Observed
         (2026-06-13):** "Migrations applied." (exit 0); 3 migrations recorded. Introspection confirmed all
         **8 tables** present; `chapters_url_unq ON (book_id, chapter_url)` ✓; `glossary_global_unq ON
-        (user_id, source_lang, target_lang, source) WHERE scope='global'` ✓; `glossary_book_unq … WHERE
-        scope='book'` ✓; `translations_cache_key_unq` ✓. **PASS.**
+(user_id, source_lang, target_lang, source) WHERE scope='global'` ✓; `glossary_book_unq … WHERE
+scope='book'` ✓; `translations_cache_key_unq` ✓. **PASS.**
 -   [~] Task 1.5: (Optional, only if migrating existing local data) ⌨
-        `SEED_ADMIN_UID=<your-firebase-uid> SEED_ADMIN_EMAIL=<you> node --env-file=.env scripts/etl-sqlite-to-pg.mjs`
-        → row counts printed per table; books/glossary get `user_id`=seed admin; identity sequences reset
-        (insert a new chapter afterward → no PK collision). **Observed:** **SKIPPED — clean start** (no legacy
-        local data to migrate; Neon began empty). Not required.
+    `SEED_ADMIN_UID=<your-firebase-uid> SEED_ADMIN_EMAIL=<you> node --env-file=.env scripts/etl-sqlite-to-pg.mjs`
+    → row counts printed per table; books/glossary get `user_id`=seed admin; identity sequences reset
+    (insert a new chapter afterward → no PK collision). **Observed:** **SKIPPED — clean start** (no legacy
+    local data to migrate; Neon began empty). Not required.
 -   [x] Task 1.6: ⌨ `npm run build && npm run preview` (or `npm run dev`) with `REDIS_URL` **unset** →
         server boots, **no top-level crash**, `console` shows no Redis/worker startup (bridge mode). 🌐
         `/` (landing, logo visible) and `/login/` render. **Observed (2026-06-13):** `npm run preview` on
@@ -135,11 +137,11 @@ Validate the Firebase handshake + route guards. Depends on: Phase 1.
 ### Tasks
 
 -   [~] Task 3.1: 🌐 `/signup/` → create user A (email/password). → verification email sent; lands on
-        `/verify-email/`; "Resend" works. **Observed:** account creation proven programmatically — Firebase
-        REST `accounts:signUp` for `smoke-a@`/`smoke-b@xianslate.test` returns 200 (so **Email/Password
-        provider IS enabled**); bearer token → `verifyIdToken` → `upsertUserFromToken` inserts the Neon
-        `users` row; `GET /api/books` → 200. **Browser-only remainder:** the `/signup/` UI, the verification
-        email + `/verify-email/` redirect, and "Resend" still need a human pass.
+    `/verify-email/`; "Resend" works. **Observed:** account creation proven programmatically — Firebase
+    REST `accounts:signUp` for `smoke-a@`/`smoke-b@xianslate.test` returns 200 (so **Email/Password
+    provider IS enabled**); bearer token → `verifyIdToken` → `upsertUserFromToken` inserts the Neon
+    `users` row; `GET /api/books` → 200. **Browser-only remainder:** the `/signup/` UI, the verification
+    email + `/verify-email/` redirect, and "Resend" still need a human pass.
 -   [ ] Task 3.2: 🌐 reload `/app/` → still signed in (session cookie persists). DevTools → a httpOnly
         `xianslate_session` cookie exists, `SameSite=Lax`, `Secure` in prod.
 -   [ ] Task 3.3: 🌐 `/logout/` → cookie cleared; `/app/` now redirects to `/login/?redirect=%2Fapp%2F`.
@@ -159,11 +161,11 @@ Validate the Firebase handshake + route guards. Depends on: Phase 1.
 ### Verification
 
 -   [~] Sign-up+verify, both sign-ins, logout, reset, and every guard behave as above. **Findings:** The
-        **API/guard half is PASS** (sign-up provider enabled, bearer auth → Neon upsert, all signed-out + the
-        non-admin `/api/admin` guard correct — Tasks 3.1 core + 3.6). The **browser-only half is pending a
-        human pass** (Tasks 3.2 session-cookie persistence, 3.3 logout, 3.4 email + Google sign-in via the UI,
-        3.5 password-reset email, 3.7 admin-page load) — these need the `/login` UI / Google OAuth popup /
-        Firebase emails an agent can't drive.
+    **API/guard half is PASS** (sign-up provider enabled, bearer auth → Neon upsert, all signed-out + the
+    non-admin `/api/admin` guard correct — Tasks 3.1 core + 3.6). The **browser-only half is pending a
+    human pass** (Tasks 3.2 session-cookie persistence, 3.3 logout, 3.4 email + Google sign-in via the UI,
+    3.5 password-reset email, 3.7 admin-page load) — these need the `/login` UI / Google OAuth popup /
+    Firebase emails an agent can't drive.
 
 ---
 
@@ -238,14 +240,14 @@ Depends on: Phase 3.
         `POST /api/fetch`) → chapter ingested; a per-user web book `web-<uid>-…` created; prev/next nav
         resolves; the site-adapter learns selectors once (`site_adapters` row; `ai_usage kind='map'`).
         **Observed (6/6):** `POST /api/fetch` of a live chapter (biquguo.com — host-generic AI-learned engine;
-        uukanshu is just the *named* first site) → **200**, title + non-trivial content + prev/next nav;
+        uukanshu is just the _named_ first site) → **200**, title + non-trivial content + prev/next nav;
         `site_adapters` row learned; **1** `ai_usage kind='map'`; per-user web book `web-<uid>-45` created.
 -   [~] Task 5.2: **Ingest — EPUB + TXT + manual:** `POST /api/import/epub`, `/api/import/txt`, and a
-        manual paste → books created with `userId`=A; chapters ordered by `seq`; `firstChapterUuid` correct
-        (the `selectDistinctOn` path). **Observed:** **manual** path PASS (`POST /api/books` + manual chapter,
-        used throughout Phases 4–5). **EPUB/TXT** are `multipart/form-data` → SvelteKit CSRF correctly **403s**
-        a headless client with no same-origin `Origin` (undici drops the `Origin` header), so they need a
-        **browser** pass (or a same-origin client) — deferred, not an app defect.
+    manual paste → books created with `userId`=A; chapters ordered by `seq`; `firstChapterUuid` correct
+    (the `selectDistinctOn` path). **Observed:** **manual** path PASS (`POST /api/books` + manual chapter,
+    used throughout Phases 4–5). **EPUB/TXT** are `multipart/form-data` → SvelteKit CSRF correctly **403s**
+    a headless client with no same-origin `Origin` (undici drops the `Origin` header), so they need a
+    **browser** pass (or a same-origin client) — deferred, not an app defect.
 -   [x] Task 5.3: **Extract:** `POST /api/extract {chapterId}` → terms found + added (additive only,
         never overwrites); `extractedAt` set; `GET /api/extract?chapterId=` lists the chapter's terms.
         **Observed:** `{added:3, extracted:3}` (林凡→Lin Fan masc, 修真者→cultivator, …); `extracted_at` set;
@@ -255,15 +257,15 @@ Depends on: Phase 3.
         row written; `ai_usage` rows for extract/title. **Observed:** SSE `prepare,meta,title,delta,done`;
         `done{cached:false, matched:3, costUsd 0.0000581}`; DB: `content_target` (215 ch) + `translated_at`
         set, **1** `translations` row (stable cacheKey `9390d849…`), `ai_usage` extract+title. (The chapter
-        *view* JSON omits `translatedAt` — DB confirms it IS set.)
+        _view_ JSON omits `translatedAt` — DB confirms it IS set.)
 -   [x] Task 5.5: **Cached fast-path:** reload the same chapter → served instantly, **no new billing**
         (`done` with `cached:true`, `usage.costUsd≈0`); reading is free. **Observed:** after a server restart
         (clears the in-memory job), re-translate → `done{cached:true, costUsd:0}`; `GET /api/chapter` serves
         stored `contentTarget` with no gate. (Within one process the 2nd call replays the completed job — also
         $0.)
 -   [~] Task 5.6: **Self-heal:** (if you have a legacy/edited chapter) confirm source-residue **repair**
-        and paragraph **realign** fire on read and persist the cleaned text (`ai_usage kind='repair'`).
-        **Not tested:** needs a crafted legacy/source-residue chapter; deferred (low priority).
+    and paragraph **realign** fire on read and persist the cleaned text (`ai_usage kind='repair'`).
+    **Not tested:** needs a crafted legacy/source-residue chapter; deferred (low priority).
 -   [x] Task 5.7: **Glossary search is case-insensitive (ILIKE):** add a term with a mixed-case source;
         `GET /api/glossary?scope=…&q=<lowercase>` → matches it (proves `ILIKE`, not PG case-sensitive `LIKE`).
         **Observed:** term `MixedCaseTerm`; `?q=mixedcaseterm` → matched. ✓
