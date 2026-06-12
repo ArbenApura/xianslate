@@ -9,7 +9,16 @@ const config: CapacitorConfig = {
 	appName: 'Xianslate',
 	webDir: 'build-capacitor',
 	server: {
+		// https (NOT a custom scheme) — custom schemes break routing as of WebView 117 (Capacitor docs).
 		androidScheme: 'https',
+	},
+	plugins: {
+		// @capacitor-firebase/authentication: native Google sign-in (skipNativeAuth=false syncs the web SDK
+		// via the returned credential — see src/lib/native-auth.ts).
+		FirebaseAuthentication: {
+			skipNativeAuth: false,
+			providers: ['google.com'],
+		},
 	},
 };
 

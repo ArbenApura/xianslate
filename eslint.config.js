@@ -34,6 +34,17 @@ export default [
 	},
 	{
 		// build*/.svelte-kit/package/drizzle: generated. tools/: ad-hoc dev/test scripts (some gitignored).
-		ignores: ['build/', 'build-capacitor/', '.svelte-kit/', 'package/', 'drizzle/', 'tools/', '*.db'],
+		// android/ios: native Capacitor projects (incl. the synced web bundle) — not our lint domain.
+		ignores: [
+			'build/',
+			'build-capacitor/',
+			'.svelte-kit/',
+			'package/',
+			'drizzle/',
+			'tools/',
+			'android/',
+			'ios/',
+			'*.db',
+		],
 	},
 ];

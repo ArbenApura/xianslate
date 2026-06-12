@@ -111,19 +111,32 @@ images. Routing `uploads.ts` / the cover endpoint to R2 (S3 API) is a follow-up;
 
 ## 6. Android (Phases 6 + 7)
 
+Capacitor **8.4.0** (latest stable). The native project (`android/`, appId `com.xianslate.app`) is
+**already generated and committed** (`capacitor.config.ts` uses `androidScheme: 'https'`, the
+documented best practice). Capacitor's own `android/.gitignore` excludes build outputs,
+`local.properties`, and the synced web assets. You only need to (re)sync the web build and build the APK
+— which needs the **Android SDK / Android Studio** (not installed on the dev box):
+
 ```bash
 # point the native app at the hosted API:
 echo 'PUBLIC_API_BASE=https://xianslate.com' >> .env
-BUILD_TARGET=capacitor npm run build        # -> build-capacitor/ (static SPA, /app only)
-npx cap add android                          # first time (needs Android SDK)
-npx cap sync
-npx cap run android                          # emulator/device
+BUILD_TARGET=capacitor npm run build         # -> build-capacitor/ (static SPA, /app only)
+npx cap sync android                         # copies the web build + plugins into android/
+npx cap run android                          # emulator/device  (or: npx cap open android)
 ```
 
-Native Google sign-in uses `@capacitor-firebase/authentication` — register `google-services.json`
+Native Google sign-in (`@capacitor-firebase/authentication`, configured in `capacitor.config.ts`)
+needs the Firebase **Android app** wired into the native project — a one-time native setup per the
+plugin docs:
 
--   the SHA-1/256 fingerprints in the Firebase Android app. The APK boots to `/app/`; `/` and `/admin`
-    are unreachable in-app.
+1. Add the **`google-services.json`** (from the Firebase Android app) to `android/app/`.
+2. In `android/build.gradle` add `classpath 'com.google.gms:google-services:4.4.2'`; in
+   `android/app/build.gradle` add `apply plugin: 'com.google.gms.google-services'` + the Firebase
+   Auth BoM. (Do this only once you have `google-services.json` — applying the plugin without it
+   fails the Gradle build.)
+3. Register the app's **SHA-1/256** fingerprints in the Firebase console.
+
+The APK boots to `/app/`; `/` and `/admin` are unreachable in-app.
 
 ---
 

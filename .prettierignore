@@ -1,0 +1,4 @@
+# Prettier already honours .gitignore (build/, build-capacitor/, .svelte-kit/, etc.). These are the
+# committed native/generated trees that should NOT be reformatted to our web code style.
+android/
+ios/
