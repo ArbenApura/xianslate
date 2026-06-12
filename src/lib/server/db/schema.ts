@@ -1,12 +1,40 @@
 // IMPORTED DEP-MODULES
 import { sql } from 'drizzle-orm';
-import { bigint, bigserial, doublePrecision, index, integer, pgTable, text, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
+import {
+	bigint,
+	bigserial,
+	boolean,
+	doublePrecision,
+	index,
+	integer,
+	pgTable,
+	text,
+	uniqueIndex,
+	uuid,
+} from 'drizzle-orm/pg-core';
 
 // -- CONSTANTS -- //
 
 // MS-EPOCH TIMESTAMP COLUMN — bigint(mode:'number') KEEPS Date.now() + ALL STAT MATH UNCHANGED (NOT
 // timestamptz). HELPER SO EVERY created_at/updated_at/…At COLUMN STAYS A PLAIN JS number.
 const epochMs = (name: string) => bigint(name, { mode: 'number' });
+
+// A REGISTERED ACCOUNT, KEYED BY THE FIREBASE uid. UPSERTED ON FIRST VERIFIED SIGN-IN (Phase 3). FIREBASE
+// OWNS PASSWORDS / OAUTH / EMAIL-VERIFICATION — THIS TABLE JUST MIRRORS THE PROFILE + THE APP role SO THE
+// SERVER STAYS AUTHORITATIVE FOR OWNERSHIP (Phase 4) AND ADMIN ACCESS.
+export const users = pgTable('users', {
+	id: text('id').primaryKey(),
+	email: text('email').notNull().unique(),
+	emailVerified: boolean('email_verified').notNull().default(false),
+	name: text('name'),
+	avatarUrl: text('avatar_url'),
+	role: text('role', { enum: ['user', 'admin'] })
+		.notNull()
+		.default('user'),
+	createdAt: epochMs('created_at')
+		.notNull()
+		.$defaultFn(() => Date.now()),
+});
 
 // A LIBRARY ENTRY FROM ANY SOURCE. id IS THE SITE BOOK id FOR web, A GENERATED id FOR epub/txt.
 export const books = pgTable('books', {
@@ -228,6 +256,8 @@ export const aiUsage = pgTable(
 );
 
 // -- TYPES -- //
+
+export type User = typeof users.$inferSelect;
 
 export type Book = typeof books.$inferSelect;
 
