@@ -2,16 +2,20 @@
 	"id": "smoke-stability_20260613",
 	"title": "Smoke Test & Stability Verification — Scale-Up",
 	"type": "chore",
-	"status": "pending",
+	"status": "in_progress",
 	"created": "2026-06-13T09:00:00Z",
-	"updated": "2026-06-13T09:00:00Z",
-	"current_phase": 1,
+	"updated": "2026-06-13T12:00:00Z",
+	"current_phase": 2,
+	"current_task": "2.5",
+	"blocked": true,
+	"blocked_reason": "Phases 1, 3-10 require provisioned external services (Neon, Firebase, Upstash/Redis, Fly, Cloudflare, Android SDK) and human-driven browser/OAuth/Android/deploy steps. The .env still holds legacy local config (DATABASE_URL=file:./xianslate.db). Only Phase 2 (offline regression gate, Depends on: none) was runnable and PASSED. Resume from Phase 1 after an operator provisions per DEPLOYMENT.md.",
 	"phases": {
 		"total": 10,
-		"completed": 0
+		"completed": 1
 	},
 	"tasks": {
 		"total": 66,
-		"completed": 0
-	}
+		"completed": 5
+	},
+	"commits": []
 }
