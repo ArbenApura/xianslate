@@ -1,7 +1,7 @@
+// IMPORTED DEP-TYPES
+import type { RequestHandler } from './$types';
 // IMPORTED DEP-MODULES
 import { error, json } from '@sveltejs/kit';
-// IMPORTED TYPES
-import type { RequestHandler } from './$types';
 // IMPORTED MODULES
 import { getChapterView } from '$lib/server/books';
 
@@ -10,7 +10,11 @@ import { getChapterView } from '$lib/server/books';
 export const GET: RequestHandler = async ({ url }) => {
 	const uuid = url.searchParams.get('id') ?? url.searchParams.get('uuid');
 	if (!uuid) throw error(400, 'A chapter id is required.');
-	const view = await getChapterView(uuid);
+	// resume=1 IS SET ONLY BY THE READER PAGE LOAD (A REAL VIEW), SO IT ADVANCES THE BOOK'S RESUME POINTER
+	// (books.lastChapterId / lastReadAt). PREFETCH + JSON LOOKUPS OMIT IT SO THEY NEVER MOVE WHERE THE
+	// READER LEFT OFF — THIS PRESERVES THE SIDE-EFFECT THAT USED TO LIVE IN THE READER'S SERVER LOAD.
+	const recordResume = url.searchParams.get('resume') === '1';
+	const view = await getChapterView(uuid, recordResume);
 	if (!view) throw error(404, 'Chapter not found.');
 	return json(view);
 };
