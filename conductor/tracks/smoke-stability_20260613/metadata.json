@@ -4,21 +4,22 @@
 	"type": "chore",
 	"status": "in_progress",
 	"created": "2026-06-13T09:00:00Z",
-	"updated": "2026-06-13T13:30:00Z",
-	"current_phase": 1,
-	"current_task": "1.4",
-	"blocked": true,
-	"blocked_reason": "Neon provisioned (Singapore ap-southeast-1) + migrated (Tasks 1.1, 1.4 PASS); Fly region set to sin. Phase 2 offline gate PASS. Still blocked on operator: Firebase (Tasks 1.2/1.6 boot + Phase 3 auth), Upstash/Redis (Phase 6, intentionally unset for 1-5 bridge), Fly/Cloudflare (Phase 8), Android SDK (Phase 7). Browser/OAuth/Android/deploy steps need a human; the agent can drive the curl/API-level tasks in Phases 1/4/5 once Firebase is in .env. Next: provision Firebase, fill PUBLIC_FIREBASE_* + FIREBASE_SERVICE_ACCOUNT.",
+	"updated": "2026-06-13T14:30:00Z",
+	"current_phase": 3,
+	"current_task": "3.1",
+	"blocked": false,
+	"blocked_reason": "Phase 1 (Neon + Firebase) + Phase 2 (offline gate) PASS; app boots in bridge mode. Agent can now drive Phases 3-5 via Firebase REST auth + bearer tokens (no browser). Still needs operator for: browser Google-OAuth/verification-reset emails (Phase 3), Upstash/Redis (Phase 6), Fly/Cloudflare (Phase 8), Android SDK (Phase 7).",
 	"phases": {
 		"total": 10,
-		"completed": 1
+		"completed": 2
 	},
 	"tasks": {
 		"total": 66,
-		"completed": 7
+		"completed": 10
 	},
 	"commits": [
-		"e66a386: chore(smoke-stability): Phase 2 offline regression gate PASS",
-		"4e9c91f: chore(deploy): set Fly primary_region to sin (Singapore) for Asia"
+		"e66a386: Phase 2 offline regression gate PASS",
+		"4e9c91f: Fly region -> sin (Singapore)",
+		"d35a99b: Neon provisioned + migrated (Tasks 1.1, 1.4)"
 	]
 }

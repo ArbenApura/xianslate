@@ -3,19 +3,18 @@
 **Track ID:** smoke-stability_20260613
 **Spec:** [spec.md](./spec.md)
 **Created:** 2026-06-13
-**Status:** [~] In Progress — **Phase 2 PASS**; **Neon provisioned + migrated (Tasks 1.1, 1.4 PASS)**;
-remaining Phase 1 + Phases 3–10 pending Firebase/Redis/Fly/Cloudflare/Android (see banner).
+**Status:** [~] In Progress — **Phase 1 + Phase 2 PASS** (Neon + Firebase live, app boots). Driving Phases
+3–5 via the API next; Phases 6–8 + browser/Android/deploy steps await Redis/Fly/Cloudflare/Android.
 
-> **⏳ Execution status (2026-06-13).** **Done so far:** Phase 2 offline regression gate (all 5 green) and
-> **Neon** — project `xianslate` in Singapore `ap-southeast-1`, `.env` populated with the three pooled/direct
-> URLs, `db:migrate` applied cleanly, schema introspection-verified (8 tables + the partial unique indexes).
-> Fly region set to `sin` to match. **Still blocked on operator provisioning:** **Firebase** (Tasks 1.2, 3.x
-> — web config + service account; the app boot/`/login` render in Task 1.6 needs this), **Upstash/Redis**
-> (Phase 6; intentionally unset for Phases 1–5 bridge testing), **Fly/Cloudflare** (Phase 8), **Android SDK**
-> (Phase 7). The `🌐` browser/OAuth, `📱` Android, and deploy steps still need a human; the `⌨` API-level
-> tasks in Phases 1/4/5 I can drive once **Firebase** is in `.env`. Tasks stay `[ ]` until their observed
-> result matches. **Next step:** provision **Firebase** → fill `PUBLIC_FIREBASE_*` + `FIREBASE_SERVICE_ACCOUNT`
-> in `.env.scaffold` → I activate it and continue Phase 1 (boot) + Phase 3 (auth).
+> **⏳ Execution status (2026-06-13).** **Done:** **Phase 2** offline gate (all 5 green); **Phase 1** —
+> **Neon** live in Singapore `ap-southeast-1` (migrated + schema-verified, Fly region `sin`) and **Firebase**
+> live (project `xianslate`; web config + service account in `.env`, round-trip verified). App boots in
+> **bridge mode** (`REDIS_URL` unset) on `:3100`: `/` + `/login/` render, and the signed-out guards already
+> pass (`/app/`,`/admin/`→303 `/login`; `/api/books`→401). **Next (agent-drivable, no browser):** Phase 3
+> (auth via Firebase REST + bearer), Phase 4 (tenancy — the security-critical, all-`⌨` phase), Phase 5
+> (pipeline; translates cost a little DeepSeek credit). **Still needs operator:** `🌐` browser Google-OAuth
+> popup / verification + reset emails (Phase 3), **Upstash/Redis** (Phase 6), **Fly/Cloudflare** (Phase 8),
+> **Android SDK** (Phase 7). Tasks stay `[ ]` until their observed result matches.
 
 ## Overview
 
@@ -51,10 +50,17 @@ Stand up the external services and get the app to boot against them. Depends on:
         `4e9c91f`). All three URLs set in `.env` (pooled `-pooler` host → `DATABASE_URL`/`_REPLICA`, direct
         host → `_DIRECT`); dropped the `&channel_binding=require` flag (unsupported by postgres.js; TLS still
         on via `sslmode=require`).
--   [ ] Task 1.2: Provision **Firebase**: enable Email/Password + Google; copy the web config →
+-   [x] Task 1.2: Provision **Firebase**: enable Email/Password + Google; copy the web config →
         `PUBLIC_FIREBASE_*`; download a service-account key → `FIREBASE_SERVICE_ACCOUNT` (single-line JSON).
--   [ ] Task 1.3: Provision **Upstash Redis** → `REDIS_URL` (keep it handy; Phases 1–5 run with it
-        **unset** to test the bridge, Phase 6 turns it on). Set `DEEPSEEK_API_KEY`.
+        **Observed (2026-06-13):** project `xianslate`; 4 `PUBLIC_FIREBASE_*` + the service-account JSON
+        written to `.env` (flattened to single-line via `JSON.stringify(JSON.parse(file))`, stored unquoted).
+        Round-trips through node `--env-file` → `JSON.parse` exactly as `admin.ts` does (private_key decodes
+        to 28 real lines). `/login/` renders both "Continue with Google" + email/password. Provider toggles
+        (Email/Password, Google) confirmed enabled by the rendered UI; a real sign-in is exercised in Phase 3.
+-   [~] Task 1.3: Provision **Upstash Redis** → `REDIS_URL` (keep it handy; Phases 1–5 run with it
+        **unset** to test the bridge, Phase 6 turns it on). Set `DEEPSEEK_API_KEY`. **Observed:**
+        `DEEPSEEK_API_KEY` set ✓; **Upstash deliberately deferred to Phase 6** (Phases 1–5 require `REDIS_URL`
+        unset — confirmed unset, server booted in bridge mode with no worker/Redis startup).
 -   [x] Task 1.4: ⌨ `npm run db:migrate` → applies `drizzle/0000…0002` to Neon with **no error**; tables
         `users, books, chapters, translations, glossary, site_adapters, site_events, ai_usage` exist with
         the partial unique indexes (`glossary_global_unq WHERE scope='global'`, `chapters_url_unq` on
@@ -63,18 +69,25 @@ Stand up the external services and get the app to boot against them. Depends on:
         **8 tables** present; `chapters_url_unq ON (book_id, chapter_url)` ✓; `glossary_global_unq ON
         (user_id, source_lang, target_lang, source) WHERE scope='global'` ✓; `glossary_book_unq … WHERE
         scope='book'` ✓; `translations_cache_key_unq` ✓. **PASS.**
--   [ ] Task 1.5: (Optional, only if migrating existing local data) ⌨
+-   [~] Task 1.5: (Optional, only if migrating existing local data) ⌨
         `SEED_ADMIN_UID=<your-firebase-uid> SEED_ADMIN_EMAIL=<you> node --env-file=.env scripts/etl-sqlite-to-pg.mjs`
         → row counts printed per table; books/glossary get `user_id`=seed admin; identity sequences reset
-        (insert a new chapter afterward → no PK collision).
--   [ ] Task 1.6: ⌨ `npm run build && npm run preview` (or `npm run dev`) with `REDIS_URL` **unset** →
+        (insert a new chapter afterward → no PK collision). **Observed:** **SKIPPED — clean start** (no legacy
+        local data to migrate; Neon began empty). Not required.
+-   [x] Task 1.6: ⌨ `npm run build && npm run preview` (or `npm run dev`) with `REDIS_URL` **unset** →
         server boots, **no top-level crash**, `console` shows no Redis/worker startup (bridge mode). 🌐
-        `/` (landing, logo visible) and `/login/` render.
+        `/` (landing, logo visible) and `/login/` render. **Observed (2026-06-13):** `npm run preview` on
+        `:3100` → "Listening on http://0.0.0.0:3100", clean log (no Redis/worker line, no crash through all
+        probes). `GET /` → 200 (brand "Xianslate" + logo + favicon); `GET /login/` → 200 (Google + email/pw UI).
 
 ### Verification
 
--   [ ] App boots against Neon; landing + `/login/` load; `db:migrate` schema matches `schema.ts`.
--   [ ] **Findings:** _(record anything unexpected here)_
+-   [x] App boots against Neon; landing + `/login/` load; `db:migrate` schema matches `schema.ts`. **PASS.**
+-   [x] **Findings:** Phase 1 green except by-design deferrals: **Upstash/Redis** held for Phase 6 (1–5 run
+        the bridge), optional **ETL skipped** (clean start). Bonus — the signed-out half of **Task 3.6** is
+        already proven via curl: `GET /app/`→303 `/login/?redirect=%2Fapp%2F`; `GET /admin/`→303
+        `/login/?redirect=%2Fadmin%2F`; `GET /api/books`→401 `{"message":"Sign in required."}`. Note: local
+        `:3000` was already occupied (a dev server), so preview ran on `:3100`.
 
 ---
 
