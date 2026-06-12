@@ -2,9 +2,12 @@
 import type { RequestHandler } from './$types';
 // IMPORTED DEP-MODULES
 import { error, json } from '@sveltejs/kit';
+import { asc, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 // IMPORTED MODULES
 import { appendChapters, getBook, ingestWebChapter, reorderChapters } from '$lib/server/books';
+import { db } from '$lib/server/db';
+import { books, chapters } from '$lib/server/db/schema';
 import { isFetchError } from '$lib/server/fetch-error';
 
 // -- CONSTANTS -- //
@@ -21,6 +24,50 @@ const AddBody = z.discriminatedUnion('kind', [
 const ReorderBody = z.object({ order: z.array(z.string()).min(1) });
 
 // -- FUNCTIONS -- //
+
+// THE BOOK + ITS ORDERED CHAPTERS FOR THE MANAGE VIEW (AND THE RESUME REDIRECT). REPLACES THE FORMER
+// manage/+page.server.ts SO /app RENDERS THE SAME UNDER WEB SSR AND AS A STATIC SPA. hasTarget IS COMPUTED
+// IN SQL SO WE NEVER TRANSFER EVERY CHAPTER'S FULL contentTarget JUST TO NULL-TEST IT.
+export const GET: RequestHandler = async ({ params }) => {
+	const [book] = await db.select().from(books).where(eq(books.id, params.id)).limit(1);
+	if (!book) throw error(404, 'Book not found.');
+
+	const list = await db
+		.select({
+			id: chapters.id,
+			uuid: chapters.uuid,
+			seq: chapters.seq,
+			titleSource: chapters.titleSource,
+			titleTarget: chapters.titleTarget,
+			hasTarget: sql<number>`(${chapters.contentTarget} is not null)`,
+			readProgress: chapters.readProgress,
+		})
+		.from(chapters)
+		.where(eq(chapters.bookId, book.id))
+		.orderBy(asc(chapters.seq));
+
+	// THE RESUME POINT (BOOK'S lastChapterId) → ITS uuid, SO THE LISTING MARKS READING PROGRESS LIKE THE READER
+	const resumeUuid = list.find((c) => c.id === book.lastChapterId)?.uuid ?? null;
+
+	return json({
+		book: {
+			id: book.id,
+			title: book.titleTarget ?? book.title,
+			sourceType: book.sourceType,
+			sourceLang: book.sourceLang,
+			targetLang: book.targetLang,
+		},
+		resumeUuid,
+		chapters: list.map((c) => ({
+			uuid: c.uuid!,
+			seq: c.seq,
+			titleSource: c.titleSource,
+			titleTarget: c.titleTarget,
+			hasTarget: !!c.hasTarget,
+			readProgress: c.readProgress ?? 0,
+		})),
+	});
+};
 
 // ADD CHAPTER(S) INTO AN EXISTING BOOK (PASTE OR SINGLE-URL FETCH). APPENDS AT THE TAIL.
 export const POST: RequestHandler = async ({ params, request }) => {
