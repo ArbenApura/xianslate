@@ -3,17 +3,19 @@
 **Track ID:** smoke-stability_20260613
 **Spec:** [spec.md](./spec.md)
 **Created:** 2026-06-13
-**Status:** [~] In Progress — **Phase 2 (offline regression gate) PASS**; Phases 1, 3–10 **BLOCKED** on operator
-provisioning (see banner below).
+**Status:** [~] In Progress — **Phase 2 PASS**; **Neon provisioned + migrated (Tasks 1.1, 1.4 PASS)**;
+remaining Phase 1 + Phases 3–10 pending Firebase/Redis/Fly/Cloudflare/Android (see banner).
 
-> **⛔ Execution status (2026-06-13).** Only **Phase 2** (`Depends on: none`) is runnable in the current
-> environment. The `.env` still holds the **legacy local config** (`DATABASE_URL=file:./xianslate.db`, a
-> DeepSeek key) — **no** scale-up services are provisioned: no Neon (`DATABASE_URL_DIRECT`/`_REPLICA`), no
-> Firebase, no Upstash/Redis, no Fly, no Cloudflare, no Android SDK config. Phases 1 & 3–8 need those live
-> services **plus** human-driven browser/OAuth/Android/deploy steps an agent cannot perform; Phase 9 needs
-> the live stack; Phase 10 depends on their results. These tasks stay `[ ]` (a task is `[x]` only when its
-> observed result matches) until an operator provisions per `DEPLOYMENT.md` and re-runs. **Next step:**
-> operator provisions Neon/Firebase/Upstash → fills `.env` → resume from Phase 1.
+> **⏳ Execution status (2026-06-13).** **Done so far:** Phase 2 offline regression gate (all 5 green) and
+> **Neon** — project `xianslate` in Singapore `ap-southeast-1`, `.env` populated with the three pooled/direct
+> URLs, `db:migrate` applied cleanly, schema introspection-verified (8 tables + the partial unique indexes).
+> Fly region set to `sin` to match. **Still blocked on operator provisioning:** **Firebase** (Tasks 1.2, 3.x
+> — web config + service account; the app boot/`/login` render in Task 1.6 needs this), **Upstash/Redis**
+> (Phase 6; intentionally unset for Phases 1–5 bridge testing), **Fly/Cloudflare** (Phase 8), **Android SDK**
+> (Phase 7). The `🌐` browser/OAuth, `📱` Android, and deploy steps still need a human; the `⌨` API-level
+> tasks in Phases 1/4/5 I can drive once **Firebase** is in `.env`. Tasks stay `[ ]` until their observed
+> result matches. **Next step:** provision **Firebase** → fill `PUBLIC_FIREBASE_*` + `FIREBASE_SERVICE_ACCOUNT`
+> in `.env.scaffold` → I activate it and continue Phase 1 (boot) + Phase 3 (auth).
 
 ## Overview
 
@@ -42,17 +44,25 @@ Stand up the external services and get the app to boot against them. Depends on:
 
 ### Tasks
 
--   [ ] Task 1.1: Provision **Neon** (Launch; min CU 0.25–0.5; autoscale on; scale-to-zero OFF; PITR 7d;
+-   [x] Task 1.1: Provision **Neon** (Launch; min CU 0.25–0.5; autoscale on; scale-to-zero OFF; PITR 7d;
         region = Fly region). Put the three URLs in `.env` (`DATABASE_URL` pooled, `DATABASE_URL_DIRECT`,
-        `DATABASE_URL_REPLICA`) per `.env.example`.
+        `DATABASE_URL_REPLICA`) per `.env.example`. **Observed (2026-06-13):** Neon project `xianslate` in
+        **Singapore `ap-southeast-1`** (`ep-orange-meadow-aouq9zki`); Fly region aligned to `sin` (commit
+        `4e9c91f`). All three URLs set in `.env` (pooled `-pooler` host → `DATABASE_URL`/`_REPLICA`, direct
+        host → `_DIRECT`); dropped the `&channel_binding=require` flag (unsupported by postgres.js; TLS still
+        on via `sslmode=require`).
 -   [ ] Task 1.2: Provision **Firebase**: enable Email/Password + Google; copy the web config →
         `PUBLIC_FIREBASE_*`; download a service-account key → `FIREBASE_SERVICE_ACCOUNT` (single-line JSON).
 -   [ ] Task 1.3: Provision **Upstash Redis** → `REDIS_URL` (keep it handy; Phases 1–5 run with it
         **unset** to test the bridge, Phase 6 turns it on). Set `DEEPSEEK_API_KEY`.
--   [ ] Task 1.4: ⌨ `npm run db:migrate` → applies `drizzle/0000…0002` to Neon with **no error**; tables
+-   [x] Task 1.4: ⌨ `npm run db:migrate` → applies `drizzle/0000…0002` to Neon with **no error**; tables
         `users, books, chapters, translations, glossary, site_adapters, site_events, ai_usage` exist with
         the partial unique indexes (`glossary_global_unq WHERE scope='global'`, `chapters_url_unq` on
-        `(book_id, chapter_url)`). Inspect via Neon SQL editor or `drizzle-kit studio`.
+        `(book_id, chapter_url)`). Inspect via Neon SQL editor or `drizzle-kit studio`. **Observed
+        (2026-06-13):** "Migrations applied." (exit 0); 3 migrations recorded. Introspection confirmed all
+        **8 tables** present; `chapters_url_unq ON (book_id, chapter_url)` ✓; `glossary_global_unq ON
+        (user_id, source_lang, target_lang, source) WHERE scope='global'` ✓; `glossary_book_unq … WHERE
+        scope='book'` ✓; `translations_cache_key_unq` ✓. **PASS.**
 -   [ ] Task 1.5: (Optional, only if migrating existing local data) ⌨
         `SEED_ADMIN_UID=<your-firebase-uid> SEED_ADMIN_EMAIL=<you> node --env-file=.env scripts/etl-sqlite-to-pg.mjs`
         → row counts printed per table; books/glossary get `user_id`=seed admin; identity sequences reset
