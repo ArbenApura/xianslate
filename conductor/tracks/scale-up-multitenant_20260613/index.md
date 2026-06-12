@@ -16,7 +16,7 @@
 ## Phase Map
 
 -   [x] Phase 0 — Completed prerequisites (`/app` refactor + DeepSeek pricing fix)
--   [ ] Phase 1 — Decouple `/app` from server loads (SPA-ready)
+-   [x] Phase 1 — Decouple `/app` from server loads (SPA-ready)
 -   [ ] Phase 2 — PostgreSQL on Neon migration
 -   [ ] Phase 3 — Firebase authentication
 -   [ ] Phase 4 — Per-user multi-tenancy & cost guardrail

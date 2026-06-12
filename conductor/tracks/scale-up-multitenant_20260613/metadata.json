@@ -4,13 +4,14 @@
 	"type": "feature",
 	"status": "in_progress",
 	"created": "2026-06-13T00:00:00Z",
-	"updated": "2026-06-13T01:00:00Z",
+	"updated": "2026-06-13T02:00:00Z",
+	"current_phase": 2,
 	"phases": {
 		"total": 8,
-		"completed": 1
+		"completed": 2
 	},
 	"tasks": {
 		"total": 52,
-		"completed": 2
+		"completed": 7
 	}
 }

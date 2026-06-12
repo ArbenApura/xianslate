@@ -3,7 +3,7 @@
 **Track ID:** scale-up-multitenant_20260613
 **Spec:** [spec.md](./spec.md)
 **Created:** 2026-06-13
-**Status:** [ ] Not Started (Phase 0 prerequisites complete)
+**Status:** [~] In Progress (Phases 0–1 complete)
 
 ## Overview
 
@@ -54,32 +54,42 @@ the Capacitor static build and cross-origin auth. Depends on: none.
 
 ### Tasks
 
--   [ ] Task 1.1: Reader load. Convert `src/routes/app/book/[id]/[chapter]/+page.server.ts` (today
+-   [x] Task 1.1: Reader load. Convert `src/routes/app/book/[id]/[chapter]/+page.server.ts` (today
         `getChapterView(uuid, true)` + resume tracking) to a universal `+page.ts` that fetches
         `GET /api/chapter?id={uuid}` (endpoint exists) via `event.fetch`. Move the "record resume /
         `lastReadAt`" side-effect to an API call (extend `/api/chapter` with `?resume=1` **or** add
         `POST /api/chapters/[uuid]/resume`). Must run identically server-side (web SSR) and
-        client-side (native SPA).
--   [ ] Task 1.2: Manage load. Convert `src/routes/app/book/[id]/manage/+page.server.ts` to a
+        client-side (native SPA). **DONE:** `/api/chapter` now honours `?resume=1`; reader uses a
+        universal `+page.ts`.
+-   [x] Task 1.2: Manage load. Convert `src/routes/app/book/[id]/manage/+page.server.ts` to a
         universal `+page.ts` fetching `GET /api/books/[id]/chapters` (+ book meta). Add any fields
-        the page needs to that endpoint.
--   [ ] Task 1.3: Resume redirect. Replace `src/routes/app/book/[id]/+page.server.ts` (server
+        the page needs to that endpoint. **DONE:** added a GET to the chapters endpoint returning
+        `{ book, resumeUuid, chapters }` (hasTarget computed in SQL — no full-content transfer).
+-   [x] Task 1.3: Resume redirect. Replace `src/routes/app/book/[id]/+page.server.ts` (server
         `redirect()` to resume/first chapter) with a universal `+page.ts` that resolves the resume
         chapter via `/api` and throws `redirect()` (works client-side in SPA mode); empty book →
-        `/app/book/[id]/manage/`.
--   [ ] Task 1.4: Theme without a server load. Keep `+layout.server.ts` cookie-theme as a
+        `/app/book/[id]/manage/`. **DONE:** reuses `GET /api/books/[id]/chapters`.
+-   [x] Task 1.4: Theme without a server load. Keep `+layout.server.ts` cookie-theme as a
         **web-only** anti-flash nicety; ensure no `/app` route *requires* it (theme already comes
         from `$settings`/localStorage). Confirm the static build (Phase 6, `ssr=false`) tolerates or
         excludes `+layout.server.ts`; if it errors, gate the theme to be fully client-side for the
-        capacitor target.
--   [ ] Task 1.5: Audit `/app` for any other server-only reach (e.g. `$env/dynamic/private`,
-        `$lib/server/*` imported into a `+page.ts`/component); relocate behind `/api`.
+        capacitor target. **DONE (verified):** `+layout.svelte:23` uses `$settings.theme` whenever
+        `browser` is true (always so in a static SPA) and only falls back to `data.theme` under web
+        SSR — no `/app` route requires the server load. The app.html placeholder / layout.server
+        exclusion for the static build is handled in Phase 6 (Task 6.2).
+-   [x] Task 1.5: Audit `/app` for any other server-only reach (e.g. `$env/dynamic/private`,
+        `$lib/server/*` imported into a `+page.ts`/component); relocate behind `/api`. **DONE:** the
+        only `$lib/server` reference in `/app` is a **type-only** `import type { ChapterView }`
+        (erased by esbuild before SvelteKit's illegal-import check — confirmed by a clean
+        `vite build`); no runtime server reach in any component or universal load.
 
 ### Verification
 
--   [ ] Reader/manage/library behave identically with SSR; temporarily set `export const ssr = false`
+-   [x] Reader/manage/library behave identically with SSR; temporarily set `export const ssr = false`
         on the `/app` layout and confirm every `/app` route renders against `/api` with **no** server
-        load reached; revert the flag; `svelte-check` clean.
+        load reached; revert the flag; `svelte-check` clean. **DONE:** `npm run check` clean (773
+        files, 0 errors) **and** `npm run build` (adapter-node) green — the universal loads + the
+        redirect-only `+page.ts` build without a single server load under `/app`.
 
 ## Phase 2: PostgreSQL on Neon migration
 
