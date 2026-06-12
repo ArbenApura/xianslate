@@ -2,17 +2,33 @@
 import type { Handle } from '@sveltejs/kit';
 // IMPORTED TYPES
 import type { AuthUser } from '$lib/server/auth/user';
+// IMPORTED ENVS ($env/...)
+import { env } from '$env/dynamic/private';
 // IMPORTED DEP-MODULES
 import { json, redirect } from '@sveltejs/kit';
 import { sequence } from '@sveltejs/kit/hooks';
 // IMPORTED MODULES
 import { upsertUserFromToken } from '$lib/server/auth/user';
 import { SESSION_COOKIE, verifyIdToken, verifySessionCookie } from '$lib/server/auth/verify';
+import { startCacheBus } from '$lib/server/cache-bus';
+import { startTranslateWorker } from '$lib/server/queue/worker';
+import { hasRedis } from '$lib/server/redis';
 import { THEME_BG, THEME_COOKIE } from '$lib/stores/settings';
 
 // -- CONSTANTS -- //
 
 const DARK = ['dark', 'oled', 'contrast'];
+
+// -- LIFECYCLES -- //
+
+// CROSS-INSTANCE CACHE INVALIDATION: EVERY PROCESS (WEB + WORKER) LISTENS SO A GLOSSARY EDIT / SITE-ADAPTER
+// RE-LEARN ON ONE INSTANCE DROPS STALE CACHES EVERYWHERE. NO-OP WITHOUT REDIS.
+startCacheBus();
+
+// START THE BullMQ TRANSLATION WORKER IN THIS PROCESS WHEN RUN_TRANSLATE_WORKER=1 (THE Fly
+// `translation-worker` PROCESS GROUP, OR A SINGLE-INSTANCE BRIDGE). THE WEB PROCESS GROUP LEAVES IT UNSET
+// AND ONLY ENQUEUES. NO-OP WITHOUT REDIS (THEN THE APP USES THE IN-MEMORY SINGLE-INSTANCE PATH).
+if (hasRedis() && env.RUN_TRANSLATE_WORKER === '1') void startTranslateWorker();
 
 // -- FUNCTIONS -- //
 

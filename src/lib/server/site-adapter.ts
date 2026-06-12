@@ -27,6 +27,7 @@ import { db } from './db';
 import { siteAdapters } from './db/schema';
 import { computeUsage, deepseek, MODEL, hasApiKey, queued, thinkingParam, withRetry } from './deepseek';
 import { FetchError } from './fetch-error';
+import { publishInvalidation } from './redis';
 import {
 	applyAdapter,
 	buildImageDigest,
@@ -53,6 +54,12 @@ const cache = new Map<string, SelectorMap>();
 const inflight = new Map<string, Promise<SelectorMap>>();
 
 // -- FUNCTIONS -- //
+
+// LOCAL-ONLY CACHE DROP FOR A HOST — CALLED BY THE CACHE BUS WHEN ANOTHER INSTANCE RE-LEARNS THIS HOST, SO
+// THIS INSTANCE RE-READS THE FRESH MAP FROM THE DB ON THE NEXT FETCH (NO STALE SELECTORS ACROSS INSTANCES).
+export function invalidateAdapterLocal(host: string): void {
+	cache.delete(host);
+}
 
 function hostOf(url: string): string {
 	try {
@@ -175,6 +182,8 @@ async function persistAdapter(host: string, m: SelectorMap, sampleUrl: string): 
 			},
 		});
 	cache.set(host, m);
+	// TELL OTHER INSTANCES TO DROP THEIR (NOW STALE) CACHED MAP FOR THIS HOST (NO-OP WITHOUT REDIS).
+	void publishInvalidation({ kind: 'site-adapter', host });
 }
 
 // (RE)LEARN A HOST'S SELECTORS, VALIDATE AGAINST THIS PAGE (UP TO TWO ATTEMPTS WITH FEEDBACK), AND
