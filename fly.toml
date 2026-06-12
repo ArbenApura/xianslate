@@ -8,7 +8,7 @@
 #                   PUBLIC_FIREBASE_PROJECT_ID=... PUBLIC_FIREBASE_APP_ID=...
 
 app = "xianslate"
-primary_region = "iad" # CHANGE TO YOUR NEON REGION (e.g. iad / sjc / fra).
+primary_region = "sin" # Singapore — MUST match the Neon region (ap-southeast-1). East-Asia alt: nrt / ap-northeast-1.
 
 [build]
 dockerfile = "Dockerfile"

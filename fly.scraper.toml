@@ -8,7 +8,7 @@
 #   fly deploy -c fly.scraper.toml --dockerfile Dockerfile.scraper
 
 app = "xianslate-scraper"
-primary_region = "iad" # MATCH App A / Neon.
+primary_region = "sin" # MATCH App A / Neon (Singapore = ap-southeast-1).
 
 [build]
 dockerfile = "Dockerfile.scraper"
