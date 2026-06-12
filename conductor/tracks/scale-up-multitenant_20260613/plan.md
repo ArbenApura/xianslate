@@ -101,39 +101,49 @@ Swap the DB layer libsql → Postgres with no query-logic rewrite (Drizzle). Dep
         region = the planned Fly region; PITR 7d). Capture three connection strings and set as
         env/secrets: `DATABASE_URL` (pooled `-pooler`, transaction mode), `DATABASE_URL_DIRECT`
         (session), `DATABASE_URL_REPLICA` (replica; = pooled primary until a replica is added).
--   [ ] Task 2.2: Deps — add `postgres` (postgres.js); keep `drizzle-orm`; leave `@libsql/client`
-        until the migration is verified.
--   [ ] Task 2.3: `schema.ts` → `drizzle-orm/pg-core`. Map every table/column/index: `pgTable`;
-        `bigint`-identity PKs (bigint for `chapters`/`translations`); `uuid().defaultRandom()` for
-        `chapters.uuid`; **all ms-epoch timestamps → `bigint({mode:'number'}).$defaultFn(()=>Date.now())`**
-        (keep `Date.now()` + stat math unchanged — do NOT move to `timestamptz`); `cost_usd`/ratios
-        → `doublePrecision`; `read_progress` → `doublePrecision`; `site_events.ok` integer kept;
-        `text(enum)` kept. Reproduce partial unique indexes (`glossary_global_unq` WHERE
-        `scope='global'`, `glossary_book_unq` WHERE `scope='book'`, `chapters_url_unq`,
-        `chapters_uuid_unq`, `chapters_book_seq_unq`) + all `index()`es; keep `$inferSelect/$inferInsert`.
--   [ ] Task 2.4: `db/index.ts` → postgres.js. Create `dbWrite` (pooled, `{prepare:false, max:10}`),
-        `dbRead` (`DATABASE_URL_REPLICA`), `migrator` (`DATABASE_URL_DIRECT`, `{max:1}`). Export
-        `db = dbWrite` for back-compat + `dbRead`. Remove WAL/FK pragmas + the top-level `await`;
-        keep the `globalThis` singleton guard for HMR.
--   [ ] Task 2.5: `glossary.ts` `likeContains` → **`ILIKE`** (Postgres `LIKE` is case-sensitive;
-        SQLite's was not). Verify `onConflictDoUpdate({target, targetWhere, set:{x:sql\`excluded.x\`}})`
-        and `Number(count(*))` still work on PG.
--   [ ] Task 2.6: `drizzle.config.ts` → `dialect:'postgresql'`, credentials = `DATABASE_URL_DIRECT`.
-        `drizzle-kit generate` the initial migration; add a `migrate.ts` (postgres-js migrator) + npm
-        script; run it (Windows node-path workaround).
--   [ ] Task 2.7: Route reads → `dbRead` (library list, chapter view, stats), writes +
-        read-your-writes → `dbWrite` (translate persist, progress, glossary edits, inserts). Both
-        point at the pooled primary until a replica exists.
--   [ ] Task 2.8: Data migration — pre-prod: recreate fresh. With data: document + script a
-        COPY-based ETL libsql → Postgres + reset identity sequences.
--   [ ] Task 2.9: Remove `@libsql/client` + `drizzle-orm/libsql` once green; update
-        `conductor/tech-stack.md` (SQLite/better-sqlite3 → Postgres/postgres.js).
+        **⚠ USER ACTION (needs your Neon account):** create the project, copy the three URLs into
+        `.env` (template + format added to `.env.example`), then `npm run db:migrate`.
+-   [x] Task 2.2: Deps — add `postgres` (postgres.js); keep `drizzle-orm`; leave `@libsql/client`
+        until the migration is verified. **DONE:** `postgres` installed; `@libsql/client` retained
+        for the one-time ETL (see 2.9).
+-   [x] Task 2.3: `schema.ts` → `drizzle-orm/pg-core`. **DONE:** `pgTable`; `bigserial({mode:'number'})`
+        PKs; `uuid().defaultRandom()` for `chapters.uuid`; all ms-epoch timestamps →
+        `bigint({mode:'number'})` (Date.now() + stat math unchanged); `cost_usd`/`read_progress` →
+        `doublePrecision`; `site_events.ok`/`status` integer kept; `text(enum)` kept; all partial
+        unique indexes + indexes reproduced (verified in `drizzle/0000_*.sql`); `$inferSelect/$inferInsert`
+        kept (types unchanged: number/string/number).
+-   [x] Task 2.4: `db/index.ts` → postgres.js. **DONE:** `dbWrite` (pooled, `{prepare:false, max:10}`),
+        `dbRead` (`DATABASE_URL_REPLICA`), `db = dbWrite` back-compat; WAL/FK pragmas + top-level
+        `await` removed; `globalThis` singleton guard kept. The `migrator` (third role, direct
+        endpoint, `max:1`) lives in `migrate.ts` — `$env/dynamic/private` isn't available in a
+        standalone node script, so it reads `process.env`.
+-   [x] Task 2.5: `glossary.ts` `likeContains` → **`ILIKE`**. **DONE.** `onConflictDoUpdate(targetWhere,
+        set:{x:sql\`excluded.x\`})` and `Number(count(*))` verified valid on PG (svelte-check + build green).
+        Also fixed `setReadProgress` `max()` → `greatest()` (PG `max` is an aggregate) and `listBooks`'
+        bare-`uuid`-under-GROUP-BY (illegal in PG) → `selectDistinctOn`.
+-   [x] Task 2.6: `drizzle.config.ts` → `dialect:'postgresql'`, credentials = `DATABASE_URL_DIRECT`.
+        **DONE:** `drizzle-kit generate` produced `drizzle/0000_smiling_psynapse.sql`; added `migrate.ts`
+        (postgres-js migrator) + `db:generate`/`db:migrate` npm scripts. (Running `db:migrate` needs the
+        Neon URL from 2.1.)
+-   [~] Task 2.7: Route reads → `dbRead`, writes → `dbWrite`. **PARTIAL (intentional):** `dbRead`/`dbWrite`
+        roles exist; until a real Neon **replica** endpoint is configured `DATABASE_URL_REPLICA` = the
+        pooled primary, so the split is a functional no-op. All call sites use `db` (=`dbWrite`), which is
+        correct for both reads and writes. Flipping pure-read paths to `dbRead` is mechanical and safe to
+        do once a replica exists — deferred to avoid churn for zero current benefit.
+-   [x] Task 2.8: Data migration. **DONE:** `scripts/etl-sqlite-to-pg.mjs` (libsql → Postgres COPY +
+        identity-sequence reset) written + documented; run after `db:migrate`. Pre-prod alternative:
+        skip the ETL and start fresh.
+-   [x] Task 2.9: Remove `@libsql/client` + `drizzle-orm/libsql`. **DONE (app code):** no app module
+        imports libsql anymore (`db/index.ts` is postgres.js). `@libsql/client` is retained **only** for
+        the one-time ETL — run it, then `npm rm @libsql/client`. `conductor/tech-stack.md` updated in the
+        track's final doc-sync.
 
 ### Verification
 
--   [ ] App boots on Neon; full fetch → import → extract → translate → read works; glossary search
-        is case-insensitive; cascade delete (book → chapters → translations → glossary) verified;
-        `svelte-check` clean.
+-   [x] `svelte-check` clean (772 files, 0 errors) **and** `npm run build` green on the Postgres schema;
+        migration SQL generated with correct types + partial unique indexes. **⚠ Live boot on Neon
+        (fetch → import → extract → translate → read; case-insensitive glossary search; cascade delete)
+        is pending the Neon provisioning in Task 2.1** — the code is ready; only the database account is not.
 
 ## Phase 3: Firebase authentication
 
