@@ -10,7 +10,9 @@ import { eventsChannel, hasRedis, newBullConnection, readBufferedEvents, redisSu
 
 // -- TYPES -- //
 
-// THE BullMQ JOB PAYLOAD. job id = String(chapterId) SO DUPLICATE REQUESTS COLLAPSE (NO DOUBLE-BILLING).
+// THE BullMQ JOB PAYLOAD. job id = `ch-${chapterId}` SO DUPLICATE REQUESTS COLLAPSE (NO DOUBLE-BILLING).
+// NOTE: BullMQ REJECTS A PURELY-NUMERIC CUSTOM jobId (`parseInt(id) === id` → "Custom Id cannot be integers"),
+// SO THE id MUST CARRY A NON-NUMERIC, COLON-FREE PREFIX; THE chapterId IS RECOVERED FROM job.data, NOT job.id.
 export type TranslateJobData = {
 	chapterId: number;
 	force: boolean;
@@ -56,12 +58,12 @@ function ensureDispatcher(sub: RedisClient): void {
 	});
 }
 
-// ENQUEUE A TRANSLATION (PRODUCER). jobId = chapterId COLLAPSES DUPLICATES; A force RUN REMOVES ANY PRIOR
-// WAITING/COMPLETED JOB FIRST SO IT ACTUALLY RE-RUNS. removeOn* KEEPS REDIS TIDY.
+// ENQUEUE A TRANSLATION (PRODUCER). jobId = `ch-${chapterId}` COLLAPSES DUPLICATES; A force RUN REMOVES ANY
+// PRIOR WAITING/COMPLETED JOB FIRST SO IT ACTUALLY RE-RUNS. removeOn* KEEPS REDIS TIDY.
 export async function enqueueTranslation(data: TranslateJobData): Promise<void> {
 	const q = translateQueue();
 	if (!q) return;
-	const jobId = String(data.chapterId);
+	const jobId = `ch-${data.chapterId}`;
 	if (data.force) await q.remove(jobId).catch(() => {});
 	await q.add(TRANSLATE_QUEUE, data, {
 		jobId,
@@ -132,5 +134,6 @@ export async function activeChapterIds(): Promise<number[]> {
 	const q = translateQueue();
 	if (!q) return [];
 	const jobs = await q.getJobs(['active', 'waiting', 'delayed']);
-	return jobs.map((j) => Number(j?.id)).filter((n) => Number.isInteger(n));
+	// RECOVER chapterId FROM job.data (NOT job.id — THE id IS NOW THE NON-NUMERIC `ch-<id>`).
+	return jobs.map((j) => j?.data?.chapterId).filter((n): n is number => Number.isInteger(n));
 }
