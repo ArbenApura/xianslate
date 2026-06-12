@@ -15,6 +15,7 @@ Navigation hub for project context.
 
 -   [x] [xianslate-mvp_20260611](./tracks/xianslate-mvp_20260611/index.md) — Xianslate MVP: Fetch, Glossary, Translate & Reader (6/6 phases ✅)
 -   [x] [scale-up-multitenant_20260613](./tracks/scale-up-multitenant_20260613/index.md) — Multi-User Scale-Up & Cross-Platform Delivery (8/8 phases code-complete · live E2E pending provisioning)
+-   [ ] [smoke-stability_20260613](./tracks/smoke-stability_20260613/index.md) — Smoke Test & Stability Verification — Scale-Up (10 phases · 66 tasks · run next session)
 
 <!-- Auto-populated by /conductor:new-track -->
 
