@@ -151,34 +151,41 @@ Identity via Firebase; the server stays authoritative for app data. Depends on: 
 
 ### Tasks
 
--   [ ] Task 3.1: Firebase project — enable **Email/Password** + **Google**; obtain the web config +
-        a **service-account** credential. Env: `PUBLIC_FIREBASE_*` (web) + `FIREBASE_SERVICE_ACCOUNT`
-        (server). Add `firebase` + `firebase-admin`.
--   [ ] Task 3.2: `users` table (Postgres): `id text pk` (= Firebase `uid`), `email` unique,
-        `emailVerified boolean`, `name`, `avatarUrl`, `role text enum['user','admin'] default 'user'`,
-        `createdAt bigint`. Migration. (No sessions/password/oauth tables — Firebase owns them.)
--   [ ] Task 3.3: `src/lib/server/auth/` — `admin.ts` (firebase-admin singleton), `verify.ts`
-        (`verifyIdToken`, `createSessionCookie`, `verifySessionCookie`), `user.ts`
-        (`upsertUserFromToken(decoded)`, `requireUser(locals)`).
--   [ ] Task 3.4: `POST /api/auth/session` (verify ID token → set Firebase **session cookie**:
-        httpOnly, secure, `SameSite=Lax`, path `/`); `POST /api/auth/logout` (clear + optional revoke).
--   [ ] Task 3.5: `hooks.server.ts` — `sequence()` the existing theme handle with a new auth handle:
-        `Authorization: Bearer` → `verifyIdToken`, else session cookie → `verifySessionCookie` →
-        `upsertUserFromToken` → `event.locals.user`. Guards: `/app/*`,`/admin/*` → `/login` if no
-        user; `/admin/*` require `role==='admin'`; `/api/*` (except `/api/auth/*`) → `401` if no user.
--   [ ] Task 3.6: `src/app.d.ts` — declare `App.Locals { user?: AuthUser }`.
--   [ ] Task 3.7: Client — `src/lib/firebase.ts` (web SDK init); public `/login` + `/signup` pages
-        (email/password + "Continue with Google" popup) → POST ID token to `/api/auth/session` →
-        `goto('/app/')`; `/logout`; email-verify + password-reset via Firebase; a `/verify-email`
-        notice page.
--   [ ] Task 3.8: Add an `apiFetch()` helper (web relies on the same-origin cookie; native attaches
-        the bearer in Phase 6) and route `/app` data calls through it.
+-   [x] Task 3.1: Firebase deps + env. **DONE:** `firebase` + `firebase-admin` installed;
+        `PUBLIC_FIREBASE_*` (web) + `FIREBASE_SERVICE_ACCOUNT` (server) documented in `.env.example`.
+        **⚠ USER ACTION (needs your Firebase project):** create the project, enable **Email/Password** +
+        **Google**, copy the web config + a service-account key into `.env`.
+-   [x] Task 3.2: `users` table (Postgres). **DONE:** `id text pk` (= Firebase uid), `email` unique,
+        `emailVerified boolean`, `name`, `avatarUrl`, `role enum['user','admin'] default 'user'`,
+        `createdAt bigint`. Migration `drizzle/0001_*.sql` generated.
+-   [x] Task 3.3: `src/lib/server/auth/` — **DONE:** `admin.ts` (lazy firebase-admin singleton),
+        `verify.ts` (`verifyIdToken`, `createSessionCookie`, `verifySessionCookie` — revocation check
+        opt-in for a cheap per-request hook), `user.ts` (`upsertUserFromToken` read-first/write-on-change,
+        `requireUser(locals)`).
+-   [x] Task 3.4: **DONE:** `POST /api/auth/session` (verify ID token → upsert user → set the Firebase
+        session cookie: httpOnly, `secure:!dev`, `SameSite=Lax`, path `/`, 14-day maxAge);
+        `POST /api/auth/logout` (clear cookie).
+-   [x] Task 3.5: `hooks.server.ts` — **DONE:** `sequence(authHandle, themeHandle)`. Bearer →
+        `verifyIdToken`, else session cookie → `verifySessionCookie` → `upsertUserFromToken` →
+        `event.locals.user`. Guards: `/app`,`/admin` → `/login/` if no user; `/admin` requires admin;
+        `/api/*` (except `/api/auth/*`) → 401 JSON, `/api/admin/*` → 403 JSON. Anonymous asset hits do
+        zero auth work.
+-   [x] Task 3.6: `src/app.d.ts` — **DONE:** `App.Locals { user: AuthUser | null }`.
+-   [x] Task 3.7: Client — **DONE:** `src/lib/firebase.ts` (web SDK via `$env/dynamic/public` so a missing
+        config never breaks the build); `/login` + `/signup` (email/password + "Continue with Google"
+        popup → POST ID token to `/api/auth/session` → `goto`); `/logout` (server + Firebase sign-out);
+        `/verify-email` notice (resend); password reset via "Forgot password" on `/login`
+        (`sendPasswordResetEmail`).
+-   [x] Task 3.8: `apiFetch()` helper (`src/lib/api.ts`). **DONE (web):** same-origin cookie pass-through;
+        the login/session calls route through it. Native bearer + `PUBLIC_API_BASE` are added in Phase 6
+        (Task 6.4), where the rest of `/app`'s fetches are routed through it too.
 
 ### Verification
 
--   [ ] Email/password sign-up (with verification) and Google sign-in both work; session persists
-        across reloads; `/app` requires login; `/admin` requires `role==='admin'`; `/api` returns
-        `401` when logged out.
+-   [x] `svelte-check` clean (873 files, 0 errors) **and** build green with firebase + firebase-admin.
+        **⚠ Live sign-in (email/password + verification, Google popup, session persistence, `/app`
+        login-gate, `/admin` role-gate, `/api` 401) is pending the Firebase project in Task 3.1** — the
+        code + guards are complete; only the Firebase project credentials are not.
 
 ## Phase 4: Per-user multi-tenancy & cost guardrail
 

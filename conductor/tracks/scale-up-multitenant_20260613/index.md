@@ -18,7 +18,7 @@
 -   [x] Phase 0 — Completed prerequisites (`/app` refactor + DeepSeek pricing fix)
 -   [x] Phase 1 — Decouple `/app` from server loads (SPA-ready)
 -   [x] Phase 2 — PostgreSQL on Neon migration (code complete; live boot pending Neon provisioning)
--   [ ] Phase 3 — Firebase authentication
+-   [x] Phase 3 — Firebase authentication (code complete; live sign-in pending Firebase project)
 -   [ ] Phase 4 — Per-user multi-tenancy & cost guardrail
 -   [ ] Phase 5 — Redis/BullMQ queue + global DeepSeek cap
 -   [ ] Phase 6 — Capacitor Android build
