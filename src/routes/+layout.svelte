@@ -4,11 +4,14 @@
 	// IMPORTED DEP-TYPES
 	import type { LayoutData } from './$types';
 	// IMPORTED TYPES
+	import type { SessionUser } from '$lib/stores/auth';
 	import type { Theme } from '$lib/stores/settings';
 	// IMPORTED ENVS
 	import { browser } from '$app/environment';
 	// IMPORTED MODULES
-	import { refreshUser, seedUser } from '$lib/stores/auth';
+	import { goto } from '$app/navigation';
+	import { page } from '$app/stores';
+	import { authReady, currentUser, refreshUser, seedUser } from '$lib/stores/auth';
 	import { settings, THEME_CLASS } from '$lib/stores/settings';
 	import { cn } from '$lib/utils/cn';
 	import { onMount } from 'svelte';
@@ -30,6 +33,25 @@
 	// SEED THE auth STORE FROM SSR LAYOUT DATA ON EVERY NAVIGATION (WEB) — browser-GUARDED SO THE MODULE-LEVEL
 	// STORE IS NEVER MUTATED DURING SSR (THAT WOULD LEAK BETWEEN REQUESTS). NO-OP ON NATIVE (data.user undefined).
 	$: if (browser) seedUser(data.user);
+
+	// CLIENT-SIDE ROUTE GUARD — THE SERVER hooks GUARD ONLY FIRES ON FULL LOADS / SERVER-LOAD DATA REQUESTS,
+	// SO A CLIENT-SIDE NAVIGATION INTO /app OR /admin (NO SERVER LOAD RE-RUNS) WOULD RENDER THE SHELL WITHOUT
+	// AUTH; AND THE NATIVE SPA HAS NO SERVER GUARD AT ALL. ENFORCE IT HERE ONCE AUTH IS KNOWN (authReady), SO
+	// "Open app" AND ANY /app DEEP LINK BOUNCE TO /login WHEN SIGNED OUT — MATCHING hooks.server.ts.
+	$: if (browser && $authReady) enforceAuth($page.url.pathname, $page.url.search, $currentUser);
+
+	// -- FUNCTIONS -- //
+
+	function enforceAuth(pathname: string, search: string, user: SessionUser | null) {
+		const isProtected = pathname.startsWith('/app') || pathname.startsWith('/admin');
+		if (isProtected && !user) {
+			// PRESERVE THE INTENDED DESTINATION SO LOGIN CAN RETURN THERE (SAME ?redirect= CONTRACT AS THE SERVER).
+			goto(`/login/?redirect=${encodeURIComponent(pathname + search)}`, { replaceState: true });
+		} else if (pathname.startsWith('/admin') && user && user.role !== 'admin') {
+			// SIGNED IN BUT NOT AN ADMIN → BOUNCE TO THE LIBRARY (MIRRORS THE SERVER GUARD).
+			goto('/app/', { replaceState: true });
+		}
+	}
 
 	// -- LIFECYCLES -- //
 
