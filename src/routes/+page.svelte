@@ -7,6 +7,7 @@
 	import AudioLines from 'lucide-svelte/icons/audio-lines';
 	import BookMarked from 'lucide-svelte/icons/book-marked';
 	import BookOpen from 'lucide-svelte/icons/book-open';
+	import Clock from 'lucide-svelte/icons/clock';
 	import Globe from 'lucide-svelte/icons/globe';
 	import Languages from 'lucide-svelte/icons/languages';
 	import Link2 from 'lucide-svelte/icons/link-2';
@@ -22,8 +23,7 @@
 
 	// -- CONSTANTS -- //
 
-	// LANDING FEATURE HIGHLIGHTS — ONE CARD EACH. tile IS A COMPLETE-LITERAL ACCENT CLASS (KEEPS cn()/TAILWIND
-	// HAPPY) AND USES /10 TINTS + dark: TEXT SO EACH ICON CHIP READS ON EVERY THEME.
+	// FEATURE HIGHLIGHTS — tile IS A COMPLETE-LITERAL ACCENT CLASS (/10 TINT + dark: TEXT, READS ON EVERY THEME).
 	const FEATURES: Feature[] = [
 		{
 			icon: Sparkles,
@@ -82,8 +82,8 @@
 		},
 	];
 
-	// QUICK FACTS — PLAIN, VERIFIABLE PRODUCT CLAIMS (NO INVENTED SOCIAL PROOF)
-	const FACTS = ['30+ languages', '5 reading themes', 'EPUB · TXT · URL', 'Read-aloud', 'Auto glossary'];
+	// PLAIN, VERIFIABLE PRODUCT FACTS — RENDERED AS ONE QUIET LINE (NO PILL CLUTTER)
+	const FACTS = '30+ languages · 5 reading themes · EPUB · TXT · URL · Read-aloud';
 </script>
 
 <svelte:head>
@@ -99,7 +99,7 @@
 	<!-- TOP BAR: BRAND + APP ENTRY -->
 	<header class="flex items-center justify-between py-5">
 		<span class="inline-flex items-center gap-2 text-lg font-bold">
-			<!-- BRAND MARK (static/logo.svg) — THE GRADIENT TILE IS THEME-INDEPENDENT; THE WORDMARK INHERITS THEME TEXT -->
+			<!-- BRAND MARK (static/logo.svg) — THE TILE IS THEME-INDEPENDENT; THE WORDMARK INHERITS THEME TEXT -->
 			<img src="/logo.svg" alt="" class="h-7 w-7 rounded-[7px]" /> Xianslate
 		</span>
 		<div class="flex items-center gap-1.5">
@@ -108,56 +108,95 @@
 		</div>
 	</header>
 
-	<!-- HERO — relative + isolate + overflow-hidden GIVES THE AMBIENT GLOW ITS OWN CLIPPED STACKING CONTEXT -->
-	<section
-		class="relative isolate flex flex-1 flex-col items-center justify-center overflow-hidden py-16 text-center sm:py-24"
-	>
-		<!-- AMBIENT GLOW (DECORATIVE) — TRANSLUCENT ACCENT BLOBS READ OVER ANY THEME BACKGROUND -->
-		<div class="pointer-events-none absolute inset-0 -z-10" aria-hidden="true">
-			<div
-				class="absolute -top-20 left-1/2 h-72 w-72 -translate-x-1/2 rounded-full bg-gradient-to-br from-sky-500/20 to-indigo-500/20 blur-3xl"
-			></div>
-			<div
-				class="absolute right-2 top-44 h-56 w-56 rounded-full bg-gradient-to-br from-violet-500/15 to-fuchsia-500/10 blur-3xl"
-			></div>
-			<div
-				class="absolute -left-10 top-56 h-56 w-56 rounded-full bg-gradient-to-br from-emerald-500/10 to-teal-500/10 blur-3xl"
-			></div>
-		</div>
-		<!-- EYEBROW BADGE -->
+	<!-- HERO — EDITORIAL: SERIF HEADLINE (THE READER'S OWN TYPEFACE), ONE SOLID ACCENT, NO BACKGROUND HAZE.
+	     TOP-ALIGNED (NOT FORCED FULL-HEIGHT) SO THE PAGE READS AS A COMPOSED STORY, NOT A CENTERED VOID. -->
+	<section class="flex flex-col items-center pt-10 text-center sm:pt-16">
+		<!-- EYEBROW -->
 		<span
-			class="mb-5 inline-flex items-center gap-1.5 rounded-full border border-black/[0.08] bg-black/[0.02] px-3 py-1 text-xs font-medium opacity-80 backdrop-blur dark:border-white/[0.08] dark:bg-white/[0.03]"
+			class="mb-6 inline-flex items-center gap-1.5 rounded-full border border-black/[0.08] px-3 py-1 text-xs font-medium opacity-70 dark:border-white/[0.08]"
 		>
-			<Sparkles size={13} class="text-sky-600 dark:text-sky-400" /> AI-powered literary translation
+			<Sparkles size={13} class="text-sky-600 dark:text-sky-400" /> AI literary translation for web novels
 		</span>
-		<!-- HEADLINE — THE ACCENT WORD USES A TAILWIND GRADIENT, CLIPPED TO THE TEXT -->
-		<h1 class="max-w-3xl text-4xl font-black leading-[1.05] tracking-tight sm:text-6xl">
-			Read web novels in
-			<span class="bg-gradient-to-r from-sky-500 to-indigo-500 bg-clip-text text-transparent">any language</span>
+		<!-- HEADLINE — Literata (THE DEFAULT READING SERIF) SO THE LANDING FEELS LIKE THE PRODUCT. text-balance
+		     EVENS THE LINE BREAKS. THE ACCENT IS A SOLID BRAND BLUE, NOT A GRADIENT THAT FIGHTS THE WARM THEMES. -->
+		<h1
+			class="max-w-3xl text-balance font-[Literata,Georgia,serif] text-[2.6rem] font-bold leading-[1.08] tracking-tight sm:text-6xl"
+		>
+			Read web novels in <span class="text-sky-600 dark:text-sky-400">any language</span>
 		</h1>
-		<p class="mt-5 max-w-xl text-base leading-relaxed opacity-70 sm:text-lg">
+		<p class="mt-5 max-w-xl text-balance text-base leading-relaxed opacity-65 sm:text-lg">
 			Xianslate turns Chinese, Japanese, and Korean web novels into fluent, consistent prose — wrapped in a reader
 			built for long binge sessions.
 		</p>
 		<!-- PRIMARY + SECONDARY CALL TO ACTION -->
-		<div class="mt-9 flex flex-wrap items-center justify-center gap-3">
+		<div class="mt-8 flex flex-wrap items-center justify-center gap-3">
 			<Button href="/app/" variant="primary" class="px-6 py-3 text-base">
 				Open the library <ArrowRight size={18} />
 			</Button>
 			<Button href="/signup/" class="px-5 py-3 text-base">Create a free account</Button>
 		</div>
-		<!-- QUICK FACTS STRIP -->
-		<ul class="mt-10 flex flex-wrap items-center justify-center gap-x-2 gap-y-2 text-xs">
-			{#each FACTS as fact}
-				<li class="rounded-full border border-black/[0.06] px-3 py-1 opacity-60 dark:border-white/[0.06]">
-					{fact}
-				</li>
-			{/each}
-		</ul>
+		<!-- QUIET TRUST LINE -->
+		<p class="mt-6 text-xs tracking-wide opacity-50">{FACTS}</p>
 	</section>
 
+	<!-- READER PREVIEW — SHOW, DON'T TELL: A REAL BILINGUAL EXCERPT STYLED LIKE THE READER, SO THE FIRST THING
+	     A VISITOR SEES IS THE ACTUAL OUTPUT (LITERARY TRANSLATION + GLOSSARY), NOT A STOCK GRADIENT. -->
+	<div class="mx-auto mt-12 w-full max-w-2xl sm:mt-16">
+		<div
+			class="overflow-hidden rounded-2xl border border-black/[0.08] bg-black/[0.02] shadow-sm dark:border-white/[0.08] dark:bg-white/[0.02]"
+		>
+			<!-- FAUX READER HEADER -->
+			<div
+				class="flex items-center justify-between gap-2 border-b border-black/[0.06] px-5 py-3 dark:border-white/[0.045]"
+			>
+				<span class="inline-flex items-center gap-2 text-sm font-medium opacity-75">
+					<BookOpen size={15} class="text-sky-600 dark:text-sky-400" /> Chapter 5 · The Sword Returns
+				</span>
+				<span class="hidden items-center gap-1 text-xs opacity-45 sm:inline-flex">
+					<Clock size={12} /> 4 min read
+				</span>
+			</div>
+			<!-- BILINGUAL BODY: STACKED ON MOBILE, SOURCE | TRANSLATION ON DESKTOP -->
+			<div class="grid gap-5 p-5 sm:grid-cols-2 sm:gap-8">
+				<!-- ORIGINAL (SOURCE) — DIMMED; SYSTEM CJK FONT RENDERS THE HANZI -->
+				<div>
+					<span class="mb-2 block text-[10px] font-semibold uppercase tracking-widest opacity-40"
+						>Original · 中文</span
+					>
+					<p class="text-[15px] leading-loose opacity-55">
+						他抬手一剑，星河为之倒卷，万剑归宗，尽数没入剑鞘。少年立于绝峰之巅，衣袂翻飞，目光淡漠如初雪。
+					</p>
+				</div>
+				<!-- TRANSLATION — IN THE READING SERIF, FULL CONTRAST -->
+				<div>
+					<span
+						class="mb-2 block text-[10px] font-semibold uppercase tracking-widest text-sky-600/70 dark:text-sky-400/70"
+						>Translation · English</span
+					>
+					<p class="font-[Literata,Georgia,serif] text-[15px] leading-loose">
+						He raised his hand and loosed a single stroke — the galaxy reversed its course, and the Myriad
+						Swords returned to their source, sheathing as one. The youth stood atop the lone summit, robes
+						snapping in the wind, his gaze as cold and distant as first snow.
+					</p>
+				</div>
+			</div>
+			<!-- GLOSSARY ROW — THE TERMS THE TRANSLATOR KEEPS CONSISTENT CHAPTER TO CHAPTER -->
+			<div
+				class="flex flex-wrap items-center gap-2 border-t border-black/[0.06] px-5 py-3 text-xs dark:border-white/[0.045]"
+			>
+				<span class="opacity-40">Glossary</span>
+				<span class="rounded-full bg-sky-500/10 px-2 py-0.5 text-sky-700 dark:text-sky-300"
+					>万剑归宗 → Myriad Sword Convergence</span
+				>
+				<span class="rounded-full bg-violet-500/10 px-2 py-0.5 text-violet-700 dark:text-violet-300"
+					>剑鞘 → scabbard</span
+				>
+			</div>
+		</div>
+	</div>
+
 	<!-- HOW IT WORKS: STACKED ON MOBILE, THREE ACROSS ON TABLET+ -->
-	<section class="border-t border-black/[0.06] py-14 dark:border-white/[0.045]">
+	<section class="mt-20 border-t border-black/[0.06] pt-14 dark:border-white/[0.045]">
 		<h2 class="mb-8 text-center text-xs font-semibold uppercase tracking-widest opacity-50">How it works</h2>
 		<ol class="grid gap-6 sm:grid-cols-3">
 			{#each STEPS as step, i}
@@ -179,10 +218,10 @@
 
 	<!-- FEATURE GRID: ONE COLUMN ON MOBILE, TWO ON TABLET, THREE ON DESKTOP -->
 	<section
-		class="grid gap-4 border-t border-black/[0.06] py-14 dark:border-white/[0.045] sm:grid-cols-2 lg:grid-cols-3"
+		class="mt-14 grid gap-4 border-t border-black/[0.06] pt-14 dark:border-white/[0.045] sm:grid-cols-2 lg:grid-cols-3"
 	>
 		{#each FEATURES as f}
-			<!-- FEATURE CARD (NON-INTERACTIVE) — SUBTLE LIFT + RING ON HOVER -->
+			<!-- FEATURE CARD (NON-INTERACTIVE) — SUBTLE LIFT ON HOVER -->
 			<div
 				class="group rounded-2xl border border-black/[0.08] bg-black/[0.02] p-5 transition duration-200 hover:-translate-y-0.5 hover:border-black/[0.12] hover:shadow-lg dark:border-white/[0.08] dark:bg-white/[0.02] dark:hover:border-white/[0.14]"
 			>
@@ -196,9 +235,11 @@
 	</section>
 
 	<!-- CLOSING CALL TO ACTION -->
-	<section class="border-t border-black/[0.06] py-16 text-center dark:border-white/[0.045]">
-		<h2 class="text-2xl font-bold tracking-tight sm:text-3xl">Start your private library</h2>
-		<p class="mx-auto mt-3 max-w-md text-sm leading-relaxed opacity-60">
+	<section class="mt-14 border-t border-black/[0.06] py-16 text-center dark:border-white/[0.045]">
+		<h2 class="text-balance font-[Literata,Georgia,serif] text-2xl font-bold tracking-tight sm:text-3xl">
+			Start your private library
+		</h2>
+		<p class="mx-auto mt-3 max-w-md text-balance text-sm leading-relaxed opacity-60">
 			Bring a chapter, pick your language, and start reading in seconds. It's yours, kept in sync wherever you
 			read.
 		</p>
@@ -206,19 +247,18 @@
 			<Button href="/app/" variant="primary" class="px-6 py-3 text-base"
 				>Open the library <ArrowRight size={18} /></Button
 			>
-			<Button href="/app/glossary/" class="px-5 py-3 text-base">Global glossary</Button>
+			<Button href="/signup/" class="px-5 py-3 text-base">Create a free account</Button>
 		</div>
 	</section>
 
 	<!-- FOOTER -->
 	<footer
-		class="flex flex-col items-center justify-between gap-3 border-t border-black/[0.06] py-6 text-xs opacity-60 dark:border-white/[0.045] sm:flex-row"
+		class="mt-auto flex flex-col items-center justify-between gap-3 border-t border-black/[0.06] py-6 text-xs opacity-60 dark:border-white/[0.045] sm:flex-row"
 	>
 		<span>Xianslate — your private multilingual web-novel reader</span>
 		<nav class="flex items-center gap-1">
-			<a href="/app/" use:ripple class="rounded-md px-2 py-1 hover:opacity-100">Library</a>
-			<a href="/app/glossary/" use:ripple class="rounded-md px-2 py-1 hover:opacity-100">Glossary</a>
 			<a href="/login/" use:ripple class="rounded-md px-2 py-1 hover:opacity-100">Sign in</a>
+			<a href="/signup/" use:ripple class="rounded-md px-2 py-1 hover:opacity-100">Create account</a>
 		</nav>
 	</footer>
 </div>
