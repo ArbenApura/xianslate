@@ -1,9 +1,9 @@
-# Fly.io — Xianslate App A (web + translation-worker). Region MUST match the Neon region (low DB latency).
-# Both process groups run the same image (Dockerfile); only `translation-worker` sets RUN_TRANSLATE_WORKER=1.
+# Fly.io — Xianslate. SINGLE process: one `node build` machine serves HTTP and runs translations in-process
+# (no Redis/queue/worker). Region MUST match the Neon region (low DB latency).
 #
 # SECRETS (set once, not in this file): see DEPLOYMENT.md —
 #   fly secrets set DATABASE_URL=... DATABASE_URL_DIRECT=... DATABASE_URL_REPLICA=... \
-#                   DEEPSEEK_API_KEY=... REDIS_URL=... FIREBASE_SERVICE_ACCOUNT='{...}' \
+#                   DEEPSEEK_API_KEY=... FIREBASE_SERVICE_ACCOUNT='{...}' \
 #                   PUBLIC_FIREBASE_API_KEY=... PUBLIC_FIREBASE_AUTH_DOMAIN=... \
 #                   PUBLIC_FIREBASE_PROJECT_ID=... PUBLIC_FIREBASE_APP_ID=...
 
@@ -18,20 +18,12 @@ PORT = "3000"
 # QUOTA + DEEPSEEK TUNABLES (override per deployment).
 QUOTA_USD_PER_WINDOW = "0.50"
 
-[processes]
-# WEB: serves HTTP + ENQUEUES translations (does NOT run the worker).
-web = "node build"
-# WORKER: same image, but starts the BullMQ worker in-process (hooks.server.ts gate). No public HTTP.
-translation-worker = "node build"
-
-# HTTP ONLY ON THE web PROCESS GROUP.
 [http_service]
 internal_port = 3000
 force_https = true
 auto_stop_machines = "stop"
 auto_start_machines = true
 min_machines_running = 1
-processes = ["web"]
 
 [http_service.concurrency]
 type = "requests"
@@ -45,6 +37,6 @@ grace_period = "10s"
 method = "GET"
 path = "/"
 
-# RUN_TRANSLATE_WORKER IS SET PER-GROUP (web=unset, translation-worker=1) VIA:
-#   fly machine update --metadata ... OR a [processes]-scoped env. Fly sets it through `[env]` per process
-#   group using `fly deploy`; document the worker group's env in DEPLOYMENT.md.
+# NOTE: translation is in-process and stateful per machine, so keep this to ONE machine (don't `fly scale
+# count > 1`). Scale UP (bigger machine) for more headroom, not out. Horizontal scaling would need a shared
+# queue (removed) again.

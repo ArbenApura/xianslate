@@ -10,9 +10,6 @@ import { sequence } from '@sveltejs/kit/hooks';
 // IMPORTED MODULES
 import { upsertUserFromToken } from '$lib/server/auth/user';
 import { SESSION_COOKIE, verifyIdToken, verifySessionCookie } from '$lib/server/auth/verify';
-import { startCacheBus } from '$lib/server/cache-bus';
-import { startTranslateWorker } from '$lib/server/queue/worker';
-import { hasRedis } from '$lib/server/redis';
 import { THEME_BG, THEME_COOKIE } from '$lib/stores/settings';
 
 // -- CONSTANTS -- //
@@ -109,15 +106,7 @@ const themeHandle: Handle = async ({ event, resolve }) => {
 
 // -- LIFECYCLES -- //
 
-// CROSS-INSTANCE CACHE INVALIDATION: EVERY PROCESS (WEB + WORKER) LISTENS SO A GLOSSARY EDIT / SITE-ADAPTER
-// RE-LEARN ON ONE INSTANCE DROPS STALE CACHES EVERYWHERE. NO-OP WITHOUT REDIS.
-startCacheBus();
-
-// START THE BullMQ TRANSLATION WORKER IN THIS PROCESS WHEN RUN_TRANSLATE_WORKER=1 *OR* WHEN Fly RUNS THIS
-// AS THE `translation-worker` PROCESS GROUP (FLY_PROCESS_GROUP IS AUTO-SET) — OR A SINGLE-INSTANCE BRIDGE.
-// THE web GROUP ONLY ENQUEUES. NO-OP WITHOUT REDIS (THEN THE APP USES THE IN-MEMORY SINGLE-INSTANCE PATH).
-if (hasRedis() && (env.RUN_TRANSLATE_WORKER === '1' || env.FLY_PROCESS_GROUP === 'translation-worker'))
-	void startTranslateWorker();
-
 // CORS FIRST (PREFLIGHT SHORT-CIRCUIT), THEN AUTH (401/403/REDIRECT), THEN THEME (RENDER).
+// TRANSLATION RUNS IN-PROCESS (SINGLE-INSTANCE): /api/translate DRIVES THE IN-MEMORY JOB DIRECTLY — NO
+// WORKER OR CACHE-BUS TO START. GLOSSARY / SITE-ADAPTER CACHE INVALIDATION IS LOCAL TO THIS PROCESS.
 export const handle = sequence(corsHandle, authHandle, themeHandle);

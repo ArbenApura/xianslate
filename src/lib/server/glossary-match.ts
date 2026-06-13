@@ -3,7 +3,6 @@ import AhoCorasick from 'ahocorasick';
 // IMPORTED MODULES
 import { getLanguage } from '$lib/languages';
 import { bookPair, getEffectiveGlossary } from './glossary';
-import { publishInvalidation } from './redis';
 // IMPORTED TYPES
 import type { TermDraft } from '$lib/types';
 
@@ -29,25 +28,14 @@ const WORD_CHAR = /[\p{L}\p{N}\p{M}]/u;
 
 // -- FUNCTIONS -- //
 
-// LOCAL-ONLY DROPS — CALLED DIRECTLY BY THE CACHE BUS WHEN ANOTHER INSTANCE BROADCASTS AN INVALIDATION.
-export function invalidateBookLocal(bookId: string): void {
+// DROP A BOOK'S CACHED AUTOMATON ON A GLOSSARY EDIT — REBUILT FROM THE DB ON THE NEXT MATCH.
+export function invalidateBook(bookId: string): void {
 	cache.delete(bookId);
 }
 
-export function invalidateAllLocal(): void {
-	cache.clear();
-}
-
-export function invalidateBook(bookId: string): void {
-	invalidateBookLocal(bookId);
-	// PROPAGATE TO OTHER INSTANCES SO A GLOSSARY EDIT ON A IS SEEN BY B (NO-OP WITHOUT REDIS).
-	void publishInvalidation({ kind: 'glossary-book', bookId });
-}
-
-// A GLOBAL-GLOSSARY WRITE AFFECTS EVERY BOOK'S EFFECTIVE SET → DROP ALL (LOCALLY + EVERY INSTANCE).
+// A GLOBAL-GLOSSARY WRITE AFFECTS EVERY BOOK'S EFFECTIVE SET → DROP ALL.
 export function invalidateAll(): void {
-	invalidateAllLocal();
-	void publishInvalidation({ kind: 'glossary-all' });
+	cache.clear();
 }
 
 async function build(bookId: string): Promise<Built> {

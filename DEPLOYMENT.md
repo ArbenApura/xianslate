@@ -5,9 +5,10 @@ This is the operator runbook for the multi-tenant online deployment
 `npm run check` + `npm run build` are green. What remains is **provisioning external accounts**
 (which need your credentials) and the live end-to-end verification.
 
-Topology: a single **Cloudflare** origin `xianslate.com` fronting a **Fly.io** Node app
-(`web` + `translation-worker` process groups), **Neon** Postgres, **Upstash** (or other) Redis, and
-**Firebase** auth. The **Android** app ships only `/app` as a static SPA against `https://xianslate.com/api`.
+Topology: a single **Cloudflare** origin `xianslate.com` fronting a **single Fly.io** Node machine that
+serves HTTP and runs translations in-process, **Neon** Postgres, and **Firebase** auth. The **Android** app
+ships only `/app` as a static SPA against `https://xianslate.com/api`. (No Redis/queue — translation is
+in-process; the app runs as one instance.)
 
 ---
 
@@ -17,7 +18,6 @@ Topology: a single **Cloudflare** origin `xianslate.com` fronting a **Fly.io** N
 | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Neon** (Postgres) | Project (Launch plan; min CU 0.25–0.5; autoscale on; scale-to-zero OFF; PITR 7d). Region = the Fly region.                                                                                | `DATABASE_URL` (pooled `-pooler`), `DATABASE_URL_DIRECT` (direct/session), `DATABASE_URL_REPLICA` (= pooled until a replica exists)                                    |
 | **Firebase**        | Project; enable **Email/Password** + **Google**; a **service-account** key (server); an **Android app** with `google-services.json` + SHA-1/256 fingerprints (for native Google sign-in). | `PUBLIC_FIREBASE_API_KEY`, `PUBLIC_FIREBASE_AUTH_DOMAIN`, `PUBLIC_FIREBASE_PROJECT_ID`, `PUBLIC_FIREBASE_APP_ID`, `FIREBASE_SERVICE_ACCOUNT` (whole JSON, single line) |
-| **Upstash** (Redis) | A Redis database (TLS).                                                                                                                                                                   | `REDIS_URL` (`rediss://…`)                                                                                                                                             |
 | **Cloudflare**      | Zone for `xianslate.com`; an **R2** bucket (future cover proxying — see §5).                                                                                                              | —                                                                                                                                                                      |
 | **Fly.io**          | Org + the `xianslate` app (+ optional `xianslate-scraper`).                                                                                                                               | —                                                                                                                                                                      |
 | **Android**         | Android Studio / SDK toolchain for the APK.                                                                                                                                               | —                                                                                                                                                                      |
@@ -50,37 +50,35 @@ fly secrets set \
   DATABASE_URL_DIRECT='postgresql://…(direct)…?sslmode=require' \
   DATABASE_URL_REPLICA='postgresql://…-pooler…?sslmode=require' \
   DEEPSEEK_API_KEY='sk-…' \
-  REDIS_URL='rediss://default:…@…:6379' \
   FIREBASE_SERVICE_ACCOUNT='{"type":"service_account",…}' \
   PUBLIC_FIREBASE_API_KEY='…' PUBLIC_FIREBASE_AUTH_DOMAIN='…' \
   PUBLIC_FIREBASE_PROJECT_ID='…' PUBLIC_FIREBASE_APP_ID='…'
 ```
 
-`REDIS_URL` is optional: **unset → single-instance in-memory bridge** (the app still works, one
-process). Set it to enable the distributed BullMQ queue + cross-instance cache bus.
+Optional: `DEEPSEEK_CONCURRENCY` (max parallel DeepSeek calls in the process; default 4),
+`QUOTA_USD_PER_WINDOW` / `QUOTA_WINDOW_MS` (per-user cost guardrail).
 
 ---
 
-## 3. Deploy the API (Phases 5 + 7)
+## 3. Deploy the API
 
-`fly.toml` defines two process groups from one image (`Dockerfile`):
-
--   **web** — serves HTTP, enqueues translations (does not run the worker).
--   **translation-worker** — same image; `hooks.server.ts` starts the BullMQ worker because Fly sets
-    `FLY_PROCESS_GROUP=translation-worker` (or set `RUN_TRANSLATE_WORKER=1`). No public HTTP.
+`fly.toml` runs **one** `node build` machine (`Dockerfile`) that serves HTTP and runs translations
+in-process — no Redis, queue, or worker.
 
 ```bash
-fly deploy                  # builds Dockerfile, deploys both process groups
-fly scale count web=2 translation-worker=1   # stateless web tier scales horizontally
+fly deploy   # builds Dockerfile, deploys the single web machine
 ```
 
-Tune the global DeepSeek cap at runtime (no redeploy) via the `config:deepseek_concurrency` Redis
-key (`redis.setGlobalConcurrency`); set a requests/min ceiling with `DEEPSEEK_RPM`.
+Translation state is per-machine (in-memory), so **keep this to one instance** — `fly scale vm` UP
+(bigger machine) for more headroom, do **not** `fly scale count > 1`. Horizontal scaling would require
+re-introducing a shared queue.
+
+Tune the max parallel DeepSeek calls with the `DEEPSEEK_CONCURRENCY` env (default 4; restart to apply).
 
 ### Scraper split (target topology — remaining code step)
 
 The fetcher currently scrapes **in-process** (Playwright via `headless.ts`), so the deployed image
-includes Chromium. The spec's target is a **slim** web/worker image + a separate Chromium scraper app
+includes Chromium. The spec's target is a **slim** web image + a separate Chromium scraper app
 (`Dockerfile.scraper` / `fly.scraper.toml`, reached at `xianslate-scraper.internal`). Wiring the web
 tier to call that scraper over HTTP (instead of `headless.ts` directly) is the remaining code step;
 until then deploy the monolithic image above. After the split, remove the `playwright install` line
@@ -147,11 +145,9 @@ Run once provisioning is done:
 -   [ ] Sign up (email + verification) and Google sign-in both work; session persists across reloads.
 -   [ ] `/app` requires login; `/admin` requires `role==='admin'`; `/api` returns 401 logged out.
 -   [ ] Add a book (URL / EPUB / TXT) → extract → translate (streamed) → read (progress saved).
--   [ ] Glossary edit on web instance A is seen by instance B (Redis cache bus).
+-   [ ] A glossary edit is reflected on the next read of that book.
 -   [ ] A second user cannot see/mutate the first user's books/glossary; a guessed `chapterId` translate
         attach is refused (404).
 -   [ ] Over-budget translate is refused (set `QUOTA_USD_PER_WINDOW` low to test).
--   [ ] Global cap honoured across workers (set the concurrency to 1 → serialized).
--   [ ] Kill Redis mid-translate → a completed translation is still persisted (next read is free).
 -   [ ] Android APK: native sign-in + library + reader + streaming translation work cross-origin with the
         bearer token.

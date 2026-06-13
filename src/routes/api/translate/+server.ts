@@ -9,9 +9,7 @@ import type { TranslationEvent } from '$lib/server/translation-service';
 import { requireUser } from '$lib/server/auth/user';
 import { assertChapterOwner } from '$lib/server/books';
 import { resolveModel } from '$lib/server/deepseek';
-import { enqueueTranslation, subscribeToTranslation } from '$lib/server/queue/translate-queue';
 import { assertWithinBudget } from '$lib/server/quota';
-import { hasRedis } from '$lib/server/redis';
 import { ensureTranslationJob, subscribe } from '$lib/server/translation-service';
 
 // -- CONSTANTS -- //
@@ -45,14 +43,9 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 	const autoExtract = parsed.data.autoExtract ?? false;
 	const model = resolveModel(parsed.data.model);
 
-	// DISTRIBUTED MODE: ENQUEUE THE JOB (id=chapterId COLLAPSES DUPLICATES) FOR THE WORKER TIER, THEN STREAM
-	// FROM REDIS. SINGLE-INSTANCE BRIDGE (NO REDIS): RUN THE DETACHED IN-MEMORY JOB AND STREAM FROM IT.
-	const useQueue = hasRedis();
-	if (useQueue) await enqueueTranslation({ chapterId, force, autoExtract, model, userId: user.id });
-
 	const encoder = new TextEncoder();
 	const stream = new ReadableStream({
-		async start(ctrl) {
+		start(ctrl) {
 			let closed = false;
 			const close = () => {
 				if (closed) return;
@@ -85,8 +78,8 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			}, 15_000);
 			const stopHeartbeat = () => clearInterval(heartbeat);
 
-			// OBSERVE THE JOB (REPLAYS BUFFERED EVENTS, THEN STREAMS LIVE ONES). HOLD THE UNSUBSCRIBE IN A REF
-			// SO BOTH THE done/error PATH AND THE abort PATH CAN TEAR DOWN EXACTLY ONE SUBSCRIPTION.
+			// OBSERVE THE IN-MEMORY JOB. HOLD THE UNSUBSCRIBE IN A REF SO BOTH THE done/error PATH AND THE
+			// abort PATH CAN TEAR DOWN EXACTLY ONE SUBSCRIPTION.
 			let unsubscribe = () => {};
 			const onEvent = (evt: TranslationEvent) => {
 				send(evt);
@@ -97,19 +90,15 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 				}
 			};
 
-			// CLIENT WENT AWAY — STOP STREAMING, BUT THE JOB KEEPS RUNNING (WORKER / DETACHED).
+			// CLIENT WENT AWAY — STOP STREAMING, BUT THE DETACHED JOB KEEPS RUNNING TO COMPLETION (IT PERSISTS).
 			request.signal.addEventListener('abort', () => {
 				stopHeartbeat();
 				unsubscribe();
 				close();
 			});
 
-			if (useQueue) {
-				unsubscribe = await subscribeToTranslation(chapterId, onEvent);
-			} else {
-				const job = ensureTranslationJob(chapterId, force, autoExtract, model);
-				unsubscribe = subscribe(job, onEvent);
-			}
+			const job = ensureTranslationJob(chapterId, force, autoExtract, model);
+			unsubscribe = subscribe(job, onEvent);
 		},
 	});
 
