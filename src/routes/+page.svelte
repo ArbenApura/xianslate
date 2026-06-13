@@ -132,16 +132,10 @@
 
 	<!-- HERO -->
 	<section class="mx-auto w-full max-w-5xl px-5 pt-14 text-center sm:px-8 sm:pt-20">
-		<!-- EYEBROW WITH A LIVE DOT -->
-		<span
-			class="mb-6 inline-flex items-center gap-2 rounded-full border border-black/[0.08] bg-black/[0.02] px-3.5 py-1.5 text-xs font-medium opacity-80 dark:border-white/[0.08] dark:bg-white/[0.03]"
-		>
-			<span class="relative flex h-1.5 w-1.5">
-				<span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-sky-500 opacity-75"></span>
-				<span class="relative inline-flex h-1.5 w-1.5 rounded-full bg-sky-500"></span>
-			</span>
-			Literary translation for web-novel readers
-		</span>
+		<!-- GENRE OVERLINE — SIGNALS THE NICHE (THE READER'S OWN SHELVES) INSTEAD OF A GENERIC "AI-POWERED" PILL -->
+		<p class="mb-5 text-[11px] font-semibold uppercase tracking-[0.2em] opacity-45">
+			Cultivation · Wuxia · Romance · Isekai
+		</p>
 		<!-- HEADLINE — Literata (THE READER'S OWN SERIF). SOLID ACCENT, NO GRADIENT HAZE. text-balance EVENS BREAKS. -->
 		<h1
 			class="mx-auto max-w-3xl text-balance font-[Literata,Georgia,serif] text-[2.7rem] font-bold leading-[1.06] tracking-tight sm:text-6xl md:text-[4.25rem]"
