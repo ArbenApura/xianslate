@@ -26,10 +26,11 @@
 
 	// -- CONSTANTS -- //
 
-	// TWO REPRESENTATIVE SWATCHES (ONE LIGHT, ONE DARK) + A "+" — SHOWING ALL THEMES READS AS DUPLICATES
-	// (dark / oled / contrast ARE ALL NEAR-BLACK), AND THEMES ARE BECOMING FULLY CUSTOMIZABLE (CUSTOM
-	// BACKGROUND / TEXT), SO A FIXED COUNT WOULD BE WRONG.
+	// THREE DISTINCT SWATCHES (WHITE / SEPIA / DARK) + A "+" — WE SKIP oled & contrast SINCE THEY'RE ALSO
+	// NEAR-BLACK AND WOULD READ AS DUPLICATES, AND THEMES ARE BECOMING FULLY CUSTOMIZABLE (CUSTOM BACKGROUND /
+	// TEXT), SO A FIXED COUNT WOULD BE WRONG.
 	const THEME_SWATCHES = [
+		{ name: 'Light', cls: 'bg-[#fbfaf7] border-black/20' },
 		{ name: 'Sepia', cls: 'bg-[#f4ecd8] border-[#cbb98f]' },
 		{ name: 'Dark', cls: 'bg-[#0e131c] border-white/20' },
 	];
