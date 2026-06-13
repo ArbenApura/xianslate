@@ -44,17 +44,17 @@
 		{
 			icon: Link2,
 			title: 'Add a source',
-			blurb: 'Paste a chapter URL, or import an EPUB or TXT file into your library.',
+			blurb: 'Paste a chapter link or drop in an EPUB or TXT — build your shelf in seconds.',
 		},
 		{
 			icon: Sparkles,
 			title: 'We translate it',
-			blurb: 'A genre-aware model re-tells it in fluent prose and keeps names consistent via an auto glossary.',
+			blurb: 'A genre-aware model re-tells it in fluent prose and locks every name to the glossary.',
 		},
 		{
 			icon: BookOpen,
 			title: 'Read your way',
-			blurb: 'Pick a theme and typeface, go bilingual or single-language, or listen aloud.',
+			blurb: 'Bilingual or single-language, your theme and typeface — or listen hands-free.',
 		},
 	];
 
@@ -86,10 +86,10 @@
 </script>
 
 <svelte:head>
-	<title>Xianslate — read web novels in any language</title>
+	<title>Xianslate — web novels that read like a real translation</title>
 	<meta
 		name="description"
-		content="Xianslate translates Chinese, Japanese, and Korean web novels into fluent, consistent prose, with a beautiful reader built for long binge sessions."
+		content="Xianslate re-tells Chinese, Japanese, and Korean web-novel raws as fluent, consistent prose — names that never change — so you can binge thousands of chapters without waiting on a translator."
 	/>
 </svelte:head>
 
@@ -140,26 +140,26 @@
 				<span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-sky-500 opacity-75"></span>
 				<span class="relative inline-flex h-1.5 w-1.5 rounded-full bg-sky-500"></span>
 			</span>
-			AI literary translation for web novels
+			Literary translation for web-novel readers
 		</span>
 		<!-- HEADLINE — Literata (THE READER'S OWN SERIF). SOLID ACCENT, NO GRADIENT HAZE. text-balance EVENS BREAKS. -->
 		<h1
 			class="mx-auto max-w-3xl text-balance font-[Literata,Georgia,serif] text-[2.7rem] font-bold leading-[1.06] tracking-tight sm:text-6xl md:text-[4.25rem]"
 		>
-			Read web novels in <span class="text-sky-600 dark:text-sky-400">any language</span>
+			Web novels that read like <span class="text-sky-600 dark:text-sky-400">a real translation</span>
 		</h1>
 		<p class="mx-auto mt-6 max-w-xl text-balance text-base leading-relaxed opacity-65 sm:text-lg">
-			Xianslate re-tells Chinese, Japanese, and Korean web novels as fluent, consistent prose — wrapped in a
-			reader built for long binge sessions.
+			Xianslate re-tells Chinese, Japanese, and Korean raws as fluent, consistent prose — names and terms that
+			never change — so you can binge thousands of chapters without waiting on a translator.
 		</p>
 		<!-- CALL TO ACTION -->
 		<div class="mt-9 flex flex-wrap items-center justify-center gap-3">
-			<Button href="/app/" variant="primary" class="px-6 py-3 text-base">
-				Open the library <ArrowRight size={18} />
+			<Button href="/signup/" variant="primary" class="px-6 py-3 text-base">
+				Start reading free <ArrowRight size={18} />
 			</Button>
-			<Button href="/signup/" class="px-5 py-3 text-base">Create a free account</Button>
+			<Button href="/app/" class="px-5 py-3 text-base">Open the app</Button>
 		</div>
-		<p class="mt-6 text-xs tracking-wide opacity-50">Free to start · No credit card · Many languages</p>
+		<p class="mt-6 text-xs tracking-wide opacity-50">Free to start · Read on any device · Private to you</p>
 	</section>
 
 	<!-- PRODUCT HERO — A LAYERED READER PANE WITH FLOATING ACCENT CARDS (DEPTH, NOT A FLAT MOCKUP) -->
@@ -255,10 +255,10 @@
 	<section id="features" class="mx-auto mt-28 w-full max-w-6xl px-5 sm:mt-32 sm:px-8">
 		<div use:reveal class="mb-10 text-center transition duration-700 ease-out">
 			<h2 class="text-balance font-[Literata,Georgia,serif] text-3xl font-bold tracking-tight sm:text-4xl">
-				Everything a serious reader wants
+				Built for 1,000-chapter binges
 			</h2>
 			<p class="mx-auto mt-3 max-w-lg text-balance text-sm leading-relaxed opacity-60 sm:text-base">
-				Faithful prose, consistent names, and a reader you'll happily disappear into for hours.
+				Faithful prose, names that never change, and a reader you'll disappear into for hours.
 			</p>
 		</div>
 
@@ -276,8 +276,8 @@
 					</div>
 					<h3 class="text-lg font-semibold">Literary, not literal</h3>
 					<p class="mt-1.5 max-w-md text-sm leading-relaxed opacity-60">
-						A genre-aware translator re-tells each chapter the way a native novelist would — cultivation,
-						wuxia, and romance read naturally, never as a stiff machine gloss.
+						A genre-aware model re-tells each chapter the way a translator would — cultivation, wuxia, and
+						romance flow naturally. No garbled grammar, no robotic literalism.
 					</p>
 				</div>
 				<!-- MINI BEFORE/AFTER -->
@@ -302,9 +302,9 @@
 					<Languages size={20} />
 				</div>
 				<div>
-					<h3 class="text-base font-semibold">Many languages</h3>
+					<h3 class="text-base font-semibold">Your language, or the raws</h3>
 					<p class="mt-1.5 text-sm leading-relaxed opacity-60">
-						Read in the language you know best — or keep a book in its original.
+						Read in the language you know best — or keep a book in its original, distraction-free.
 					</p>
 				</div>
 				<div class="flex flex-wrap gap-1.5">
@@ -328,9 +328,10 @@
 					<BookMarked size={20} />
 				</div>
 				<div>
-					<h3 class="text-base font-semibold">Consistent names & terms</h3>
+					<h3 class="text-base font-semibold">Names that never change</h3>
 					<p class="mt-1.5 text-sm leading-relaxed opacity-60">
-						Characters, realms, and techniques stay identical across every chapter.
+						Characters, sects, realms, and techniques are auto-tracked — so 叶凡 is “Ye Fan” in chapter 1
+						and chapter 1,000.
 					</p>
 				</div>
 				<div class="space-y-1.5 text-xs">
@@ -362,9 +363,9 @@
 					<Globe size={20} />
 				</div>
 				<div>
-					<h3 class="text-base font-semibold">Bring any source</h3>
+					<h3 class="text-base font-semibold">Bring your own raws</h3>
 					<p class="mt-1.5 text-sm leading-relaxed opacity-60">
-						Paste a chapter URL or import a file — new sites are learned automatically.
+						Paste a chapter URL or import an EPUB or TXT. New sites are learned automatically — no setup.
 					</p>
 				</div>
 				<div class="flex flex-wrap gap-2 text-xs font-medium">
@@ -385,9 +386,9 @@
 					<AudioLines size={20} />
 				</div>
 				<div>
-					<h3 class="text-base font-semibold">Listen along</h3>
+					<h3 class="text-base font-semibold">Listen on the go</h3>
 					<p class="mt-1.5 text-sm leading-relaxed opacity-60">
-						Text-to-speech reads aloud with word-by-word highlighting.
+						Have any chapter read aloud, with the current word highlighted as it goes.
 					</p>
 				</div>
 				<!-- MINI WAVEFORM -->
@@ -440,10 +441,10 @@
 				read.
 			</p>
 			<div class="mt-8 flex flex-wrap items-center justify-center gap-3">
-				<Button href="/app/" variant="primary" class="px-6 py-3 text-base"
-					>Open the library <ArrowRight size={18} /></Button
+				<Button href="/signup/" variant="primary" class="px-6 py-3 text-base"
+					>Start reading free <ArrowRight size={18} /></Button
 				>
-				<Button href="/signup/" class="px-5 py-3 text-base">Create a free account</Button>
+				<Button href="/app/" class="px-5 py-3 text-base">Open the app</Button>
 			</div>
 			<!-- TINY ASSURANCES -->
 			<div class="mt-6 flex flex-wrap items-center justify-center gap-x-5 gap-y-1.5 text-xs opacity-55">
@@ -471,8 +472,8 @@
 					<img src="/logo.svg" alt="" class="h-6 w-6 rounded-md" /> Xianslate
 				</span>
 				<p class="mt-3 text-xs leading-relaxed opacity-55">
-					Your private, multilingual web-novel reader — literary translation, a consistent glossary, and a
-					reader built for the long haul.
+					A private reader for translated web novels — literary prose, a glossary that keeps names straight,
+					and a home for thousand-chapter binges.
 				</p>
 			</div>
 			<!-- LINK COLUMNS -->
@@ -498,7 +499,7 @@
 			</div>
 		</div>
 		<p class="border-t border-black/[0.05] py-5 text-center text-xs opacity-45 dark:border-white/[0.045]">
-			© Xianslate — read web novels in any language.
+			© Xianslate — web novels that read like a real translation.
 		</p>
 	</footer>
 </div>
