@@ -159,7 +159,7 @@
 			</Button>
 			<Button href="/signup/" class="px-5 py-3 text-base">Create a free account</Button>
 		</div>
-		<p class="mt-6 text-xs tracking-wide opacity-50">Free to start · No credit card · 30+ languages</p>
+		<p class="mt-6 text-xs tracking-wide opacity-50">Free to start · No credit card · Many languages</p>
 	</section>
 
 	<!-- PRODUCT HERO — A LAYERED READER PANE WITH FLOATING ACCENT CARDS (DEPTH, NOT A FLAT MOCKUP) -->
@@ -302,7 +302,7 @@
 					<Languages size={20} />
 				</div>
 				<div>
-					<h3 class="text-base font-semibold">30+ languages</h3>
+					<h3 class="text-base font-semibold">Many languages</h3>
 					<p class="mt-1.5 text-sm leading-relaxed opacity-60">
 						Read in the language you know best — or keep a book in its original.
 					</p>
