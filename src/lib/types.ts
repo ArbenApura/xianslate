@@ -142,3 +142,65 @@ export interface ChapterStats {
 	// cost.costUsd (BODY) + pipeline.costUsd — WHAT THIS CHAPTER ACTUALLY COST END-TO-END.
 	totalCostUsd: number;
 }
+
+// -- ADMIN DASHBOARD -- //
+
+/** ONE CRAWLED/LEARNED HOST ROW IN THE SITES DASHBOARD */
+export interface DashboardSite {
+	host: string;
+	supported: boolean;
+	version: number | null;
+	model: string | null;
+	learnedAt: number | null;
+	fetches: number;
+	errors: number;
+	lastFetchAt: number | null;
+}
+
+/** FETCH FAILURES GROUPED BY TYPED KIND + REPRESENTATIVE STATUS */
+export interface DashboardErrorKind {
+	kind: string;
+	status: number;
+	count: number;
+}
+
+/** ONE RECENT FETCH FAILURE (THE TAIL OF site_events) */
+export interface DashboardErrorRow {
+	id: number;
+	host: string;
+	url: string;
+	kind: string;
+	status: number;
+	message: string | null;
+	createdAt: number;
+}
+
+/** ONE AI-SPEND LINE ITEM (TRANSLATION, SITE MAPPING, TERM EXTRACTION, …) */
+export interface DashboardCostBucket {
+	label: string;
+	calls: number;
+	promptTokens: number;
+	completionTokens: number;
+	costUsd: number;
+}
+
+/** EVERYTHING THE SITES & AI-COST DASHBOARD SHOWS, AGGREGATED SERVER-SIDE IN ONE CALL */
+export interface Dashboard {
+	sites: DashboardSite[];
+	errorKinds: DashboardErrorKind[];
+	recentErrors: DashboardErrorRow[];
+	cost: { total: number; buckets: DashboardCostBucket[] };
+	totals: { fetches: number; ok: number; errors: number };
+}
+
+/** ONE ROW IN THE ADMIN USER-MANAGEMENT TABLE (USER PROFILE + LIBRARY SIZE) */
+export interface AdminUser {
+	id: string;
+	email: string;
+	name: string | null;
+	avatarUrl: string | null;
+	emailVerified: boolean;
+	role: 'user' | 'admin';
+	createdAt: number;
+	books: number;
+}

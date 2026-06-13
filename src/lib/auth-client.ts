@@ -3,9 +3,12 @@ import type { UserCredential } from 'firebase/auth';
 // IMPORTED MODULES
 import { goto } from '$app/navigation';
 import { apiFetch } from '$lib/api';
+import { refreshUser } from '$lib/stores/auth';
 
 // EXCHANGE A SIGNED-IN FIREBASE CREDENTIAL FOR A SAME-ORIGIN SERVER SESSION COOKIE, THEN NAVIGATE INTO THE
-// APP. THE SERVER VERIFIES THE ID TOKEN + UPSERTS THE users ROW BEFORE MINTING THE COOKIE.
+// APP. THE SERVER VERIFIES THE ID TOKEN + UPSERTS THE users ROW BEFORE MINTING THE COOKIE. THE auth STORE
+// IS HYDRATED FROM /api/me BEFORE NAVIGATING SO THE LIBRARY HEADER (ADMIN GATE / ACCOUNT MENU) IS CORRECT
+// IMMEDIATELY — THE ROOT LAYOUT'S SERVER LOAD WOULDN'T RE-RUN ON THIS CLIENT-SIDE NAVIGATION ON ITS OWN.
 export async function establishSession(cred: UserCredential, redirectTo = '/app/'): Promise<void> {
 	const idToken = await cred.user.getIdToken();
 	const res = await apiFetch('/api/auth/session', {
@@ -14,6 +17,7 @@ export async function establishSession(cred: UserCredential, redirectTo = '/app/
 		body: JSON.stringify({ idToken }),
 	});
 	if (!res.ok) throw new Error('Could not start your session. Please try again.');
+	await refreshUser();
 	await goto(redirectTo);
 }
 

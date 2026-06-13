@@ -73,9 +73,11 @@ const authHandle: Handle = async ({ event, resolve }) => {
 
 	const { pathname } = event.url;
 
-	// /api/* IS JSON — RETURN 401/403 JSON, NEVER A REDIRECT. /api/auth/* IS PUBLIC (SIGN-IN/OUT).
+	// /api/* IS JSON — RETURN 401/403 JSON, NEVER A REDIRECT. /api/auth/* (SIGN-IN/OUT) AND /api/me (THE
+	// "WHO AM I" PROBE — RETURNS { user: null } WHEN SIGNED OUT) ARE PUBLIC SO THEY NEVER 401.
 	if (pathname.startsWith('/api/')) {
-		if (!pathname.startsWith('/api/auth/')) {
+		const isPublicApi = pathname.startsWith('/api/auth/') || pathname === '/api/me' || pathname === '/api/me/';
+		if (!isPublicApi) {
 			if (!user) return json({ message: 'Sign in required.' }, { status: 401 });
 			if (pathname.startsWith('/api/admin/') && user.role !== 'admin')
 				return json({ message: 'Admin only.' }, { status: 403 });

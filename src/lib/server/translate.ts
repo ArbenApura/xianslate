@@ -168,26 +168,30 @@ export async function translateTerm(
 	return { text, usage: computeUsage(res.usage, model) };
 }
 
-// GROUP WHOLE PARAGRAPHS INTO CHAR-BUDGETED CHUNKS, JOINED BY THE HARD MARKER (NOT BLANK LINES).
-function chunkParagraphs(contentSource: string): string[] {
+// GROUP WHOLE PARAGRAPHS INTO CHAR-BUDGETED CHUNKS. EACH CHUNK IS THE *LIST* OF ITS SOURCE PARAGRAPHS (NOT A
+// PRE-JOINED STRING) SO THE CALLER KNOWS EXACTLY HOW MANY PARAGRAPHS THAT CHUNK'S MODEL CALL MUST RETURN AND
+// CAN ENFORCE 1:1 PER CHUNK. A MERGE/SPLIT CAN ONLY EVER HAPPEN *INSIDE* A CHUNK — EACH CHUNK IS A SEPARATE
+// API CALL AND THE BOUNDARY MARKER BETWEEN CHUNKS IS INSERTED BY US, NOT THE MODEL — SO PER-CHUNK 1:1
+// CONCATENATES TO WHOLE-CHAPTER 1:1.
+function chunkParagraphs(contentSource: string): string[][] {
 	const paras = contentSource
 		.split(/\n{2,}/)
 		.map((p) => p.trim())
 		.filter((p) => p.length > 0);
-	if (paras.length === 0) return [contentSource];
-	const chunks: string[] = [];
+	if (paras.length === 0) return [];
+	const chunks: string[][] = [];
 	let cur: string[] = [];
 	let curLen = 0;
 	for (const p of paras) {
 		if (curLen + p.length > MAX_CHARS_PER_CHUNK && cur.length > 0) {
-			chunks.push(cur.join(PARA));
+			chunks.push(cur);
 			cur = [];
 			curLen = 0;
 		}
 		cur.push(p);
 		curLen += p.length;
 	}
-	if (cur.length) chunks.push(cur.join(PARA));
+	if (cur.length) chunks.push(cur);
 	return chunks;
 }
 
@@ -389,8 +393,8 @@ export async function translateChapterStreaming(
 	const system = systemPrompt(src, tgt);
 	const glossary = glossaryBlock(terms, src, tgt);
 	const chunks = chunkParagraphs(contentSource);
-	const sourceParaCount = contentSource.split(/\n{2,}/).filter((p) => p.trim().length > 0).length;
-	let fullRaw = ''; // RAW MODEL OUTPUT INCLUDING ⟦¶⟧ MARKERS — SPLIT AT THE END FOR EXACT PARAGRAPHS
+	const sourceParaCount = chunks.reduce((n, c) => n + c.length, 0);
+	const chunkRaws: string[] = []; // EACH CHUNK'S RAW MODEL OUTPUT, KEPT SEPARATE SO IT CAN BE ALIGNED 1:1 AGAINST chunks[i]
 	let pending = ''; // HELD-BACK TAIL THAT MIGHT BE A PARTIAL MARKER (SPANNING TWO DELTAS)
 	let promptChars = 0; // FOR A USAGE ESTIMATE IF THE API OMITS THE FINAL usage FRAME
 	let usage: TranslationUsage = { model, promptTokens: 0, cachedTokens: 0, completionTokens: 0, costUsd: 0 };
@@ -414,11 +418,14 @@ export async function translateChapterStreaming(
 
 	let sawUsage = false;
 	for (let i = 0; i < chunks.length; i++) {
+		const chunkText = chunks[i].join(PARA); // SOURCE PARAGRAPHS JOINED BY THE HARD MARKER FOR THIS ONE CALL
 		const messages: { role: 'system' | 'user'; content: string }[] = [{ role: 'system', content: system }];
 		if (glossary) messages.push({ role: 'system', content: glossary });
-		messages.push({ role: 'user', content: chunks[i] });
-		promptChars += system.length + (glossary?.length ?? 0) + chunks[i].length;
+		messages.push({ role: 'user', content: chunkText });
+		promptChars += system.length + (glossary?.length ?? 0) + chunkText.length;
 
+		let raw = ''; // THIS CHUNK'S RAW OUTPUT — THE CHUNK-BOUNDARY MARKER IS *NOT* STORED HERE (PARAGRAPHS ARE
+		// CONCATENATED ACROSS CHUNKS AT THE END), SO `raw` SPLITS CLEANLY INTO EXACTLY THIS CHUNK'S PARAGRAPHS.
 		// HOLD ONE CONCURRENCY SLOT FOR THE WHOLE CHUNK STREAM (withRetry GUARDS ONLY THE INITIAL CREATE
 		// — A MID-STREAM FAILURE STILL PROPAGATES, SO ALREADY-EMITTED DELTAS ARE NEVER REPLAYED).
 		await queued(async () => {
@@ -430,7 +437,7 @@ export async function translateChapterStreaming(
 						// HARD CEILING ON THIS CHUNK'S OUTPUT SO A DEGENERATE RUN-ON CAN'T STREAM UNBOUNDED ("DOES NOT
 						// STOP"). A CLEAN zh→en RENDERING IS ≈1 TOKEN PER SOURCE CHAR, SO 2× LEAVES AMPLE HEADROOM FOR
 						// LEGITIMATE OUTPUT WHILE STILL CUTTING OFF A RAMBLE.
-						max_tokens: Math.ceil(chunks[i].length * 2) + 256,
+						max_tokens: Math.ceil(chunkText.length * 2) + 256,
 						stream: true,
 						stream_options: { include_usage: true },
 						messages,
@@ -440,15 +447,12 @@ export async function translateChapterStreaming(
 				),
 			);
 
-			// A CHUNK BOUNDARY IS ALSO A PARAGRAPH BOUNDARY
-			if (i > 0) {
-				fullRaw += PARA;
-				emit(PARA);
-			}
+			// A CHUNK BOUNDARY IS ALSO A PARAGRAPH BOUNDARY (FOR THE LIVE VIEW ONLY — emit, NOT raw).
+			if (i > 0) emit(PARA);
 			for await (const part of stream) {
 				const delta = part.choices[0]?.delta?.content ?? '';
 				if (delta) {
-					fullRaw += delta;
+					raw += delta;
 					emit(delta);
 				}
 				if (part.usage) {
@@ -457,52 +461,49 @@ export async function translateChapterStreaming(
 				}
 			}
 		});
+		chunkRaws.push(raw);
 	}
 
 	// FLUSH ANY HELD-BACK TAIL: PARA_TAIL ONLY EVER HOLDS BACK MARKER CHARS, SO AT STREAM END A NON-EMPTY
 	// `pending` IS A (PARTIAL) MARKER → DROP IT FROM THE CLIENT VIEW (THE SERVER TEXT STRIPS MARKERS TOO).
 	pending = '';
 
-	// FINAL TEXT: SPLIT ON THE MARKER, OR ON BLANK LINES WHEN THE MODEL DROPPED THE MARKER (splitParas) →
-	// ONE PARAGRAPH PER SOURCE PARAGRAPH. THE BLANK-LINE FALLBACK IS WHAT STOPS A MARKER-LESS GENERATION
-	// FROM COLLAPSING TO ONE GIANT "PARAGRAPH" AND FORCING THE WHOLE-CHAPTER REALIGN.
-	let paras = splitParas(fullRaw);
-
-	// ALIGNMENT SAFETY NET: A FULL 1:1 RE-TRANSLATION IS EXPENSIVE (≈2× COST + SECONDS OF FROZEN PROGRESS),
-	// SO ONLY DO IT WHEN THE PARAGRAPH COUNT DRIFTED *SIGNIFICANTLY* — THE MODEL ACTUALLY COLLAPSED OR MERGED
-	// A LARGE BLOCK. A SMALL DRIFT (THE MODEL USES BLANK LINES AND MERGES A FEW SHORT PARAGRAPHS, e.g. 327/330)
-	// IS BENIGN: THE TEXT IS COMPLETE AND COHERENT, JUST OFF BY A LINE OR TWO — NOT WORTH RE-TRANSLATING.
-	// REFUSE A REALIGN THAT IS ITSELF DEGENERATE (THE RE-TRANSLATE CAN COLLAPSE TOO) — NEVER REPLACE WITH WORSE.
-	const ratio = sourceParaCount > 0 ? paras.length / sourceParaCount : 1;
-	if (sourceParaCount > 0 && (ratio < 0.85 || ratio > 1.3)) {
-		const re = await realignParagraphs(contentSource, paras, terms, pair, signal, model);
-		if (re.realigned && !(looksDegenerate(re.paras.join('\n\n')) && !looksDegenerate(paras.join('\n\n')))) {
-			paras = re.paras;
-			usage = addUsage(usage, re.usage);
-			onReplace?.(paras.join('\n\n'));
+	// EXACT 1:1 ENFORCEMENT, PER CHUNK. EACH CHUNK MUST COME BACK AS EXACTLY chunks[i].length PARAGRAPHS. IF
+	// THE STREAMED OUTPUT DRIFTED (THE MODEL MERGED/SPLIT DESPITE THE EXACT-MARKER RULE) OR COLLAPSED INTO
+	// RUN-ON WORD-SALAD, RE-TRANSLATE *ONLY THAT CHUNK* THROUGH THE DIVIDE-AND-CONQUER ALIGNED PATH — 1:1 BY
+	// CONSTRUCTION AND CHEAP (ONE CHUNK IS ≤MAX_CHARS_PER_CHUNK, NOT THE WHOLE CHAPTER). A MERGE/SPLIT CANNOT
+	// CROSS A CHUNK BOUNDARY (SEPARATE CALLS, OUR MARKER), SO PER-CHUNK 1:1 ⇒ WHOLE-CHAPTER 1:1 WITH THE SOURCE.
+	let paras: string[] = [];
+	let corrected = false;
+	for (let i = 0; i < chunks.length; i++) {
+		const srcParas = chunks[i];
+		// SPLIT ON THE MARKER, OR ON BLANK LINES WHEN THE MODEL DROPPED THE MARKER (splitParas) — THE BLANK-LINE
+		// FALLBACK IS WHAT KEEPS A MARKER-LESS-BUT-OTHERWISE-CLEAN CHUNK 1:1 WITHOUT A NEEDLESS RE-TRANSLATE.
+		const streamParas = splitParas(chunkRaws[i]);
+		const countOk = streamParas.length === srcParas.length;
+		const degenerate = looksDegenerate(chunkRaws[i]);
+		if (countOk && !degenerate) {
+			paras.push(...streamParas);
+			continue;
+		}
+		const re = await translateAligned(srcParas, system, glossary, pair, signal, model);
+		usage = addUsage(usage, re.usage);
+		// translateAligned IS 1:1 BY CONSTRUCTION; PREFER IT — EXCEPT THE ONE CASE WHERE THE STREAM WAS ALREADY
+		// 1:1 (ONLY *LOOKED* DEGENERATE) AND THE RE-TRANSLATE CAME BACK DEGENERATE TOO (NEVER REPLACE WITH WORSE).
+		if (re.paras.length === srcParas.length && !(countOk && looksDegenerate(re.paras.join('\n\n')))) {
+			paras.push(...re.paras);
+			corrected = true;
+		} else {
+			paras.push(...streamParas);
 		}
 	}
-
-	// DEGENERATION RETRY: IF THE RESULT COLLAPSED INTO RUN-ON WORD-SALAD (THE INTERMITTENT FLASH FAILURE),
-	// RE-RUN ONCE THROUGH THE 1:1 ALIGNED PATH — ITS SMALLER SUB-BATCHES DEGENERATE FAR LESS — AND PREFER
-	// THAT RESULT ONLY IF IT COMES BACK CLEAN AND 1:1.
-	if (looksDegenerate(paras.join('\n\n'))) {
-		const srcParas = contentSource
-			.split(/\n{2,}/)
-			.map((p) => p.trim())
-			.filter((p) => p.length > 0);
-		const retry = await translateAligned(srcParas, system, glossary, pair, signal, model);
-		if (retry.paras.length === srcParas.length && !looksDegenerate(retry.paras.join('\n\n'))) {
-			paras = retry.paras;
-			usage = addUsage(usage, retry.usage);
-			onReplace?.(paras.join('\n\n'));
-		}
-	}
+	// PUSH THE CORRECTED FULL TEXT TO THE LIVE VIEW (onReplace) SO THE READER SEES THE 1:1-ALIGNED VERSION
+	// INSTEAD OF THE DRIFTED STREAM — AND IT'S THE CORRECTED TEXT THE CALLER CACHES/PERSISTS.
+	if (corrected) onReplace?.(paras.join('\n\n'));
 
 	// SAFETY NET: THE MODEL OCCASIONALLY LEAVES SOURCE SCRIPT UNTRANSLATED MID-SENTENCE DESPITE THE
-	// TARGET-ONLY RULE. DETECT ANY RESIDUAL SOURCE SCRIPT AND RE-TRANSLATE JUST THOSE PARAGRAPHS, THEN
-	// PUSH THE CLEANED FULL TEXT TO THE CLIENT (onReplace) SO THE LIVE VIEW IS CORRECTED — AND IT'S THE
-	// CLEANED TEXT THAT GETS CACHED.
+	// TARGET-ONLY RULE. DETECT ANY RESIDUAL SOURCE SCRIPT AND RE-TRANSLATE JUST THOSE PARAGRAPHS (SPLICED
+	// BACK BY INDEX, SO THE 1:1 COUNT IS PRESERVED), THEN PUSH THE CLEANED FULL TEXT TO THE CLIENT.
 	if (paras.some((p) => hasSourceResidue(p, pair.sourceLang))) {
 		const rep = await repairSourceResidue(paras, terms, pair, signal, model);
 		if (rep.repaired) {
@@ -513,17 +514,19 @@ export async function translateChapterStreaming(
 	}
 	const text = paras.join('\n\n');
 
-	// THE MODEL IS INSTRUCTED TO REPRODUCE EXACTLY ONE PARAGRAPH PER SOURCE PARAGRAPH. A MISMATCH MEANS IT
-	// MERGED/SPLIT PARAGRAPHS — NOT FATAL (THE TEXT IS STILL COMPLETE), BUT WORTH SURFACING IN THE LOG SO
-	// PROMPT REGRESSIONS ARE VISIBLE INSTEAD OF SILENT.
+	// INVARIANT: PER-CHUNK ALIGNMENT GUARANTEES paras.length === sourceParaCount. LOG IF IT EVER DOESN'T SO A
+	// REGRESSION IN THE ALIGNMENT PATH IS VISIBLE INSTEAD OF SILENT (SHOULD NEVER FIRE IN NORMAL OPERATION).
 	if (sourceParaCount > 0 && paras.length !== sourceParaCount) {
-		console.warn(`[translate] paragraph count drift: source=${sourceParaCount} output=${paras.length}`);
+		console.warn(
+			`[translate] paragraph count drift after alignment: source=${sourceParaCount} output=${paras.length}`,
+		);
 	}
 
 	// FALLBACK USAGE: IF THE API NEVER SENT A usage FRAME (OR IT WAS DROPPED ON AN ABORTED STREAM), ESTIMATE
 	// TOKENS FROM CHAR COUNTS SO WE NEVER CACHE A costUsd:0 ROW THAT UNDER-REPORTS THE METER.
-	if (!sawUsage && fullRaw.length > 0) {
-		usage = estimateUsage(promptChars, fullRaw.length, model);
+	const completionChars = chunkRaws.reduce((n, r) => n + r.length, 0);
+	if (!sawUsage && completionChars > 0) {
+		usage = estimateUsage(promptChars, completionChars, model);
 	}
 	return { text, usage };
 }

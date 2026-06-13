@@ -17,6 +17,7 @@ export type AuthUser = {
 	name: string | null;
 	avatarUrl: string | null;
 	role: 'user' | 'admin';
+	createdAt: number;
 };
 
 // -- FUNCTIONS -- //
@@ -29,6 +30,7 @@ function toAuthUser(u: User): AuthUser {
 		name: u.name,
 		avatarUrl: u.avatarUrl,
 		role: u.role,
+		createdAt: u.createdAt,
 	};
 }
 

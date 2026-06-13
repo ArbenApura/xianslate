@@ -5,7 +5,7 @@
 // BREAK A FETCH, SO FAILURES HERE ARE SWALLOWED.
 
 // IMPORTED TYPES
-import type { TranslationUsage } from '$lib/types';
+import type { Dashboard, DashboardCostBucket, DashboardSite, TranslationUsage } from '$lib/types';
 // IMPORTED DEP-MODULES
 import { desc, eq, sql } from 'drizzle-orm';
 // IMPORTED MODULES
@@ -13,46 +13,8 @@ import { db } from './db';
 import { aiUsage, siteAdapters, siteEvents, translations } from './db/schema';
 import { isFetchError } from './fetch-error';
 
-// -- TYPES -- //
-
-export type DashboardSite = {
-	host: string;
-	supported: boolean;
-	version: number | null;
-	model: string | null;
-	learnedAt: number | null;
-	fetches: number;
-	errors: number;
-	lastFetchAt: number | null;
-};
-
-export type DashboardErrorKind = { kind: string; status: number; count: number };
-
-export type DashboardErrorRow = {
-	id: number;
-	host: string;
-	url: string;
-	kind: string;
-	status: number;
-	message: string | null;
-	createdAt: number;
-};
-
-export type DashboardCostBucket = {
-	label: string;
-	calls: number;
-	promptTokens: number;
-	completionTokens: number;
-	costUsd: number;
-};
-
-export type Dashboard = {
-	sites: DashboardSite[];
-	errorKinds: DashboardErrorKind[];
-	recentErrors: DashboardErrorRow[];
-	cost: { total: number; buckets: DashboardCostBucket[] };
-	totals: { fetches: number; ok: number; errors: number };
-};
+// THE DASHBOARD TYPES NOW LIVE IN $lib/types (CLIENT-SAFE) SO THE ADMIN PAGES CAN CONSUME THE /api/admin
+// JSON WITHOUT IMPORTING THIS SERVER MODULE. SEE Dashboard + FRIENDS THERE.
 
 // -- CONSTANTS -- //
 

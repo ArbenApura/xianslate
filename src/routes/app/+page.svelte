@@ -1,7 +1,8 @@
 <script lang="ts">
-	// IMPORTED DEP-TYPES
 	// IMPORTED TYPES
 	import type { SourceType } from '$lib/types';
+	import type { MenuAction } from '$lib/components/ui/ActionMenu.svelte';
+	import type { SessionUser } from '$lib/stores/auth';
 	// IMPORTED DEP-MODULES
 	import { toast } from 'svelte-sonner';
 	import { onMount } from 'svelte';
@@ -9,24 +10,25 @@
 	import { apiFetch } from '$lib/api';
 	import { browser } from '$app/environment';
 	import { goto } from '$app/navigation';
+	import { page } from '$app/stores';
 	import { get } from 'svelte/store';
 	import { AUTO_SOURCE, isMonolingual } from '$lib/languages';
+	import { currentUser } from '$lib/stores/auth';
 	import { settings } from '$lib/stores/settings';
 	import { ripple } from '$lib/actions/ripple';
 	import { cn } from '$lib/utils/cn';
 	// IMPORTED DEP-COMPONENTS
 	import BookOpen from 'lucide-svelte/icons/book-open';
 	import Check from 'lucide-svelte/icons/check';
-	import Globe from 'lucide-svelte/icons/globe';
 	import Image from 'lucide-svelte/icons/image';
 	import Library from 'lucide-svelte/icons/library';
 	import ListOrdered from 'lucide-svelte/icons/list-ordered';
 	import Plus from 'lucide-svelte/icons/plus';
 	import Search from 'lucide-svelte/icons/search';
+	import Shield from 'lucide-svelte/icons/shield';
 	import Trash2 from 'lucide-svelte/icons/trash-2';
-	// IMPORTED TYPES
-	import type { MenuAction } from '$lib/components/ui/ActionMenu.svelte';
 	// IMPORTED COMPONENTS
+	import AccountMenu from '$lib/components/AccountMenu.svelte';
 	import ActionMenu from '$lib/components/ui/ActionMenu.svelte';
 	import ConfirmDialog from '$lib/components/ui/ConfirmDialog.svelte';
 	import LanguagePicker from '$lib/components/ui/LanguagePicker.svelte';
@@ -129,6 +131,10 @@
 	let search = '';
 
 	// -- REACTIVE STATES -- //
+
+	// CURRENT USER — THE CLIENT STORE IS AUTHORITATIVE; $page.data.user IS THE SSR SEED (WEB FIRST PAINT,
+	// BEFORE THE STORE HYDRATES). $isAdmin DRIVES THE ADMIN BUTTON; AccountMenu RENDERS THE AVATAR/IDENTITY.
+	$: user = ($currentUser ?? $page.data.user ?? null) as SessionUser | null;
 
 	// MOST RECENTLY *READ* BOOK (NOT THE FIRST-CREATED). FALLS BACK TO ANY BOOK WITH A RESUME POINT.
 	$: continueBook =
@@ -447,17 +453,19 @@
 				>
 				<span class="hidden text-xs opacity-50 sm:inline">· multilingual novel reader</span>
 			</div>
-			<!-- NAVIGATION LINKS + PRIMARY "ADD BOOK" CTA -->
+			<!-- NAVIGATION LINKS + PRIMARY "ADD BOOK" CTA + ACCOUNT MENU -->
 			<div class="flex items-center gap-2">
-				<!-- SITES & AI COST DASHBOARD — ICON-ONLY ON MOBILE TO LEAVE ROOM FOR THE PRIMARY CTA -->
-				<a
-					use:ripple
-					href="/admin/"
-					class="hover:bg-current/5 inline-flex items-center gap-1.5 rounded-lg border border-black/[0.06] px-2.5 py-1.5 text-sm dark:border-white/[0.045] sm:px-3"
-					aria-label="Sites"
-				>
-					<Globe size={15} /> <span class="hidden sm:inline">Sites</span>
-				</a>
+				<!-- ADMIN DASHBOARD — ADMINS ONLY; ICON-ONLY ON MOBILE TO LEAVE ROOM FOR THE PRIMARY CTA -->
+				{#if user?.role === 'admin'}
+					<a
+						use:ripple
+						href="/admin/"
+						class="hover:bg-current/5 inline-flex items-center gap-1.5 rounded-lg border border-black/[0.06] px-2.5 py-1.5 text-sm dark:border-white/[0.045] sm:px-3"
+						aria-label="Admin"
+					>
+						<Shield size={15} /> <span class="hidden sm:inline">Admin</span>
+					</a>
+				{/if}
 				<!-- GLOSSARY NAVIGATION LINK -->
 				<a
 					use:ripple
@@ -475,6 +483,8 @@
 				>
 					<Plus size={15} /> Add book
 				</button>
+				<!-- ACCOUNT MENU (AVATAR → ACCOUNT SETTINGS / ADMIN / SIGN OUT) -->
+				<AccountMenu {user} />
 			</div>
 		</div>
 	</header>
