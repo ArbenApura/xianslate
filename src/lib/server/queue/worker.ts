@@ -20,9 +20,33 @@ let worker: WorkerType<TranslateJobData> | undefined;
 // done/error. COMPLETION STILL PERSISTS TO POSTGRES INSIDE run(), SO A REDIS LOSS IS SAFE.
 function processJob(data: TranslateJobData): Promise<void> {
 	return new Promise<void>((resolve) => {
+		const cid = data.chapterId;
+		// BATCH THE HIGH-FREQUENCY `delta` EVENTS: ACCUMULATE TOKEN TEXT AND FLUSH ON A SHORT TIMER (OR BEFORE
+		// ANY OTHER EVENT / AT done) AS ONE COMBINED delta. PUBLISHING PER TOKEN WAS ~4 REDIS COMMANDS × ~7.5k
+		// TOKENS = ~30k COMMANDS PER CHAPTER (IT EXHAUSTED THE UPSTASH FREE TIER IN A HANDFUL OF CHAPTERS); ONE
+		// PUBLISH PER ~200ms CUTS THAT ~100×. THE CLIENT JUST APPENDS delta.text, SO LARGER BATCHES ARE FINE.
+		let pending = '';
+		let timer: ReturnType<typeof setTimeout> | null = null;
+		const flush = () => {
+			if (timer) {
+				clearTimeout(timer);
+				timer = null;
+			}
+			if (pending) {
+				void publishTranslationEvent(cid, JSON.stringify({ type: 'delta', text: pending }));
+				pending = '';
+			}
+		};
 		const job = ensureTranslationJob(data.chapterId, data.force, data.autoExtract, data.model);
 		const unsub = subscribe(job, (evt) => {
-			void publishTranslationEvent(data.chapterId, JSON.stringify(evt));
+			if (evt.type === 'delta') {
+				pending += evt.text;
+				if (!timer) timer = setTimeout(flush, 200);
+				return;
+			}
+			// ANY NON-delta EVENT (meta/title/replace/done/error): FLUSH BUFFERED DELTAS FIRST TO KEEP ORDER.
+			flush();
+			void publishTranslationEvent(cid, JSON.stringify(evt));
 			if (evt.type === 'done' || evt.type === 'error') {
 				unsub();
 				resolve();
