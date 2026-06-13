@@ -50,6 +50,12 @@
 		} else if (pathname.startsWith('/admin') && user && user.role !== 'admin') {
 			// SIGNED IN BUT NOT AN ADMIN → BOUNCE TO THE LIBRARY (MIRRORS THE SERVER GUARD).
 			goto('/app/', { replaceState: true });
+		} else if (user && /^\/(login|signup)\/?$/.test(pathname)) {
+			// ALREADY SIGNED IN → DON'T SHOW THE AUTH PAGES. HONOUR A SAFE INTERNAL ?redirect= (THE BOUNCE
+			// TARGET), ELSE GO TO THE LIBRARY.
+			const dest = new URLSearchParams(search).get('redirect');
+			const safe = !!dest && dest.startsWith('/') && !dest.startsWith('//') && !/^\/(login|signup)/.test(dest);
+			goto(safe ? dest : '/app/', { replaceState: true });
 		}
 	}
 

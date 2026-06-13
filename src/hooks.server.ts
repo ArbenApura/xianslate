@@ -86,6 +86,12 @@ const authHandle: Handle = async ({ event, resolve }) => {
 		// PAGES — REDIRECT TO /login, PRESERVING THE INTENDED DESTINATION.
 		if (!user) throw redirect(303, `/login/?redirect=${encodeURIComponent(pathname + event.url.search)}`);
 		if (pathname.startsWith('/admin') && user.role !== 'admin') throw redirect(303, '/app/');
+	} else if (user && /^\/(login|signup)\/?$/.test(pathname)) {
+		// ALREADY SIGNED IN → SKIP THE AUTH PAGES. HONOUR A SAFE INTERNAL ?redirect= (THE BOUNCE TARGET),
+		// ELSE GO TO THE LIBRARY.
+		const dest = event.url.searchParams.get('redirect');
+		const safe = !!dest && dest.startsWith('/') && !dest.startsWith('//') && !/^\/(login|signup)/.test(dest);
+		throw redirect(303, safe ? dest : '/app/');
 	}
 
 	return resolve(event);
