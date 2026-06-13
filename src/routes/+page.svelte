@@ -36,14 +36,6 @@
 	];
 	// A SMALL, CONCRETE SAMPLE OF SUPPORTED LANGUAGES (ENDONYMS READ AS A WORLD MAP AT A GLANCE).
 	const LANGS = ['English', '中文', '日本語', '한국어', 'Español', 'Français', 'Deutsch', 'Tiếng Việt', 'العربية'];
-	// HERO GENRE OVERLINE — EACH GENRE IN ITS NATIVE SCRIPT + ROMANIZED (A MINI ECHO OF THE PRODUCT: ORIGINAL
-	// → TRANSLATION), SPREAD ACROSS CHINESE / JAPANESE / KOREAN SOURCES.
-	const GENRES = [
-		{ native: '仙侠', en: 'Xianxia' },
-		{ native: '武侠', en: 'Wuxia' },
-		{ native: '異世界', en: 'Isekai' },
-		{ native: '로맨스', en: 'Romance' },
-	];
 	// MINI WAVEFORM BARS FOR THE READ-ALOUD TILE — LITERAL HEIGHTS SO NO RUNTIME CLASS CONSTRUCTION.
 	const WAVE = ['h-2', 'h-4', 'h-6', 'h-3', 'h-5', 'h-7', 'h-4', 'h-2', 'h-5', 'h-3', 'h-6', 'h-4'];
 
@@ -140,17 +132,6 @@
 
 	<!-- HERO -->
 	<section class="mx-auto w-full max-w-5xl px-5 pt-14 text-center sm:px-8 sm:pt-20">
-		<!-- GENRE OVERLINE — NATIVE SCRIPT + ROMANIZED, A MINI ECHO OF THE PRODUCT (ORIGINAL → TRANSLATION).
-		     THIN DIVIDERS ON DESKTOP; THEY DROP ON MOBILE SO THE ROW WRAPS CLEANLY. -->
-		<div class="mb-6 flex flex-wrap items-center justify-center gap-x-3.5 gap-y-2">
-			{#each GENRES as g, i (g.en)}
-				{#if i > 0}<span class="hidden h-3 w-px bg-current opacity-20 sm:inline-block"></span>{/if}
-				<span class="inline-flex items-baseline gap-1.5">
-					<span class="text-sm text-sky-600/80 dark:text-sky-400/80">{g.native}</span>
-					<span class="text-[10px] font-semibold uppercase tracking-[0.18em] opacity-40">{g.en}</span>
-				</span>
-			{/each}
-		</div>
 		<!-- HEADLINE — Literata (THE READER'S OWN SERIF). SOLID ACCENT, NO GRADIENT HAZE. text-balance EVENS BREAKS. -->
 		<h1
 			class="mx-auto max-w-3xl text-balance font-[Literata,Georgia,serif] text-[2.7rem] font-bold leading-[1.06] tracking-tight sm:text-6xl md:text-[4.25rem]"
