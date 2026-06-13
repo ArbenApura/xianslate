@@ -26,13 +26,12 @@
 
 	// -- CONSTANTS -- //
 
-	// THE FIVE READING THEMES, SHOWN AS REAL SWATCHES (LITERAL HEX CLASSES = THE ACTUAL THEME_BG COLOURS).
+	// TWO REPRESENTATIVE SWATCHES (ONE LIGHT, ONE DARK) + A "+" — SHOWING ALL THEMES READS AS DUPLICATES
+	// (dark / oled / contrast ARE ALL NEAR-BLACK), AND THEMES ARE BECOMING FULLY CUSTOMIZABLE (CUSTOM
+	// BACKGROUND / TEXT), SO A FIXED COUNT WOULD BE WRONG.
 	const THEME_SWATCHES = [
-		{ name: 'Light', cls: 'bg-[#fbfaf7] border-black/20' },
 		{ name: 'Sepia', cls: 'bg-[#f4ecd8] border-[#cbb98f]' },
 		{ name: 'Dark', cls: 'bg-[#0e131c] border-white/20' },
-		{ name: 'OLED', cls: 'bg-black border-white/20' },
-		{ name: 'Contrast', cls: 'bg-black border-white/50' },
 	];
 	// A SMALL, CONCRETE SAMPLE OF SUPPORTED LANGUAGES (ENDONYMS READ AS A WORLD MAP AT A GLANCE).
 	const LANGS = ['English', '中文', '日本語', '한국어', 'Español', 'Français', 'Deutsch', 'Tiếng Việt', 'العربية'];
@@ -229,11 +228,16 @@
 			<div
 				class="absolute -bottom-6 -left-6 hidden -rotate-2 rounded-xl border border-black/[0.08] bg-white/80 p-3 shadow-xl shadow-black/10 backdrop-blur dark:border-white/[0.1] dark:bg-[#161d29]/90 lg:block"
 			>
-				<span class="mb-2 block text-[11px] font-semibold opacity-60">5 reading themes</span>
+				<span class="mb-2 block text-[11px] font-semibold opacity-60">Make it yours</span>
 				<div class="flex items-center gap-1.5">
 					{#each THEME_SWATCHES as t (t.name)}
 						<span class={cn('h-5 w-5 rounded-full border', t.cls)} title={t.name}></span>
 					{/each}
+					<!-- "+" → MORE THEMES + FULL CUSTOMIZATION COMING (CUSTOM BACKGROUND / TEXT) -->
+					<span
+						class="flex h-5 w-5 items-center justify-center rounded-full border border-dashed border-black/20 text-[11px] leading-none opacity-50 dark:border-white/25"
+						title="More themes and customization">+</span
+					>
 				</div>
 			</div>
 
