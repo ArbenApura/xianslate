@@ -479,7 +479,7 @@
 				<button
 					use:ripple
 					on:click={() => (showAddBook = true)}
-					class="inline-flex items-center gap-1.5 rounded-lg bg-sky-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-sky-700"
+					class="inline-flex items-center gap-1.5 rounded-lg bg-sky-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-sky-500"
 				>
 					<Plus size={15} /> Add book
 				</button>
@@ -595,7 +595,7 @@
 								bind:value={search}
 								type="search"
 								placeholder="Search title or author…"
-								class="w-full rounded-lg border border-black/10 bg-transparent py-2 pl-8 pr-2.5 text-sm outline-none placeholder:opacity-40 focus:border-sky-500 dark:border-white/[0.08] sm:py-1.5"
+								class="w-full rounded-lg border border-black/10 bg-transparent py-2 pl-8 pr-2.5 text-sm outline-none transition-colors placeholder:opacity-40 focus:border-sky-500 focus:ring-2 focus:ring-sky-500/30 dark:border-white/[0.08] sm:py-1.5"
 							/>
 						</div>
 						<div class="grid grid-cols-3 gap-2 sm:flex sm:items-center">

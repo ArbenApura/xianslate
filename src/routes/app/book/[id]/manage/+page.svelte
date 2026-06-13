@@ -10,6 +10,7 @@
 	import { goto } from '$app/navigation';
 	import { isMonolingual } from '$lib/languages';
 	import { chapterLabel, stripChapterPrefix } from '$lib/chapter-label';
+	import { settings, THEME_PANEL } from '$lib/stores/settings';
 	import { cn } from '$lib/utils/cn';
 	import { ripple } from '$lib/actions/ripple';
 	// IMPORTED DEP-COMPONENTS
@@ -616,5 +617,5 @@
 	bodyClass="flex min-h-0 flex-col overflow-hidden px-5 py-0"
 	on:close={() => (glossaryOpen = false)}
 >
-	<GlossaryPanel scope="book" bookId={book.id} bookTitle={book.title} surface="bg-white dark:bg-slate-900" />
+	<GlossaryPanel scope="book" bookId={book.id} bookTitle={book.title} surface={THEME_PANEL[$settings.theme]} />
 </Modal>

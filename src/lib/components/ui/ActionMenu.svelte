@@ -27,6 +27,7 @@
 	// IMPORTED MODULES
 	import { cn } from '$lib/utils/cn';
 	import { ripple } from '$lib/actions/ripple';
+	import { settings, THEME_POPOVER, THEME_PANEL_BORDER } from '$lib/stores/settings';
 	// IMPORTED DEP-COMPONENTS
 	import MoreVertical from 'lucide-svelte/icons/more-vertical';
 
@@ -55,6 +56,12 @@
 	let menuEl: HTMLDivElement;
 	let portalTarget: HTMLDivElement;
 	let menuStyle = '';
+
+	// -- REACTIVE STATES -- //
+
+	// THEME-AWARE OPAQUE POPOVER SURFACE + BORDER (WAS A HARDCODED white / slate-800 PLANE)
+	$: popover = THEME_POPOVER[$settings.theme];
+	$: popoverBorder = THEME_PANEL_BORDER[$settings.theme];
 
 	// -- FUNCTIONS -- //
 
@@ -160,7 +167,7 @@
 		tabindex="-1"
 		transition:fly={{ y: -8, duration: 150, easing: cubicOut }}
 		style={menuStyle}
-		class="fixed z-[9999] overflow-hidden rounded-xl border border-black/10 bg-white p-1 shadow-lg dark:border-white/[0.08] dark:bg-slate-800"
+		class={cn('fixed z-[9999] overflow-hidden rounded-xl border p-1 shadow-lg', popover, popoverBorder)}
 	>
 		{#each items as item (item.value)}
 			<!-- MENU ITEM -->
@@ -173,7 +180,7 @@
 					'flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm transition-colors',
 					item.danger
 						? 'text-red-600 hover:bg-red-500/10 dark:text-red-400'
-						: 'text-slate-700 hover:bg-black/5 dark:text-slate-300 dark:hover:bg-white/5',
+						: 'hover:bg-black/5 dark:hover:bg-white/5',
 				)}
 			>
 				{#if item.icon}<svelte:component this={item.icon} size={15} class="shrink-0" />{/if}

@@ -23,7 +23,7 @@
 			bind:value
 			{placeholder}
 			class={cn(
-				'w-full rounded-lg border border-black/10 bg-transparent px-3 py-2 text-sm outline-none transition-colors placeholder:opacity-40 focus:border-sky-500 dark:border-white/[0.06]',
+				'w-full rounded-lg border border-black/10 bg-transparent px-3 py-2 text-sm outline-none transition-colors placeholder:opacity-40 focus:border-sky-500 focus:ring-2 focus:ring-sky-500/30 dark:border-white/[0.06]',
 				inputClass,
 			)}
 			on:input
@@ -36,7 +36,7 @@
 			bind:value
 			{placeholder}
 			class={cn(
-				'w-full rounded-lg border border-black/10 bg-transparent px-3 py-2 text-sm outline-none transition-colors placeholder:opacity-40 focus:border-sky-500 dark:border-white/[0.06]',
+				'w-full rounded-lg border border-black/10 bg-transparent px-3 py-2 text-sm outline-none transition-colors placeholder:opacity-40 focus:border-sky-500 focus:ring-2 focus:ring-sky-500/30 dark:border-white/[0.06]',
 				inputClass,
 			)}
 			on:input
@@ -49,7 +49,7 @@
 			bind:value
 			{placeholder}
 			class={cn(
-				'w-full rounded-lg border border-black/10 bg-transparent px-3 py-2 text-sm outline-none transition-colors placeholder:opacity-40 focus:border-sky-500 dark:border-white/[0.06]',
+				'w-full rounded-lg border border-black/10 bg-transparent px-3 py-2 text-sm outline-none transition-colors placeholder:opacity-40 focus:border-sky-500 focus:ring-2 focus:ring-sky-500/30 dark:border-white/[0.06]',
 				inputClass,
 			)}
 			on:input

@@ -27,6 +27,7 @@
 	// IMPORTED MODULES
 	import { cn } from '$lib/utils/cn';
 	import { ripple } from '$lib/actions/ripple';
+	import { settings, THEME_POPOVER, THEME_PANEL_BORDER } from '$lib/stores/settings';
 	// IMPORTED DEP-COMPONENTS
 	import Check from 'lucide-svelte/icons/check';
 	import ChevronDown from 'lucide-svelte/icons/chevron-down';
@@ -62,6 +63,9 @@
 	// -- REACTIVE STATES -- //
 
 	$: selected = items.find((o) => o.value === value) ?? null;
+	// THEME-AWARE OPAQUE POPOVER SURFACE + BORDER (WAS A HARDCODED white / slate-800 PLANE)
+	$: popover = THEME_POPOVER[$settings.theme];
+	$: popoverBorder = THEME_PANEL_BORDER[$settings.theme];
 
 	// -- FUNCTIONS -- //
 
@@ -235,7 +239,7 @@
 		tabindex="-1"
 		transition:fly={{ y: -8, duration: 160, easing: cubicOut }}
 		style={dropdownStyle}
-		class="fixed z-[9999] max-h-64 overflow-y-auto rounded-xl border border-black/10 bg-white p-1 shadow-lg dark:border-white/[0.08] dark:bg-slate-800"
+		class={cn('fixed z-[9999] max-h-64 overflow-y-auto rounded-xl border p-1 shadow-lg', popover, popoverBorder)}
 	>
 		<!-- OPTION LIST -->
 		{#each items as opt, i (opt.value)}
@@ -251,7 +255,7 @@
 					'flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm transition-colors',
 					opt.value === value
 						? 'bg-sky-500/10 text-sky-600 dark:text-sky-300'
-						: 'text-slate-700 hover:bg-black/5 dark:text-slate-300 dark:hover:bg-white/5',
+						: 'hover:bg-black/5 dark:hover:bg-white/5',
 					i === activeIndex && 'bg-black/5 dark:bg-white/10',
 				)}
 			>

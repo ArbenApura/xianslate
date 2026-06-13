@@ -13,7 +13,7 @@
 	import { afterNavigate, goto } from '$app/navigation';
 	import { cjkStack, latinStack } from '$lib/fonts';
 	import { getLanguage, isMonolingual } from '$lib/languages';
-	import { settings, type LayoutMode, type Theme } from '$lib/stores/settings';
+	import { settings, THEME_PANEL, type LayoutMode, type Theme } from '$lib/stores/settings';
 	import { isMobile } from '$lib/stores/viewport';
 	import { cn } from '$lib/utils/cn';
 	import { chapterLabel, stripChapterPrefix, stripLeadingTitle } from '$lib/chapter-label';
@@ -871,6 +871,12 @@
 		if (view) flushProgress(view.uuid, chapterMax);
 	}
 
+	// NAMED SO onDestroy CAN REMOVE IT — AN ANONYMOUS visibilitychange HANDLER WOULD LEAK (AND PIN A STALE
+	// view / chapterMax CLOSURE) ON EVERY ENTER / LEAVE OF THE READER ROUTE.
+	function onVisibility() {
+		if (document.visibilityState === 'hidden') onPageHide();
+	}
+
 	function onKey(e: KeyboardEvent) {
 		if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
 		// LET ? CLOSE/OPEN THE CHEAT SHEET; ESC CLOSES IT
@@ -895,9 +901,7 @@
 		window.addEventListener('keydown', onKey);
 		window.addEventListener('scroll', onScroll, { passive: true });
 		window.addEventListener('pagehide', onPageHide);
-		document.addEventListener('visibilitychange', () => {
-			if (document.visibilityState === 'hidden') onPageHide();
-		});
+		document.addEventListener('visibilitychange', onVisibility);
 		ensureVoices();
 		// RESTORE WHERE YOU LEFT OFF IN AN ALREADY-TRANSLATED CHAPTER (UNTRANSLATED ONES START AT THE TOP).
 		if (view.contentTarget) restoreScroll(view.uuid);
@@ -916,6 +920,7 @@
 			window.removeEventListener('keydown', onKey);
 			window.removeEventListener('scroll', onScroll);
 			window.removeEventListener('pagehide', onPageHide);
+			document.removeEventListener('visibilitychange', onVisibility);
 		}
 	});
 	// ON NAVIGATION TO A NEW CHAPTER, SvelteKit RE-RUNS load → SYNC LOCAL STATE FROM data
@@ -928,7 +933,14 @@
 			chromeHidden = false; // ALWAYS REVEAL THE BARS ON A FRESH CHAPTER
 			lastScrollY = 0;
 			if (view.contentTarget) restoreScroll(view.uuid);
-			else window.scrollTo(0, 0);
+			else {
+				// FRESH (UNTRANSLATED) CHAPTER: JUMP TO THE TOP, BUT SUPPRESS THE PROGRESS TRACKER FOR THAT
+				// SYNTHETIC SCROLL — A NOT-YET-TRANSLATED CHAPTER IS SHORT, SO `seen` WOULD HIT 1 AND MARK IT
+				// FULLY READ THE INSTANT YOU OPEN IT. RELEASE ONCE THE EVENT SETTLES (MIRRORS restoreScroll).
+				restoringScroll = true;
+				window.scrollTo(0, 0);
+				setTimeout(() => (restoringScroll = false), 60);
+			}
 		}
 	});
 </script>
@@ -1472,7 +1484,7 @@
 			scope="book"
 			bookId={view.bookId}
 			bookTitle={view.bookTitle}
-			surface="bg-white dark:bg-slate-900"
+			surface={THEME_PANEL[$settings.theme]}
 		/>
 	{/if}
 </Modal>

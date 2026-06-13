@@ -97,6 +97,39 @@ export const THEME_BG: Record<Theme, string> = {
 	contrast: '#000000',
 };
 
+// OPAQUE ELEVATED SURFACE FOR OVERLAYS (MODALS, BOTTOM SHEETS, DRAWERS). UNLIKE PAGE CARDS — WHICH USE
+// TRANSLUCENT TINTS (bg-black/[0.02]) THAT LAYER OVER THE THEME BG — A FLOATING PANEL MUST BE OPAQUE (YOU
+// CAN'T SEE PAGE TEXT THROUGH A DROPDOWN). SO EACH THEME GETS ITS OWN SOLID PANEL COLOUR THAT SITS ONE
+// STEP ABOVE ITS PAGE BACKGROUND, PLUS A FOREGROUND TUNED FOR DIALOG CONTRAST. THIS KEEPS OVERLAYS INSIDE
+// THE 5-THEME WORLD INSTEAD OF COLLAPSING TO A COLD WHITE / SLATE PLANE (SEE GUIDELINE: A COMPONENT THAT
+// NEEDS ITS OWN SURFACE SHOULD PREFER THE CENTRALISED THEME MAP).
+export const THEME_PANEL: Record<Theme, string> = {
+	light: 'bg-white text-slate-800',
+	sepia: 'bg-[#fbf6ea] text-[#5b4636]',
+	dark: 'bg-[#161d29] text-slate-200',
+	oled: 'bg-[#0c0c0e] text-slate-200',
+	contrast: 'bg-black text-white',
+};
+
+// POPOVERS / DROPDOWN MENUS — ONE ELEVATION HIGHER THAN A PANEL (THEY OFTEN OPEN ON TOP OF ONE)
+export const THEME_POPOVER: Record<Theme, string> = {
+	light: 'bg-white text-slate-800',
+	sepia: 'bg-[#fdf9f0] text-[#5b4636]',
+	dark: 'bg-[#1b2433] text-slate-200',
+	oled: 'bg-[#161618] text-slate-200',
+	contrast: 'bg-[#050505] text-white',
+};
+
+// BORDER FOR ELEVATED OVERLAYS — A SOFT TINT ON MOST THEMES, A WARM HAIRLINE ON SEPIA, AND A BRIGHT,
+// CRISP EDGE ON contrast (WHERE THE WHOLE POINT IS MAXIMUM SEPARATION).
+export const THEME_PANEL_BORDER: Record<Theme, string> = {
+	light: 'border-black/10',
+	sepia: 'border-[#e2d4b5]',
+	dark: 'border-white/10',
+	oled: 'border-white/[0.12]',
+	contrast: 'border-white/40',
+};
+
 // -- STORES -- //
 
 export const settings = createSettings();

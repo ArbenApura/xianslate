@@ -20,6 +20,7 @@
 	// IMPORTED MODULES
 	import { goto } from '$app/navigation';
 	import { signOutEverywhere } from '$lib/stores/auth';
+	import { settings, THEME_POPOVER, THEME_PANEL_BORDER } from '$lib/stores/settings';
 	import { cn } from '$lib/utils/cn';
 	import { ripple } from '$lib/actions/ripple';
 	// IMPORTED DEP-COMPONENTS
@@ -59,6 +60,9 @@
 	$: label = user?.name?.trim() || user?.email || 'Account';
 	$: initials = initialsOf(label);
 	$: avatarClass = AVATARS[hash(label) % AVATARS.length];
+	// THEME-AWARE OPAQUE POPOVER SURFACE + BORDER (WAS A HARDCODED white / slate-800 PLANE)
+	$: popover = THEME_POPOVER[$settings.theme];
+	$: popoverBorder = THEME_PANEL_BORDER[$settings.theme];
 
 	// -- FUNCTIONS -- //
 
@@ -184,7 +188,7 @@
 		tabindex="-1"
 		transition:fly={{ y: -8, duration: 150, easing: cubicOut }}
 		style={menuStyle}
-		class="fixed z-[9999] overflow-hidden rounded-xl border border-black/10 bg-white p-1 shadow-lg dark:border-white/[0.08] dark:bg-slate-800"
+		class={cn('fixed z-[9999] overflow-hidden rounded-xl border p-1 shadow-lg', popover, popoverBorder)}
 	>
 		<!-- IDENTITY HEADER -->
 		<div class="flex items-center gap-2.5 px-2.5 py-2.5">
@@ -202,9 +206,9 @@
 					/>{:else}{initials}{/if}
 			</div>
 			<div class="min-w-0 flex-1">
-				<p class="truncate text-sm font-medium text-slate-800 dark:text-slate-100">{label}</p>
+				<p class="truncate text-sm font-medium">{label}</p>
 				{#if user?.email && user.email !== label}
-					<p class="truncate text-xs text-slate-500 dark:text-slate-400">{user.email}</p>
+					<p class="truncate text-xs opacity-60">{user.email}</p>
 				{/if}
 			</div>
 			{#if user?.role === 'admin'}
@@ -223,7 +227,7 @@
 			role="menuitem"
 			use:ripple
 			on:click={() => go('/app/account/')}
-			class="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm text-slate-700 transition-colors hover:bg-black/5 dark:text-slate-300 dark:hover:bg-white/5"
+			class="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm transition-colors hover:bg-black/5 dark:hover:bg-white/5"
 		>
 			<UserCog size={15} class="shrink-0" /> <span class="flex-1">Account settings</span>
 		</button>
@@ -235,7 +239,7 @@
 				role="menuitem"
 				use:ripple
 				on:click={() => go('/admin/')}
-				class="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm text-slate-700 transition-colors hover:bg-black/5 dark:text-slate-300 dark:hover:bg-white/5"
+				class="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm transition-colors hover:bg-black/5 dark:hover:bg-white/5"
 			>
 				<Shield size={15} class="shrink-0" /> <span class="flex-1">Admin dashboard</span>
 			</button>

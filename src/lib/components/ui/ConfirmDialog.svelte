@@ -8,6 +8,7 @@
 	import { focusTrap } from '$lib/actions/focusTrap';
 	import { ripple } from '$lib/actions/ripple';
 	import { scrollLock } from '$lib/actions/scrollLock';
+	import { settings, THEME_PANEL, THEME_PANEL_BORDER } from '$lib/stores/settings';
 	// IMPORTED DEP-COMPONENTS
 	import TriangleAlert from 'lucide-svelte/icons/triangle-alert';
 
@@ -27,6 +28,12 @@
 		danger: { icon: 'text-red-500', iconBg: 'bg-red-500/10', confirm: 'bg-red-600 text-white hover:bg-red-500' },
 		default: { icon: 'text-sky-500', iconBg: 'bg-sky-500/10', confirm: 'bg-sky-600 text-white hover:bg-sky-500' },
 	} as const;
+
+	// -- REACTIVE STATES -- //
+
+	// THEME-AWARE OPAQUE PANEL + BORDER (WAS A HARDCODED white / slate-900 PLANE)
+	$: panel = THEME_PANEL[$settings.theme];
+	$: panelBorder = THEME_PANEL_BORDER[$settings.theme];
 
 	// -- FUNCTIONS -- //
 
@@ -64,7 +71,11 @@
 			use:focusTrap
 			tabindex="-1"
 			transition:fly={{ y: 16, duration: 220, easing: cubicOut }}
-			class="relative z-10 w-full max-w-sm rounded-xl border border-black/10 bg-white p-5 text-slate-900 shadow-2xl outline-none dark:border-white/[0.08] dark:bg-slate-900 dark:text-slate-100"
+			class={cn(
+				'relative z-10 w-full max-w-sm rounded-xl border p-5 shadow-2xl outline-none',
+				panel,
+				panelBorder,
+			)}
 		>
 			<!-- ICON AND MESSAGE -->
 			<div class="flex gap-4">

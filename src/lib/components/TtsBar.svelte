@@ -1,9 +1,17 @@
 <script lang="ts">
 	// FLOATING PLAYBACK BAR — APPEARS WHILE READING ALOUD. TRANSPORT CONTROLS + A QUICK SPEED STEPPER +
 	// A SHORTCUT INTO THE FULL READ-ALOUD SETTINGS DIALOG.
+	// IMPORTED DEP-MODULES
 	import { createEventDispatcher } from 'svelte';
 	import { fly } from 'svelte/transition';
 	import { cubicOut } from 'svelte/easing';
+	// IMPORTED MODULES
+	import { settings, THEME_POPOVER, THEME_PANEL_BORDER } from '$lib/stores/settings';
+	import { cn } from '$lib/utils/cn';
+	import { ripple } from '$lib/actions/ripple';
+	import { tts } from '$lib/tts/engine';
+	import { ttsSettings } from '$lib/stores/tts';
+	// IMPORTED DEP-COMPONENTS
 	import Pause from 'lucide-svelte/icons/pause';
 	import Play from 'lucide-svelte/icons/play';
 	import Square from 'lucide-svelte/icons/square';
@@ -12,14 +20,17 @@
 	import Minus from 'lucide-svelte/icons/minus';
 	import Plus from 'lucide-svelte/icons/plus';
 	import Settings2 from 'lucide-svelte/icons/settings-2';
-	import { ripple } from '$lib/actions/ripple';
-	import { tts } from '$lib/tts/engine';
-	import { ttsSettings } from '$lib/stores/tts';
 
 	// -- CONSTANTS -- //
 
 	const dispatch = createEventDispatcher<{ settings: void }>();
 	const state = tts.state;
+
+	// -- REACTIVE STATES -- //
+
+	// THEME-AWARE OPAQUE PILL SURFACE + BORDER (WAS A HARDCODED white / slate-800 PLANE)
+	$: popover = THEME_POPOVER[$settings.theme];
+	$: popoverBorder = THEME_PANEL_BORDER[$settings.theme];
 
 	// -- FUNCTIONS -- //
 
@@ -33,7 +44,11 @@
 {#if $state.status !== 'idle'}
 	<div
 		transition:fly={{ y: 20, duration: 200, easing: cubicOut }}
-		class="fixed bottom-[calc(env(safe-area-inset-bottom)+1rem)] left-1/2 z-40 flex max-w-[calc(100vw-1rem)] -translate-x-1/2 items-center gap-1 rounded-full border border-black/10 bg-white/90 px-2 py-1.5 shadow-xl backdrop-blur dark:border-white/10 dark:bg-slate-800/90"
+		class={cn(
+			'fixed bottom-[calc(env(safe-area-inset-bottom)+1rem)] left-1/2 z-40 flex max-w-[calc(100vw-1rem)] -translate-x-1/2 items-center gap-1 rounded-full border px-2 py-1.5 shadow-xl backdrop-blur',
+			popover,
+			popoverBorder,
+		)}
 		role="toolbar"
 		aria-label="Read-aloud controls"
 	>

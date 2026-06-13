@@ -5,6 +5,7 @@
 	import { createEventDispatcher, tick } from 'svelte';
 	// IMPORTED MODULES
 	import { languageName, NO_TRANSLATION, targetLanguageOptions } from '$lib/languages';
+	import { settings, THEME_POPOVER, THEME_PANEL_BORDER } from '$lib/stores/settings';
 	import { cn } from '$lib/utils/cn';
 	import { ripple } from '$lib/actions/ripple';
 	// IMPORTED DEP-COMPONENTS
@@ -68,6 +69,9 @@
 		.map((tier) => ({ tier, label: TIER_LABEL[tier], items: filtered.filter((l) => l.tier === tier) }))
 		.filter((g) => g.items.length > 0) satisfies Group[];
 	$: showNoneRow = allowNone && (!q || 'original'.includes(q) || 'none'.includes(q));
+	// THEME-AWARE OPAQUE POPOVER SURFACE + BORDER (WAS A HARDCODED white / slate-900 PLANE)
+	$: popover = THEME_POPOVER[$settings.theme];
+	$: popoverBorder = THEME_PANEL_BORDER[$settings.theme];
 
 	// -- FUNCTIONS -- //
 
@@ -145,7 +149,11 @@
 	<!-- POPOVER -->
 	{#if open}
 		<div
-			class="absolute left-0 right-0 top-full z-50 mt-1.5 overflow-hidden rounded-xl border border-black/10 bg-white shadow-xl dark:border-white/10 dark:bg-slate-900"
+			class={cn(
+				'absolute left-0 right-0 top-full z-50 mt-1.5 overflow-hidden rounded-xl border shadow-xl',
+				popover,
+				popoverBorder,
+			)}
 		>
 			<!-- SEARCH -->
 			<div class="border-b border-black/[0.06] p-2 dark:border-white/[0.06]">

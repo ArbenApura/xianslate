@@ -8,6 +8,7 @@
 	import { focusTrap } from '$lib/actions/focusTrap';
 	import { ripple } from '$lib/actions/ripple';
 	import { scrollLock } from '$lib/actions/scrollLock';
+	import { settings, THEME_PANEL, THEME_PANEL_BORDER } from '$lib/stores/settings';
 	// IMPORTED DEP-COMPONENTS
 	import X from 'lucide-svelte/icons/x';
 
@@ -28,6 +29,12 @@
 		lg: 'sm:max-w-2xl',
 		xl: 'sm:max-w-4xl',
 	};
+
+	// -- REACTIVE STATES -- //
+
+	// OPAQUE ELEVATED SURFACE + BORDER FOR THE ACTIVE THEME (KEEPS DIALOGS INSIDE THE 5-THEME WORLD)
+	$: panel = THEME_PANEL[$settings.theme];
+	$: panelBorder = THEME_PANEL_BORDER[$settings.theme];
 
 	// -- FUNCTIONS -- //
 
@@ -60,7 +67,9 @@
 			tabindex="-1"
 			transition:fly={{ y: 24, duration: 220, easing: cubicOut }}
 			class={cn(
-				'relative z-10 flex w-full flex-col overflow-hidden rounded-t-2xl bg-white text-slate-900 shadow-2xl outline-none dark:bg-slate-900 dark:text-slate-100 sm:rounded-2xl',
+				'relative z-10 flex w-full flex-col overflow-hidden rounded-t-2xl shadow-2xl outline-none sm:rounded-2xl',
+				// THEME-AWARE OPAQUE PANEL (WAS A HARDCODED white / slate-900 PLANE THAT IGNORED sepia/oled/contrast)
+				panel,
 				// MOBILE: A BOTTOM-SHEET DRAWER THAT STOPS WELL SHORT OF FULL HEIGHT (A STRIP OF THE PAGE STAYS
 				// VISIBLE ABOVE IT, SO IT READS AS A DRAWER, NOT A FULL-SCREEN DIALOG). TALLER ON DESKTOP WHERE
 				// IT'S A CENTERED CARD.
@@ -71,15 +80,15 @@
 			{#if title || $$slots.header}
 				<!-- MODAL HEADER -->
 				<header
-					class="flex shrink-0 items-center justify-between gap-3 border-b border-slate-200 px-5 py-3.5 dark:border-slate-700"
+					class={cn('flex shrink-0 items-center justify-between gap-3 border-b px-5 py-3.5', panelBorder)}
 				>
 					<h2 class="text-base font-semibold">{title}</h2>
 					<slot name="header" />
-					<!-- CLOSE BUTTON -->
+					<!-- CLOSE BUTTON — TRANSLUCENT HOVER READS ON EVERY THEME PANEL -->
 					<button
 						on:click={close}
 						use:ripple
-						class="rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800"
+						class="rounded-lg p-1.5 opacity-50 transition-colors hover:bg-black/5 hover:opacity-100 dark:hover:bg-white/10"
 						aria-label="Close"
 					>
 						<X size={18} />
@@ -92,9 +101,7 @@
 			</div>
 			{#if $$slots.footer}
 				<!-- MODAL FOOTER -->
-				<footer
-					class="flex shrink-0 items-center justify-end gap-2 border-t border-slate-200 px-5 py-3 dark:border-slate-700"
-				>
+				<footer class={cn('flex shrink-0 items-center justify-end gap-2 border-t px-5 py-3', panelBorder)}>
 					<slot name="footer" />
 				</footer>
 			{/if}
