@@ -15,8 +15,13 @@ dockerfile = "Dockerfile"
 
 [env]
 PORT = "3000"
-# QUOTA + DEEPSEEK TUNABLES (override per deployment).
+# GIVE NODE MORE HEAP THAN ITS ~2GB DEFAULT (SIZE TO ~75% OF THE MACHINE RAM — 3072 SUITS A 4GB VM).
+NODE_OPTIONS = "--max-old-space-size=3072"
+# TUNABLES (override per deployment): translation/scrape concurrency, DB pool, per-user budget.
 QUOTA_USD_PER_WINDOW = "0.50"
+DEEPSEEK_CONCURRENCY = "64"
+SCRAPER_CONCURRENCY = "5"
+DB_POOL_MAX = "25"
 
 [http_service]
 internal_port = 3000
@@ -26,9 +31,10 @@ auto_start_machines = true
 min_machines_running = 1
 
 [http_service.concurrency]
+# EACH LIVE TRANSLATION HOLDS ONE LONG SSE CONNECTION, SO THIS MUST EXCEED (concurrent translators + readers).
 type = "requests"
-soft_limit = 200
-hard_limit = 250
+soft_limit = 500
+hard_limit = 750
 
 [[http_service.checks]]
 interval = "15s"

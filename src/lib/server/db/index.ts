@@ -19,12 +19,17 @@ declare global {
 const PRIMARY = env.DATABASE_URL ?? '';
 const REPLICA = env.DATABASE_URL_REPLICA || PRIMARY;
 
+// CLIENT-SIDE POOL SIZE PER ROLE (write + read). 25 IS COMFORTABLE AGAINST NEON'S TRANSACTION POOLER (IT
+// MULTIPLEXES MANY CLIENT CONNECTIONS); RAISE TOGETHER WITH NEON COMPUTE IF MANY CONCURRENT TRANSLATIONS
+// SATURATE IT. TUNE VIA DB_POOL_MAX.
+const POOL_MAX = Math.max(1, Number(env.DB_POOL_MAX ?? '25') || 25);
+
 // SINGLETON POOLS — REUSED ACROSS REQUESTS / HMR RELOADS. TRANSACTION-MODE POOLING REQUIRES prepare:false
 // (THE POOLER GIVES A DIFFERENT BACKEND PER STATEMENT, SO SERVER-SIDE PREPARED STATEMENTS CAN'T BE REUSED).
 // postgres.js IS LAZY — NO CONNECTION OPENS UNTIL THE FIRST QUERY — SO AN UNSET URL DOESN'T CRASH AT BOOT.
 const pool = globalThis.__xianslatePg ?? {
-	write: postgres(PRIMARY, { prepare: false, max: 10 }),
-	read: postgres(REPLICA, { prepare: false, max: 10 }),
+	write: postgres(PRIMARY, { prepare: false, max: POOL_MAX }),
+	read: postgres(REPLICA, { prepare: false, max: POOL_MAX }),
 };
 if (!globalThis.__xianslatePg) globalThis.__xianslatePg = pool;
 

@@ -9,6 +9,8 @@
 
 // IMPORTED DEP-TYPES
 import type { Browser } from 'playwright';
+// IMPORTED ENVS ($env/...)
+import { env } from '$env/dynamic/private';
 // IMPORTED DEP-MODULES
 import PQueue from 'p-queue';
 
@@ -19,8 +21,9 @@ const RENDER_TIMEOUT_MS = 25_000;
 const BROWSER_UA =
 	'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
-// BOUND PARALLEL PAGES SO A BURST OF PREFETCHES CAN'T SPAWN UNBOUNDED CHROMIUM TABS (RAM GUARD).
-const queue = new PQueue({ concurrency: 3 });
+// BOUND PARALLEL PAGES SO A BURST OF PREFETCHES CAN'T SPAWN UNBOUNDED CHROMIUM TABS (RAM GUARD — EACH RENDER
+// IS ~250MB). TUNE VIA SCRAPER_CONCURRENCY; 5 SUITS A ~4GB MACHINE.
+const queue = new PQueue({ concurrency: Math.max(1, Number(env.SCRAPER_CONCURRENCY ?? '5') || 5) });
 
 // REUSE ONE BROWSER ACROSS REQUESTS / HMR RELOADS (LAUNCH IS EXPENSIVE).
 declare global {
