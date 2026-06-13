@@ -3,6 +3,7 @@
 	import { toast } from 'svelte-sonner';
 	import { createEventDispatcher } from 'svelte';
 	// IMPORTED MODULES
+	import { apiFetch } from '$lib/api';
 	import { cn } from '$lib/utils/cn';
 	import { ripple } from '$lib/actions/ripple';
 	// IMPORTED DEP-COMPONENTS
@@ -60,7 +61,7 @@
 		if (!pasteTitle.trim() || !pasteContent.trim() || busy) return;
 		busy = true;
 		try {
-			const res = await fetch(`/api/books/${bookId}/chapters`, {
+			const res = await apiFetch(`/api/books/${bookId}/chapters`, {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
 				body: JSON.stringify({
@@ -85,7 +86,7 @@
 		busy = true;
 		const tid = toast.loading('Fetching chapter…');
 		try {
-			const res = await fetch(`/api/books/${bookId}/chapters`, {
+			const res = await apiFetch(`/api/books/${bookId}/chapters`, {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
 				body: JSON.stringify({ kind: 'url', url: urlInput.trim() }),
@@ -113,7 +114,7 @@
 			const fd = new FormData();
 			fd.append('file', file);
 			fd.append('bookId', bookId);
-			const res = await fetch(`/api/import/${kind}`, { method: 'POST', body: fd });
+			const res = await apiFetch(`/api/import/${kind}`, { method: 'POST', body: fd });
 			const d = await res.json().catch(() => ({}));
 			if (!res.ok) throw new Error(d.message ?? 'Import failed');
 			toast.success(`Added ${d.chapters} chapter${d.chapters === 1 ? '' : 's'}.`, { id: tid });

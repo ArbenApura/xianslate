@@ -6,6 +6,7 @@
 	// IMPORTED DEP-MODULES
 	import { toast } from 'svelte-sonner';
 	// IMPORTED MODULES
+	import { apiFetch } from '$lib/api';
 	import { goto } from '$app/navigation';
 	import { isMonolingual } from '$lib/languages';
 	import { chapterLabel, stripChapterPrefix } from '$lib/chapter-label';
@@ -88,7 +89,7 @@
 
 	async function refresh() {
 		try {
-			const res = await fetch(`/api/books/${book.id}`);
+			const res = await apiFetch(`/api/books/${book.id}`);
 			const d = await res.json();
 			items = d.chapters ?? [];
 		} catch {
@@ -100,7 +101,7 @@
 		if (!pasteTitle.trim() || !pasteContent.trim() || busy) return;
 		busy = true;
 		try {
-			const res = await fetch(`/api/books/${book.id}/chapters`, {
+			const res = await apiFetch(`/api/books/${book.id}/chapters`, {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
 				body: JSON.stringify({
@@ -127,7 +128,7 @@
 		busy = true;
 		const tid = toast.loading('Fetching chapter…');
 		try {
-			const res = await fetch(`/api/books/${book.id}/chapters`, {
+			const res = await apiFetch(`/api/books/${book.id}/chapters`, {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
 				body: JSON.stringify({ kind: 'url', url: urlInput.trim() }),
@@ -151,7 +152,7 @@
 			const fd = new FormData();
 			fd.append('file', file);
 			fd.append('bookId', book.id);
-			const res = await fetch(`/api/import/${kind}`, { method: 'POST', body: fd });
+			const res = await apiFetch(`/api/import/${kind}`, { method: 'POST', body: fd });
 			if (!res.ok) throw new Error((await res.json().catch(() => ({}))).message ?? 'Import failed');
 			const d = await res.json();
 			addOpen = false;
@@ -199,7 +200,7 @@
 			return hit ? { ...x, readProgress: value } : x;
 		});
 		try {
-			const res = await fetch(`/api/books/${book.id}/read`, {
+			const res = await apiFetch(`/api/books/${book.id}/read`, {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
 				body: JSON.stringify({ uuid: it.uuid, scope, read }),
@@ -223,7 +224,7 @@
 		if (!source || translatingTitle) return;
 		translatingTitle = true;
 		try {
-			const res = await fetch('/api/translate-text', {
+			const res = await apiFetch('/api/translate-text', {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
 				body: JSON.stringify({ text: source, kind: 'title', bookId: book.id }),
@@ -256,7 +257,7 @@
 		// NOTHING CHANGED — JUST CLOSE
 		if (titleSource === it.titleSource && titleTarget === (it.titleTarget ?? '')) return cancelEdit();
 		try {
-			const res = await fetch(`/api/chapters/${it.uuid}`, {
+			const res = await apiFetch(`/api/chapters/${it.uuid}`, {
 				method: 'PATCH',
 				headers: { 'content-type': 'application/json' },
 				body: JSON.stringify({ titleSource, titleTarget: titleTarget || null }),
@@ -276,7 +277,7 @@
 		pendingDelete = null;
 		if (!it) return;
 		try {
-			const res = await fetch(`/api/chapters/${it.uuid}`, { method: 'DELETE' });
+			const res = await apiFetch(`/api/chapters/${it.uuid}`, { method: 'DELETE' });
 			if (!res.ok) throw new Error();
 			items = items.filter((x) => x.uuid !== it.uuid).map((x, i) => ({ ...x, seq: i }));
 			toast.success('Chapter deleted.');
@@ -289,7 +290,7 @@
 		const prev = items;
 		items = next.map((it, i) => ({ ...it, seq: i }));
 		try {
-			const res = await fetch(`/api/books/${book.id}/chapters`, {
+			const res = await apiFetch(`/api/books/${book.id}/chapters`, {
 				method: 'PATCH',
 				headers: { 'content-type': 'application/json' },
 				body: JSON.stringify({ order: next.map((i) => i.uuid) }),

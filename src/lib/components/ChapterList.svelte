@@ -2,6 +2,7 @@
 	// IMPORTED DEP-MODULES
 	import { createEventDispatcher, onDestroy, onMount, tick } from 'svelte';
 	// IMPORTED MODULES
+	import { apiFetch } from '$lib/api';
 	import { chapterLabel, stripChapterPrefix } from '$lib/chapter-label';
 	import { cn } from '$lib/utils/cn';
 	import { ripple } from '$lib/actions/ripple';
@@ -68,7 +69,7 @@
 
 	async function fetchItems(): Promise<TocItem[] | null> {
 		try {
-			const res = await fetch(`/api/books/${bookId}`);
+			const res = await apiFetch(`/api/books/${bookId}`);
 			const data = await res.json();
 			return data.chapters ?? [];
 		} catch {
@@ -102,7 +103,7 @@
 	// POLL THE SERVER FOR CHAPTERS WITH A RUNNING TRANSLATION JOB (RELIABLE ACROSS CURRENT + PREFETCH).
 	async function pollTranslating() {
 		try {
-			const res = await fetch(`/api/books/${bookId}/translating`);
+			const res = await apiFetch(`/api/books/${bookId}/translating`);
 			if (!res.ok) return;
 			const data = await res.json();
 			const next = new Set<string>(data.uuids ?? []);

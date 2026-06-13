@@ -6,6 +6,7 @@
 	import { toast } from 'svelte-sonner';
 	import { onMount, onDestroy } from 'svelte';
 	// IMPORTED MODULES
+	import { apiFetch } from '$lib/api';
 	import { cn } from '$lib/utils/cn';
 	import { DEFAULT_SOURCE_LANG, DEFAULT_TARGET_LANG } from '$lib/languages';
 	import { settings, THEME_CLASS } from '$lib/stores/settings';
@@ -118,7 +119,7 @@
 		const token = ++loadToken;
 		loading = true;
 		try {
-			const res = await fetch(
+			const res = await apiFetch(
 				`/api/glossary?${scopeQs}&page=${page}&pageSize=${pageSize}&q=${encodeURIComponent(query)}`,
 			);
 			const data = await res.json();
@@ -167,7 +168,7 @@
 		}
 		busy = true;
 		try {
-			const res = await fetch('/api/glossary', {
+			const res = await apiFetch('/api/glossary', {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
 				body: JSON.stringify({
@@ -199,7 +200,7 @@
 
 	async function saveRow(e: Entry) {
 		try {
-			const res = await fetch(`/api/glossary/${e.id}`, {
+			const res = await apiFetch(`/api/glossary/${e.id}`, {
 				method: 'PUT',
 				headers: { 'content-type': 'application/json' },
 				body: JSON.stringify({
@@ -218,7 +219,7 @@
 
 	async function removeRow(id: number) {
 		try {
-			await fetch(`/api/glossary/${id}`, { method: 'DELETE' });
+			await apiFetch(`/api/glossary/${id}`, { method: 'DELETE' });
 			await load();
 		} catch {
 			toast.error('Could not delete that term.');
@@ -234,7 +235,7 @@
 		}
 		const tid = toast.loading('Translating…');
 		try {
-			const res = await fetch('/api/translate-text', {
+			const res = await apiFetch('/api/translate-text', {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
 				body: JSON.stringify({ text: source, kind: 'term', bookId: scope === 'book' ? bookId : undefined }),
@@ -271,7 +272,7 @@
 				fd.append('sourceLang', sourceLang);
 				fd.append('targetLang', targetLang);
 			}
-			const res = await fetch('/api/glossary/import', { method: 'POST', body: fd });
+			const res = await apiFetch('/api/glossary/import', { method: 'POST', body: fd });
 			if (!res.ok) throw new Error((await res.json().catch(() => ({}))).message ?? 'Import failed');
 			const out = await res.json();
 			toast.success(`Imported ${out.parsed} rows (${out.added} new, ${out.updated} updated).`, { id: tid });

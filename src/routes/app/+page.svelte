@@ -6,6 +6,7 @@
 	import { toast } from 'svelte-sonner';
 	import { onMount } from 'svelte';
 	// IMPORTED MODULES
+	import { apiFetch } from '$lib/api';
 	import { browser } from '$app/environment';
 	import { goto } from '$app/navigation';
 	import { get } from 'svelte/store';
@@ -234,7 +235,7 @@
 	async function loadBooks() {
 		loading = true;
 		try {
-			const res = await fetch('/api/books');
+			const res = await apiFetch('/api/books');
 			booksList = await res.json();
 		} catch {
 			toast.error('Could not load your library.');
@@ -258,7 +259,7 @@
 		let cursor = 0;
 		const backfillOne = async (b: BookSummary) => {
 			try {
-				const res = await fetch(`/api/books/${b.id}`, { method: 'POST' });
+				const res = await apiFetch(`/api/books/${b.id}`, { method: 'POST' });
 				const { titleTarget, authorTarget } = await res.json();
 				booksList = booksList.map((x) =>
 					x.id === b.id
@@ -297,7 +298,7 @@
 		if (!title || busy) return;
 		busy = true;
 		try {
-			const res = await fetch('/api/books', {
+			const res = await apiFetch('/api/books', {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
 				body: JSON.stringify({
@@ -322,7 +323,7 @@
 		if (!urlInput.trim()) return;
 		busy = true;
 		try {
-			const res = await fetch('/api/fetch', {
+			const res = await apiFetch('/api/fetch', {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
 				body: JSON.stringify({ url: urlInput.trim(), sourceLang: newSourceLang, targetLang: newTargetLang }),
@@ -352,7 +353,7 @@
 			fd.append('file', file);
 			fd.append('sourceLang', newSourceLang);
 			fd.append('targetLang', newTargetLang);
-			const res = await fetch(`/api/import/${kind}`, { method: 'POST', body: fd });
+			const res = await apiFetch(`/api/import/${kind}`, { method: 'POST', body: fd });
 			if (!res.ok) throw new Error((await res.json().catch(() => ({}))).message ?? 'Import failed');
 			const data = await res.json();
 			toast.success(`Imported "${data.title}" (${data.chapters} chapters)`, { id: tid });
@@ -394,7 +395,7 @@
 	async function fetchCover(b: BookSummary) {
 		const tid = toast.loading(b.coverUrl ? 'Refetching cover…' : 'Fetching cover…');
 		try {
-			const res = await fetch(`/api/books/${b.id}/cover`, { method: 'POST' });
+			const res = await apiFetch(`/api/books/${b.id}/cover`, { method: 'POST' });
 			const data = await res.json();
 			if (!res.ok) throw new Error(data.message ?? 'Could not fetch the cover.');
 			if (!data.coverUrl) {
@@ -414,7 +415,7 @@
 		pendingDelete = null;
 		if (!b) return;
 		try {
-			await fetch(`/api/books/${b.id}`, { method: 'DELETE' });
+			await apiFetch(`/api/books/${b.id}`, { method: 'DELETE' });
 			booksList = booksList.filter((x) => x.id !== b.id);
 			toast.success('Book deleted.');
 		} catch {

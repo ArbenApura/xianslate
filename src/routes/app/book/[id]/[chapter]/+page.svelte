@@ -8,6 +8,7 @@
 	import { toast } from 'svelte-sonner';
 	import { onDestroy, onMount } from 'svelte';
 	// IMPORTED MODULES
+	import { apiFetch } from '$lib/api';
 	import { browser } from '$app/environment';
 	import { afterNavigate, goto } from '$app/navigation';
 	import { cjkStack, latinStack } from '$lib/fonts';
@@ -365,7 +366,7 @@
 	async function fetchByUrl(url: string, dir?: 'prev' | 'next') {
 		busyNav = true;
 		try {
-			const res = await fetch('/api/fetch', {
+			const res = await apiFetch('/api/fetch', {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
 				// ANCHOR = CURRENT CHAPTER (RIGHT POSITION); targetBookId = CURRENT BOOK SO A FETCHED
@@ -414,7 +415,7 @@
 	// RE-READ THE CURRENT CHAPTER'S SOURCE PAGE TO REFRESH ITS prev/next LINKS (RETURNS THE UPDATED VIEW).
 	async function refreshNav(uuid: string): Promise<ChapterView | null> {
 		try {
-			const r = await fetch('/api/chapter/refresh', {
+			const r = await apiFetch('/api/chapter/refresh', {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
 				body: JSON.stringify({ uuid }),
@@ -429,7 +430,7 @@
 	// CHAPTERS (AND OPTIONALLY WARM THEIR TRANSLATIONS). FIRE-AND-FORGET, BAILS IF YOU NAVIGATE AWAY.
 	async function getChapterView(uuid: string): Promise<ChapterView | null> {
 		try {
-			const r = await fetch(`/api/chapter?id=${uuid}`);
+			const r = await apiFetch(`/api/chapter?id=${uuid}`);
 			return r.ok ? await r.json() : null;
 		} catch {
 			return null;
@@ -438,7 +439,7 @@
 
 	async function fetchNeighbor(url: string, fromChapterId: number): Promise<ChapterView | null> {
 		try {
-			const r = await fetch('/api/fetch', {
+			const r = await apiFetch('/api/fetch', {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
 				body: JSON.stringify({ url, fromChapterId, dir: 'next', targetBookId: view?.bookId }),
@@ -456,7 +457,7 @@
 		if (!view || isMonolingual(view.targetLang)) return;
 		const ctrl = new AbortController();
 		try {
-			const res = await fetch('/api/translate', {
+			const res = await apiFetch('/api/translate', {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
 				body: JSON.stringify({ chapterId, autoExtract: $settings.autoExtract, model: $settings.model }),
@@ -525,7 +526,7 @@
 		extractFound = 0;
 		enText = '';
 		try {
-			const res = await fetch('/api/translate', {
+			const res = await apiFetch('/api/translate', {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
 				body: JSON.stringify({
@@ -615,7 +616,7 @@
 		extracting = true;
 		const tid = toast.loading('Extracting glossary terms…');
 		try {
-			const res = await fetch('/api/extract', {
+			const res = await apiFetch('/api/extract', {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
 				body: JSON.stringify({ chapterId: view.id, model: $settings.model }),
@@ -648,7 +649,7 @@
 		termsOpen = true;
 		termsLoading = true;
 		try {
-			const res = await fetch(`/api/extract?chapterId=${view.id}`);
+			const res = await apiFetch(`/api/extract?chapterId=${view.id}`);
 			if (!res.ok) throw new Error((await res.json().catch(() => ({}))).message ?? 'Could not load terms');
 			const d = await res.json();
 			termsUsed = d.terms ?? [];
@@ -774,7 +775,7 @@
 		// ONLY WRITE ON A MEANINGFUL INCREASE — AVOIDS A DB WRITE ON EVERY SCROLL TICK.
 		if (chapterMax <= lastSentProgress + 0.005) return;
 		lastSentProgress = chapterMax;
-		fetch(`/api/chapters/${view.uuid}/progress`, {
+		apiFetch(`/api/chapters/${view.uuid}/progress`, {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },
 			body: JSON.stringify({ progress: chapterMax }),
@@ -806,7 +807,7 @@
 		lastSentProgress = value;
 		view.readProgress = value;
 		try {
-			const res = await fetch(`/api/books/${view.bookId}/read`, {
+			const res = await apiFetch(`/api/books/${view.bookId}/read`, {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
 				body: JSON.stringify({ uuid: view.uuid, scope: 'this', read }),

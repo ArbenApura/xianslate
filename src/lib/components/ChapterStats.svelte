@@ -5,6 +5,7 @@
 	import { createEventDispatcher } from 'svelte';
 	import { toast } from 'svelte-sonner';
 	// IMPORTED MODULES
+	import { apiFetch } from '$lib/api';
 	import { cn } from '$lib/utils/cn';
 	import { ripple } from '$lib/actions/ripple';
 	// IMPORTED DEP-COMPONENTS
@@ -212,7 +213,7 @@
 		loadError = false;
 		stats = null;
 		try {
-			const res = await fetch(`/api/chapters/${id}/stats`);
+			const res = await apiFetch(`/api/chapters/${id}/stats`);
 			if (!res.ok) throw new Error((await res.json().catch(() => ({}))).message ?? 'Could not load stats');
 			const data: ChapterStats = await res.json();
 			// IGNORE A RESPONSE THE READER HAS ALREADY NAVIGATED PAST
