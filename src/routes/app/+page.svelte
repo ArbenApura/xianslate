@@ -498,7 +498,7 @@
 		<div class="mx-auto flex max-w-6xl items-center justify-between px-4 py-3 sm:px-6">
 			<div class="flex items-center gap-2">
 				<span class="flex items-center gap-2 text-xl font-bold tracking-tight"
-					><BookOpen size={20} class="text-sky-600" /> Xianslate</span
+					><img src="/logo.svg" alt="" class="h-7 w-7 rounded-[7px]" /> Xianslate</span
 				>
 				<span class="hidden text-xs opacity-50 sm:inline">· multilingual novel reader</span>
 			</div>
