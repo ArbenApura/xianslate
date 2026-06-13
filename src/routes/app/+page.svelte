@@ -101,6 +101,11 @@
 		{ value: 'finished', label: 'Finished' },
 	];
 	const PREFS_KEY = 'xianslate:library';
+	// CACHE OF THE LAST-SEEN LIBRARY (PER USER) SO REVISITS PAINT INSTANTLY INSTEAD OF FLASHING THE SKELETON.
+	// SMALL DATA → localStorage (SYNCHRONOUS, SO THERE'S NO SKELETON FRAME ON CLIENT-SIDE NAVIGATION). BUMP THE
+	// VERSION IF BookSummary CHANGES SHAPE.
+	const BOOKS_CACHE_PREFIX = 'xianslate:books:';
+	const BOOKS_CACHE_VERSION = 1;
 	// PER-CARD KEBAB MENU IS BUILT PER BOOK (SEE bookActions) SO THE COVER ACTION ONLY APPEARS FOR WEB
 	// BOOKS WITH A SOURCE PAGE. ALWAYS TAPPABLE (THE OLD HOVER-ONLY DELETE COULDN'T BE TRIGGERED ON TOUCH).
 
@@ -162,6 +167,10 @@
 
 	// PERSIST PREFS WHENEVER THEY CHANGE
 	$: if (browser) savePrefs(sortKey, sourceFilter, statusFilter);
+
+	// PERSIST THE SHELF WHENEVER IT CHANGES (ONCE LOADED) — POWERS THE INSTANT, SKELETON-FREE REVISIT. ALSO
+	// KEEPS THE CACHE FRESH AFTER DELETE / COVER / TITLE-BACKFILL, SINCE THOSE ALL REASSIGN booksList.
+	$: if (browser && !loading) writeBooksCache(booksList);
 
 	// -- FUNCTIONS -- //
 
@@ -238,8 +247,42 @@
 		(e.currentTarget as HTMLImageElement).style.display = 'none';
 	}
 
+	// CURRENT USER'S LIBRARY-CACHE KEY (null UNTIL WE KNOW WHO IS SIGNED IN — THEN WE NEITHER READ NOR WRITE,
+	// SO ONE ACCOUNT NEVER SEES ANOTHER'S CACHED SHELF ON A SHARED DEVICE).
+	function booksCacheKey(): string | null {
+		const id = get(currentUser)?.id ?? get(page).data?.user?.id ?? null;
+		return id ? `${BOOKS_CACHE_PREFIX}${id}` : null;
+	}
+
+	function readBooksCache(): BookSummary[] | null {
+		if (!browser) return null;
+		const key = booksCacheKey();
+		if (!key) return null;
+		try {
+			const raw = localStorage.getItem(key);
+			if (!raw) return null;
+			const parsed = JSON.parse(raw);
+			if (parsed?.v !== BOOKS_CACHE_VERSION || !Array.isArray(parsed.books)) return null;
+			return parsed.books as BookSummary[];
+		} catch {
+			return null;
+		}
+	}
+
+	function writeBooksCache(list: BookSummary[]): void {
+		if (!browser) return;
+		const key = booksCacheKey();
+		if (!key) return;
+		try {
+			localStorage.setItem(key, JSON.stringify({ v: BOOKS_CACHE_VERSION, books: list }));
+		} catch {
+			// IGNORE QUOTA ERRORS
+		}
+	}
+
 	async function loadBooks() {
-		loading = true;
+		// ONLY SHOW THE SKELETON ON A COLD LOAD; A CACHE-SEEDED SHELF REVALIDATES SILENTLY IN PLACE.
+		if (booksList.length === 0) loading = true;
 		try {
 			const res = await apiFetch('/api/books');
 			booksList = await res.json();
@@ -433,6 +476,12 @@
 
 	onMount(async () => {
 		loadPrefs();
+		// PAINT THE LAST-SEEN LIBRARY INSTANTLY (NO SKELETON), THEN REVALIDATE OVER THE NETWORK IN PLACE.
+		const cached = readBooksCache();
+		if (cached) {
+			booksList = cached;
+			loading = false;
+		}
 		await loadBooks();
 		backfillTitles();
 	});
