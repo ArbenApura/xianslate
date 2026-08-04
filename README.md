@@ -5,6 +5,8 @@ and translates them to English** with DeepSeek — in a fast, fully customizable
 Built for consistent, glossary-pinned translations (names/terms stay stable across a whole book) at minimal
 cost.
 
+MIT licensed. See [LICENSE](./LICENSE).
+
 ## Features
 
 -   **Ingest from 3 sources**: paste a chapter URL from supported sites (self-healing AI-learned parsers),
