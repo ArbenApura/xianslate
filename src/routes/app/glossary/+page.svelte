@@ -25,7 +25,7 @@
 <div class="mx-auto min-h-full w-full max-w-4xl px-4 py-8 sm:px-6">
 	<!-- BACK NAVIGATION -->
 	<div class="mb-4 flex items-center justify-between">
-		<a href="/app/" use:ripple class="text-sm text-slate-500 hover:text-sky-600">← Library</a>
+		<a href="/app/" use:ripple class="text-sm text-slate-500 hover:text-[#b23a2e]">← Library</a>
 	</div>
 	<!-- PAGE HEADER -->
 	<header class="mb-6">

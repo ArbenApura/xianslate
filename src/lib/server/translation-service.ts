@@ -26,7 +26,9 @@ import {
 
 export type TranslationEvent =
 	| { type: 'prepare'; paragraphs: number; chars: number } // CHAPTER SCOPE — SHOWN BEFORE ANY WORK STARTS
-	| { type: 'stage'; stage: 'extracting' } // PIPELINE PROGRESS BEFORE THE MATCHED-TERM META ARRIVES
+	// PIPELINE PROGRESS: 'waiting' = QUEUED BEHIND ANOTHER CHAPTER'S EXTRACTION; 'extracting' = TERM SCAN;
+	// 'finalizing' = POST-STREAM ALIGNMENT.
+	| { type: 'stage'; stage: 'waiting' | 'extracting' | 'finalizing' }
 	| { type: 'extract_progress'; done: number; total: number; terms: number } // PER-CHUNK TERM-SCAN PROGRESS
 	// extractedAt IS PRESENT ONLY WHEN EXTRACTION SUCCEEDED + PERSISTED — LETS THE READER FLIP ITS
 	// "Extract terms" CONTROL TO "View terms" WITHOUT A RELOAD.
@@ -42,6 +44,8 @@ type Listener = (evt: TranslationEvent) => void;
 
 interface Job {
 	chapterId: number;
+	// THE OWNER (Phase 4) — USED TO CHARGE QI AT THE done{cached:false} COMMIT (credit-system_20260615).
+	userId: string;
 	status: 'running' | 'done' | 'error';
 	// THE DEEPSEEK MODEL THIS JOB TRANSLATES/EXTRACTS WITH (FROM THE GLOBAL MODEL PICKER) — ALSO FOLDED INTO
 	// THE TRANSLATION CACHE KEY, SO A FLASH AND A PRO TRANSLATION OF THE SAME CHAPTER NEVER COLLIDE.
@@ -64,6 +68,17 @@ const ZERO_USAGE: TranslationUsage = {
 // MODULE-LEVEL REGISTRY: ONE DETACHED JOB PER CHAPTER. SURVIVES CLIENT DISCONNECTS;
 // COMPLETION IS PERSISTED TO THE DB, SO CLOSING THE BROWSER DOES NOT LOSE PROGRESS.
 const jobs = new Map<number, Job>();
+
+// PER-BOOK EXTRACTION QUEUE TAILS: GLOSSARY EXTRACTION READS-THEN-WRITES THE SHARED PER-BOOK GLOSSARY, SO
+// TWO CHAPTERS EXTRACTING AT ONCE WOULD DUPLICATE / CONFLICT TERMS. EACH BOOK'S CHAPTERS CHAIN THEIR
+// EXTRACTIONS THROUGH THIS TAIL (withExtractionLock) SO THEY RUN ONE AT A TIME, IN ARRIVAL ORDER.
+const extractionTails = new Map<string, Promise<unknown>>();
+
+// SAFETY CAP ON HOW LONG A CHAPTER WAITS FOR THE PRIOR EXTRACTION. NORMAL EXTRACTION TAKES A FEW SECONDS;
+// THIS ONLY TRIPS IF THE PRIOR ONE STALLS (E.G. A HUNG MODEL CALL). PROCEEDING THEN RISKS A LITTLE TERM
+// OVERLAP (addNewTerms IS ADDITIVE / FIRST-WRITER-WINS — NOT FATAL) BUT STOPS ONE STALL FROM PARKING THE
+// WHOLE BOOK'S CHAPTERS AS ZOMBIE 'running' JOBS.
+const EXTRACTION_WAIT_CAP_MS = 90_000;
 
 // -- FUNCTIONS -- //
 
@@ -90,6 +105,34 @@ export function subscribe(job: Job, listener: Listener): () => void {
 	for (const e of job.events) listener(e);
 	job.listeners.add(listener);
 	return () => job.listeners.delete(listener);
+}
+
+// RUN `task` ONLY AFTER ANY IN-FLIGHT EXTRACTION FOR THE SAME BOOK HAS SETTLED — A PER-BOOK SERIAL QUEUE.
+// `onQueued` FIRES ONCE IF WE ACTUALLY HAD TO WAIT BEHIND ANOTHER CHAPTER (DRIVES THE 'waiting' UI). THIS
+// IS WHAT MAKES "WAIT FOR THE PREVIOUS CHAPTER'S EXTRACTION" REAL-TIME: THE DETACHED JOB JUST WAITS HERE
+// AND PROCEEDS THE MOMENT THE PRIOR ONE FINISHES, STREAMING TO WHOEVER IS (RE)CONNECTED — NO REFRESH.
+async function withExtractionLock<T>(bookId: string, onQueued: () => void, task: () => Promise<T>): Promise<T> {
+	const prev = extractionTails.get(bookId);
+	if (prev) onQueued();
+	const run = (async () => {
+		// WAIT OUT THE PRIOR EXTRACTION, IGNORING ITS OUTCOME — A FAILED ONE MUST NOT BLOCK OURS — BUT NEVER
+		// LONGER THAN THE CAP, SO A STALLED EXTRACTION CAN'T FREEZE EVERY LATER CHAPTER OF THE BOOK.
+		if (prev) {
+			let timer: ReturnType<typeof setTimeout> | undefined;
+			const capped = new Promise<void>((resolve) => (timer = setTimeout(resolve, EXTRACTION_WAIT_CAP_MS)));
+			await Promise.race([prev.catch(() => {}), capped]);
+			clearTimeout(timer);
+		}
+		return task();
+	})();
+	// PUBLISH OURSELVES AS THE TAIL SO THE NEXT CHAPTER QUEUES BEHIND US.
+	extractionTails.set(bookId, run);
+	try {
+		return await run;
+	} finally {
+		// CLEAR THE TAIL ONLY IF NOBODY CHAINED AFTER US (OTHERWISE THEY NOW OWN IT).
+		if (extractionTails.get(bookId) === run) extractionTails.delete(bookId);
+	}
 }
 
 async function run(job: Job, force: boolean, autoExtract: boolean) {
@@ -195,30 +238,40 @@ async function run(job: Job, force: boolean, autoExtract: boolean) {
 		// EXTRACTION READS THE WHOLE CHAPTER THROUGH THE MODEL — A REAL EXPENSE. TRACK IT (ZERO IF SKIPPED/FAILED).
 		let extractUsage = ZERO_USAGE;
 		if (autoExtract && !chapter.extractedAt) {
-			emit(job, { type: 'stage', stage: 'extracting' });
-			try {
-				// FEED THE EXISTING GLOSSARY AS CONTEXT SO NEW TERMS STAY CONSISTENT WITH ESTABLISHED ONES.
-				// INCLUDE THE TITLE SO NAMES THAT APPEAR ONLY IN THE CHAPTER TITLE ARE CAPTURED TOO.
-				const { terms: drafts, usage: exUsage } = await extractTerms(
-					`${chapter.titleSource}\n\n${body}`,
-					pair,
-					await getEffectiveGlossary(chapter.bookId),
-					job.controller.signal,
-					// STREAM PER-CHUNK SCAN PROGRESS TO THE READER ("scanned 2/5 · 14 terms").
-					(done, total, terms) => emit(job, { type: 'extract_progress', done, total, terms }),
-					job.model,
-				);
-				// LEDGER THE EXTRACTION SPEND AND FOLD IT INTO THIS CHAPTER'S REPORTED COST.
-				extractUsage = exUsage;
-				await recordAiUsage('extract', exUsage, chapter.id);
-				// ADDITIVE ONLY — NEVER OVERWRITE A TERM ALREADY IN THE GLOSSARY (KEEPS NAMES CONSISTENT).
-				const res = await addNewTerms(chapter.bookId, drafts);
-				const extractedAt = Date.now();
-				await db.update(chapters).set({ extractedAt }).where(eq(chapters.id, chapter.id));
-				emit(job, { type: 'extracted', extracted: drafts.length, added: res.added, extractedAt });
-			} catch {
-				emit(job, { type: 'extracted', extracted: 0, added: 0 });
-			}
+			// SERIALIZE PER BOOK: WAIT FOR ANY EARLIER CHAPTER'S EXTRACTION TO PERSIST ITS TERMS BEFORE READING
+			// THE GLOSSARY, SO TWO CHAPTERS NEVER READ-THEN-WRITE IT AT ONCE (WHICH DUPLICATES / CONFLICTS TERMS).
+			// THE 'waiting' STAGE LETS THE READER SAY "WAITING FOR THE PREVIOUS CHAPTER…" IN REAL TIME — NO REFRESH.
+			await withExtractionLock(
+				chapter.bookId,
+				() => emit(job, { type: 'stage', stage: 'waiting' }),
+				async () => {
+					emit(job, { type: 'stage', stage: 'extracting' });
+					try {
+						// FEED THE EXISTING GLOSSARY AS CONTEXT SO NEW TERMS STAY CONSISTENT WITH ESTABLISHED ONES.
+						// INCLUDE THE TITLE SO NAMES THAT APPEAR ONLY IN THE CHAPTER TITLE ARE CAPTURED TOO.
+						const { terms: drafts, usage: exUsage } = await extractTerms(
+							`${chapter.titleSource}\n\n${body}`,
+							pair,
+							await getEffectiveGlossary(chapter.bookId),
+							job.controller.signal,
+							// STREAM PER-CHUNK SCAN PROGRESS TO THE READER ("scanned 2/5 · 14 terms").
+							(done, total, terms) => emit(job, { type: 'extract_progress', done, total, terms }),
+							job.model,
+						);
+						// LEDGER THE EXTRACTION SPEND AND FOLD IT INTO THIS CHAPTER'S REPORTED COST.
+						extractUsage = exUsage;
+						await recordAiUsage('extract', exUsage, chapter.id);
+						// ADDITIVE ONLY — NEVER OVERWRITE A TERM ALREADY IN THE GLOSSARY (KEEPS NAMES CONSISTENT). THE
+						// CHAPTER id STAMPS first_chapter_id (FIRST APPEARANCE) ON THE FRESH TERMS.
+						const res = await addNewTerms(chapter.bookId, drafts, chapter.id);
+						const extractedAt = Date.now();
+						await db.update(chapters).set({ extractedAt }).where(eq(chapters.id, chapter.id));
+						emit(job, { type: 'extracted', extracted: drafts.length, added: res.added, extractedAt });
+					} catch {
+						emit(job, { type: 'extracted', extracted: 0, added: 0 });
+					}
+				},
+			);
 		}
 
 		// STAGE 2 — MATCH GLOSSARY TERMS PRESENT IN THE CHAPTER (PICKS UP ANY JUST-EXTRACTED TERMS)
@@ -285,6 +338,8 @@ async function run(job: Job, force: boolean, autoExtract: boolean) {
 			job.controller.signal,
 			(full) => emit(job, { type: 'replace', text: full }),
 			job.model,
+			// POST-STREAM ALIGNMENT/REPAIR STARTED — TELL THE READER SO THE FROZEN LIVE COUNT READS AS "ALIGNING…".
+			() => emit(job, { type: 'stage', stage: 'finalizing' }),
 		);
 		// PERSISTENCE IS ISOLATED FROM THE TRANSLATION RESULT: THE STREAM SUCCEEDED AND THE USER ALREADY SAW
 		// (AND PAID FOR) THE FULL TEXT, SO A DB WRITE FAILURE MUST STILL EMIT `done` — NOT `error` (WHICH
@@ -321,6 +376,7 @@ export function ensureTranslationJob(
 	force = false,
 	autoExtract = false,
 	model: string = MODEL,
+	userId: string = '',
 ): Job {
 	const existing = jobs.get(chapterId);
 	if (existing && existing.status === 'running') {
@@ -336,6 +392,7 @@ export function ensureTranslationJob(
 
 	const job: Job = {
 		chapterId,
+		userId,
 		status: 'running',
 		model,
 		events: [],

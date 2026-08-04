@@ -214,7 +214,7 @@
 		aria-activedescendant={open && activeIndex >= 0 ? optionId(activeIndex) : undefined}
 		class={cn(
 			'flex w-full items-center gap-2 rounded-lg border border-black/10 bg-transparent px-3 py-2 text-left text-sm transition-colors hover:border-black/20 dark:border-white/[0.08] dark:hover:border-white/20',
-			open && 'border-sky-500 ring-1 ring-sky-500 dark:border-sky-500',
+			open && 'border-[#c0392b] ring-1 ring-[#c0392b] dark:border-[#c0392b]',
 			disabled && 'pointer-events-none opacity-50',
 		)}
 	>
@@ -254,7 +254,7 @@
 				class={cn(
 					'flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm transition-colors',
 					opt.value === value
-						? 'bg-sky-500/10 text-sky-600 dark:text-sky-300'
+						? 'bg-[#c0392b]/10 text-[#b23a2e] dark:text-[#e08a63]'
 						: 'hover:bg-black/5 dark:hover:bg-white/5',
 					i === activeIndex && 'bg-black/5 dark:bg-white/10',
 				)}

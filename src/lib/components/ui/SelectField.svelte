@@ -13,11 +13,11 @@
 <!-- SELECT FIELD: OPTIONAL LABEL + THEMED SELECT -->
 <label class="block">
 	{#if label}<span class="mb-1 block text-xs font-medium opacity-60">{label}</span>{/if}
-	<!-- outline-none SUPPRESSES BROWSER DEFAULT RING; focus:border-sky-500 PROVIDES THE VISIBLE FOCUS INDICATOR -->
+	<!-- outline-none SUPPRESSES BROWSER DEFAULT RING; focus:border-[#c0392b] PROVIDES THE VISIBLE FOCUS INDICATOR -->
 	<select
 		bind:value
 		class={cn(
-			'w-full rounded-lg border border-black/10 bg-transparent px-2.5 py-2 text-sm outline-none transition-colors focus:border-sky-500 dark:border-white/[0.06]',
+			'w-full rounded-lg border border-black/10 bg-transparent px-2.5 py-2 text-sm outline-none transition-colors focus:border-[#c0392b] dark:border-white/[0.06]',
 			selectClass,
 		)}
 		on:change

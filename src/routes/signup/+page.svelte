@@ -5,7 +5,7 @@
 	// IMPORTED MODULES
 	import { firebaseAuth } from '$lib/firebase';
 	import { authErrorMessage, establishSession } from '$lib/auth-client';
-	import { googleSignIn } from '$lib/native-auth';
+	import { googleSignIn } from '$lib/google-auth';
 	import { cn } from '$lib/utils/cn';
 	import { ripple } from '$lib/actions/ripple';
 	// IMPORTED DEP-COMPONENTS
@@ -56,7 +56,7 @@
 	<!-- AMBIENT GLOW (DECORATIVE) -->
 	<div class="pointer-events-none absolute inset-0 -z-10" aria-hidden="true">
 		<div
-			class="absolute left-1/2 top-1/4 h-72 w-72 -translate-x-1/2 rounded-full bg-gradient-to-br from-sky-500/15 to-indigo-500/15 blur-3xl"
+			class="absolute left-1/2 top-1/4 h-72 w-72 -translate-x-1/2 rounded-full bg-gradient-to-br from-[#c0392b]/15 to-indigo-500/15 blur-3xl"
 		></div>
 	</div>
 	<div
@@ -67,7 +67,7 @@
 			<!-- BRAND MARK (static/logo.svg) WITH A SOFT GLOW -->
 			<div class="relative mx-auto mb-3 h-12 w-12">
 				<div
-					class="absolute inset-0 -z-10 rounded-xl bg-gradient-to-br from-sky-500/40 to-indigo-500/40 blur-lg"
+					class="absolute inset-0 -z-10 rounded-xl bg-gradient-to-br from-[#c0392b]/40 to-indigo-500/40 blur-lg"
 					aria-hidden="true"
 				></div>
 				<img src="/logo.svg" alt="" class="h-12 w-12 rounded-xl" />
@@ -83,21 +83,21 @@
 				autocomplete="email"
 				placeholder="Email"
 				bind:value={email}
-				class="rounded-lg border border-black/10 bg-transparent px-3 py-2.5 text-sm outline-none transition-colors placeholder:opacity-40 focus:border-sky-500 focus:ring-2 focus:ring-sky-500/30 dark:border-white/[0.12]"
+				class="rounded-lg border border-black/10 bg-transparent px-3 py-2.5 text-sm outline-none transition-colors placeholder:opacity-40 focus:border-[#c0392b] focus:ring-2 focus:ring-[#c0392b]/30 dark:border-white/[0.12]"
 			/>
 			<input
 				type="password"
 				autocomplete="new-password"
 				placeholder="Password (8+ characters)"
 				bind:value={password}
-				class="rounded-lg border border-black/10 bg-transparent px-3 py-2.5 text-sm outline-none transition-colors placeholder:opacity-40 focus:border-sky-500 focus:ring-2 focus:ring-sky-500/30 dark:border-white/[0.12]"
+				class="rounded-lg border border-black/10 bg-transparent px-3 py-2.5 text-sm outline-none transition-colors placeholder:opacity-40 focus:border-[#c0392b] focus:ring-2 focus:ring-[#c0392b]/30 dark:border-white/[0.12]"
 			/>
 			<button
 				type="submit"
 				use:ripple={{ disabled: busy }}
 				disabled={busy}
 				class={cn(
-					'mt-1 flex items-center justify-center gap-2 rounded-lg bg-sky-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition-all hover:bg-sky-500 active:scale-[0.99]',
+					'mt-1 flex items-center justify-center gap-2 rounded-lg bg-[#b23a2e] px-4 py-2.5 text-sm font-medium text-white shadow-sm transition-all hover:bg-[#c0392b] active:scale-[0.99]',
 					busy && 'opacity-60',
 				)}
 			>
@@ -139,14 +139,14 @@
 		</button>
 
 		<!-- TRUST MICROCOPY -->
-		<p class="mt-4 text-center text-[11px] leading-relaxed opacity-45">
+		<p class="mt-3 text-center text-[11px] leading-relaxed opacity-45">
 			Your library is private to your account. We email a verification link after sign-up.
 		</p>
 
 		<!-- SIGN-IN LINK -->
 		<p class="mt-4 text-center text-sm opacity-60">
 			Already have an account?
-			<a href="/login/" use:ripple class="rounded font-medium text-sky-600 hover:underline dark:text-sky-400"
+			<a href="/login/" use:ripple class="rounded font-medium text-[#b23a2e] hover:underline dark:text-[#e08a63]"
 				>Sign in</a
 			>
 		</p>

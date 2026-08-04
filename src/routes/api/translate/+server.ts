@@ -9,7 +9,6 @@ import type { TranslationEvent } from '$lib/server/translation-service';
 import { requireUser } from '$lib/server/auth/user';
 import { assertChapterOwner } from '$lib/server/books';
 import { resolveModel } from '$lib/server/deepseek';
-import { assertWithinBudget } from '$lib/server/quota';
 import { ensureTranslationJob, subscribe } from '$lib/server/translation-service';
 
 // -- CONSTANTS -- //
@@ -33,10 +32,6 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 	// OWNERSHIP: VERIFY THE CALLER OWNS chapterId (JOIN TO book) *BEFORE* ATTACHING — STOPS A USER FROM
 	// SUBSCRIBING TO ANOTHER USER'S TRANSLATION STREAM BY GUESSING A NUMERIC chapterId. 404 IF NOT OWNED.
 	await assertChapterOwner(user.id, parsed.data.chapterId);
-	// COST GATE: REFUSE TO ENQUEUE A (BILLED) TRANSLATION WHEN THE USER IS OVER THEIR BUDGET. A RE-READ OF
-	// AN ALREADY-TRANSLATED CHAPTER NEVER REACHES HERE (THE READER SERVES THE STORED contentTarget), SO ONLY
-	// FRESH / FORCED TRANSLATIONS ARE GATED.
-	await assertWithinBudget(user.id);
 
 	const chapterId = parsed.data.chapterId;
 	const force = parsed.data.force ?? false;
@@ -97,7 +92,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 				close();
 			});
 
-			const job = ensureTranslationJob(chapterId, force, autoExtract, model);
+			const job = ensureTranslationJob(chapterId, force, autoExtract, model, user.id);
 			unsubscribe = subscribe(job, onEvent);
 		},
 	});

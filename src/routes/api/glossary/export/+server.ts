@@ -7,7 +7,7 @@ import type { RequestHandler } from './$types';
 import { DEFAULT_SOURCE_LANG, DEFAULT_TARGET_LANG } from '$lib/languages';
 import { requireUser } from '$lib/server/auth/user';
 import { assertBookOwner } from '$lib/server/books';
-import { getEffectiveGlossary, getGlossary } from '$lib/server/glossary';
+import { getEffectiveGlossary, getGlossary, rowToDraft } from '$lib/server/glossary';
 import { toGlossaryCsv } from '$lib/server/glossary-csv';
 
 // -- FUNCTIONS -- //
@@ -33,23 +33,11 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 		if (!bookId) throw error(400, 'bookId is required for book export.');
 		await assertBookOwner(user.id, bookId);
 		const rows = await getGlossary('book', bookId, user.id);
-		terms = rows.map((r) => ({
-			source: r.source,
-			target: r.target,
-			gender: r.gender,
-			context: r.context,
-			tags: r.tags,
-		}));
+		terms = rows.map(rowToDraft);
 		name = `glossary-book-${bookId}.csv`;
 	} else if (scope === 'global') {
 		const rows = await getGlossary('global', null, user.id, pair);
-		terms = rows.map((r) => ({
-			source: r.source,
-			target: r.target,
-			gender: r.gender,
-			context: r.context,
-			tags: r.tags,
-		}));
+		terms = rows.map(rowToDraft);
 		name = 'glossary-global.csv';
 	} else {
 		throw error(400, 'scope must be global, book, or effective.');

@@ -1,19 +1,40 @@
 // IMPORTED TYPES
 import type { ParsedChapter } from '$lib/types';
+// IMPORTED ENVS ($env/...)
+import { env } from '$env/dynamic/private';
 // IMPORTED DEP-MODULES
 import { execFile } from 'node:child_process';
 import { lookup } from 'node:dns/promises';
 import { existsSync } from 'node:fs';
 import { promisify } from 'node:util';
+import PQueue from 'p-queue';
 // IMPORTED MODULES
 import { getLanguage } from '$lib/languages';
 import { decodeTextBytes } from './charset';
 import { FetchError } from './fetch-error';
-import { renderHtml } from './headless';
-import { extractCover } from './site-parser';
+import { extractBookTitle, extractCover } from './site-parser';
 import { learnCover } from './site-adapter';
-import { parseChapter } from './site-adapter';
+import { hostFetchCost, parseChapter } from './site-adapter';
 import { recordFetchError, recordFetchOk } from './site-stats';
+
+// -- TYPES -- //
+
+// A TRANSPORT RESULT: THE DECODED HTML PLUS WHAT THE FETCH COST. THE FREE node-fetch / curl PATHS REPORT
+// costUsd 0; ONLY ZYTE REQUESTS CARRY A COST.
+interface FetchResult {
+	html: string;
+	provider: 'zyte' | 'direct' | 'curl';
+	costUsd: number;
+}
+
+// ONE BILLED FETCH EVENT REPORTED TO THE CALLER VIA THE onBill CALLBACK. THE CALLER OWNS RECORDING IT — IT
+// KNOWS THE userId AND (AFTER INGEST) THE chapterId, WHICH THE TRANSPORT DOESN'T. provider IS THE ZYTE TIER
+// ('zyte' = HTTP). FREE PATHS (costUsd 0) DON'T EMIT.
+export interface FetchBilling {
+	host: string;
+	provider: string;
+	costUsd: number;
+}
 
 // -- CONSTANTS -- //
 
@@ -34,6 +55,39 @@ const CURL_BIN: string = (() => {
 const MAX_REDIRECTS = 5;
 
 const FETCH_TIMEOUT_MS = 30_000;
+
+// ZYTE API — MANAGED FETCH/UNBLOCKING. WHEN ZYTE_API_KEY IS SET IT'S THE PRIMARY TRANSPORT FOR EVERY FETCH
+// (httpResponseBody TIER), AND THE node-fetch→curl PATH BELOW BECOMES THE FREE FALLBACK FOR A ZYTE OUTAGE OR
+// AN UNCONFIGURED (DEV) ENV. COSTS ARE PASS-THROUGH AND ENV-TUNABLE SO A PRICE CHANGE NEEDS NO CODE EDIT —
+// THEY ARE WHAT recordFetchUsage DEDUCTS FROM THE USER'S ROLLING BUDGET PER REQUEST.
+const ZYTE_API_KEY = env.ZYTE_API_KEY ?? '';
+
+const ZYTE_ENDPOINT = env.ZYTE_ENDPOINT ?? 'https://api.zyte.com/v1/extract';
+
+// USD PER *SUCCESSFUL* ZYTE httpResponseBody REQUEST. ZYTE BILLS BY SITE-DIFFICULTY TIER (1–5) AND THE API DOES
+// NOT RETURN THE TIER OR COST PER REQUEST, SO THIS IS A FIXED PASS-THROUGH *ESTIMATE*, NOT THE EXACT CHARGE. PAYG
+// PER-1k RANGES (2026): HTTP $0.13 (T1) → $1.27 (T5). A SITE ONLY REACHES ZYTE WHEN THE FREE direct→curl PATH
+// FAILED — THOSE ARE THE HARDER SITES, WHICH SKEW TO TIER 3+ — SO THE DEFAULT BELOW IS TIER-3, NOT THE TIER-1
+// FLOOR, TO AVOID SILENTLY UNDER-COUNTING SPEND. MEASURE YOUR REAL RATE FROM THE ZYTE INVOICE (total $ ÷
+// SUCCESSFUL httpResponseBody REQUESTS) AND SET THE ENV.
+const ZYTE_COST_HTTP = Number(env.ZYTE_COST_PER_REQUEST ?? '0.00044');
+
+// ZYTE ENFORCES A PER-KEY *RATE* LIMIT (DEFAULT 2 req/s = 120/min), RETURNING 429 ON EXCESS — IT IS NOT
+// CONCURRENCY-BASED. BOTH TIERS SHARE IT, SO WE PACE EVERY ZYTE CALL THROUGH ONE QUEUE CAPPED AT ZYTE_RPS
+// STARTS PER SECOND INSTEAD OF FIRING UNBOUNDED CONCURRENT REQUESTS. RAISE ZYTE_RPS ONLY AFTER ZYTE LIFTS YOUR
+// KEY'S LIMIT (SUPPORT TICKET). SINGLE-PROCESS ONLY: A MULTI-INSTANCE DEPLOY WOULD NEED A SHARED LIMITER, SINCE
+// EACH PROCESS GETS ITS OWN BUDGET HERE — DIVIDE ZYTE_RPS BY THE INSTANCE COUNT THEN.
+const ZYTE_RPS = Math.max(1, Number(env.ZYTE_RPS ?? '2'));
+
+// HOW MANY TIMES TO RETRY A 429/503 (RATE LIMIT / TRANSIENT) WITH BACKOFF BEFORE GIVING UP TO THE FREE PATH.
+const ZYTE_MAX_RETRIES = Math.max(0, Number(env.ZYTE_MAX_RETRIES ?? '4'));
+
+// PACES EVERY ZYTE CALL TO <= ZYTE_RPS STARTS PER SECOND (SHARED BY THE HTTP + RENDER TIERS, PER KEY).
+const zyteQueue = new PQueue({ interval: 1000, intervalCap: ZYTE_RPS });
+
+// HARD CEILING ON A FETCHED RESPONSE BODY — A MALICIOUS / MISCONFIGURED HOST COULD OTHERWISE STREAM AN
+// UNBOUNDED BODY AND OOM THE (SINGLE-INSTANCE) SERVER. MIRRORS THE curl FALLBACK'S 32MB maxBuffer.
+const MAX_BODY_BYTES = 32 * 1024 * 1024;
 
 const BROWSER_UA =
 	'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
@@ -156,13 +210,47 @@ function decodeHtmlBytes(bytes: Uint8Array, contentType: string | null, hints: s
 	return decodeTextBytes(bytes, true, hints);
 }
 
+// READ A RESPONSE BODY WITH A HARD BYTE CEILING, STREAMING SO WE NEVER BUFFER MORE THAN MAX_BODY_BYTES BEFORE
+// BAILING. RETURNS THE RAW BYTES (CHARSET DETECTION RUNS ON THEM). THROWS A TYPED too_large ON OVERFLOW.
+async function readBodyCapped(res: Response, host: string): Promise<Uint8Array> {
+	const tooLarge = () =>
+		new FetchError('too_large', 'That page is too large for us to open. Try a direct chapter link.', host);
+	const reader = res.body?.getReader();
+	// NO STREAM (SHOULDN'T HAPPEN FOR A 200 BODY) → FALL BACK TO arrayBuffer WITH A POST-HOC SIZE CHECK.
+	if (!reader) {
+		const buf = new Uint8Array(await res.arrayBuffer());
+		if (buf.length > MAX_BODY_BYTES) throw tooLarge();
+		return buf;
+	}
+	const chunks: Uint8Array[] = [];
+	let total = 0;
+	for (;;) {
+		const { done, value } = await reader.read();
+		if (done) break;
+		if (!value) continue;
+		total += value.length;
+		if (total > MAX_BODY_BYTES) {
+			await reader.cancel().catch(() => {});
+			throw tooLarge();
+		}
+		chunks.push(value);
+	}
+	const out = new Uint8Array(total);
+	let offset = 0;
+	for (const c of chunks) {
+		out.set(c, offset);
+		offset += c.length;
+	}
+	return out;
+}
+
 // CURL FALLBACK — PROVEN TO PASS THE SITE'S BOT CHECK ON THIS HOST. `pin` IS THE PRE-VALIDATED IP.
 async function curlFetch(
 	u: URL,
 	pin: { address: string; family: number },
 	acceptLanguage: string,
 	hints: string[],
-): Promise<string> {
+): Promise<FetchResult> {
 	const port = u.port || (u.protocol === 'https:' ? '443' : '80');
 	let stdout: string | Buffer;
 	try {
@@ -209,13 +297,108 @@ async function curlFetch(
 			u.hostname,
 		);
 	}
-	return decodeHtmlBytes(buf, null, hints);
+	return { html: decodeHtmlBytes(buf, null, hints), provider: 'curl', costUsd: 0 };
 }
 
-// FETCH HTML, FALLING BACK TO SYSTEM curl WHEN THE NODE CLIENT IS BLOCKED (CLOUDFLARE 403).
+// HOST OF A URL FOR THE BILLING LEDGER (www-STRIPPED, LOWERCASED). NEVER THROWS.
+function hostOf(url: string): string {
+	try {
+		return new URL(url).hostname.toLowerCase().replace(/^www\./, '');
+	} catch {
+		return 'unknown';
+	}
+}
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+// ONE PACED + RETRIED POST TO ZYTE. zyteQueue CAPS THE START RATE TO ZYTE_RPS; A 429 (RATE LIMIT) OR 503 IS
+// RETRIED WITH BACKOFF — HONORING Retry-After WHEN PRESENT, ELSE EXPONENTIAL (0.5s→8s) — RATHER THAN FAILING
+// OVER, BECAUSE A RATE LIMIT IS TRANSIENT, NOT AN OUTAGE. RETURNS THE FINAL Response (THE CALLER MAPS A
+// STILL-NON-OK STATUS TO A TYPED FetchError); A network/timeout THROW PROPAGATES TO THE CALLER'S FALLBACK.
+async function zyteRequest(body: Record<string, unknown>): Promise<Response> {
+	const headers = {
+		// ZYTE USES HTTP BASIC AUTH: THE API KEY IS THE USERNAME, THE PASSWORD IS EMPTY.
+		Authorization: `Basic ${Buffer.from(`${ZYTE_API_KEY}:`).toString('base64')}`,
+		'Content-Type': 'application/json',
+	};
+	const payload = JSON.stringify(body);
+	for (let attempt = 0; ; attempt++) {
+		// queue.add PACES THE START TO RESPECT ZYTE_RPS; A FRESH TIMEOUT BOUNDS EACH ATTEMPT.
+		const res = (await zyteQueue.add(() =>
+			fetch(ZYTE_ENDPOINT, {
+				method: 'POST',
+				headers,
+				body: payload,
+				signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+			}),
+		)) as Response | undefined;
+		if (!res)
+			throw new FetchError(
+				'network',
+				'We couldn’t reach the page service right now. Please try again in a moment.',
+			);
+		if ((res.status !== 429 && res.status !== 503) || attempt >= ZYTE_MAX_RETRIES) return res;
+		// RATE-LIMITED / TRANSIENT → WAIT THEN RETRY. PREFER THE SERVER'S Retry-After (SECONDS), CAPPED AT 30s.
+		const ra = Number(res.headers.get('retry-after'));
+		const waitMs =
+			Number.isFinite(ra) && ra > 0 ? Math.min(30_000, ra * 1000) : Math.min(8_000, 500 * 2 ** attempt);
+		await sleep(waitMs);
+	}
+}
+
+// FETCH VIA THE ZYTE API (httpResponseBody TIER). RETURNS THE RAW BODY (base64) + HEADERS, SO OUR EXISTING
+// CHARSET PIPELINE STILL DECODES LEGACY GBK / Big5 / Shift_JIS CORRECTLY. A TARGET 404 SURFACES AS not_found; A
+// BAD KEY / QUOTA / ZYTE 5xx BECOMES network SO THE CALLER CAN DEGRADE TO THE FREE DIRECT PATH. NO SSRF DNS
+// PIN IS NEEDED — ZYTE EGRESSES FROM ITS OWN NETWORK, NOT OURS — BUT WE STILL REJECT NON-http(s) INPUT.
+async function zyteFetch(url: string, hints: string[]): Promise<FetchResult> {
+	let target: URL;
+	try {
+		target = new URL(url);
+	} catch {
+		throw new FetchError('invalid_url', 'That link doesn’t look right. Paste the full address of a chapter page.');
+	}
+	if (target.protocol !== 'http:' && target.protocol !== 'https:') {
+		throw new FetchError('invalid_url', 'That link doesn’t look right. It should start with http:// or https://.');
+	}
+	let res: Response;
+	try {
+		res = await zyteRequest({ url, httpResponseBody: true, httpResponseHeaders: true });
+	} catch {
+		throw new FetchError('network', 'We couldn’t reach the page service right now. Please try again in a moment.');
+	}
+	if (!res.ok) {
+		if (res.status === 404)
+			throw new FetchError(
+				'not_found',
+				'That chapter page couldn’t be found. The link may be wrong or the page was removed.',
+			);
+		// 401/403 (KEY/QUOTA) OR 5xx ARE ZYTE-SIDE — TREAT AS A TRANSPORT FAILURE SO THE CALLER CAN FALL BACK.
+		throw new FetchError('network', 'The page service is busy right now. Please try again in a moment.');
+	}
+	const data = (await res.json()) as {
+		httpResponseBody?: string;
+		httpResponseHeaders?: { name: string; value: string }[];
+	};
+	if (!data.httpResponseBody)
+		throw new FetchError(
+			'blocked_bot',
+			`“${target.hostname}” won’t let us open its pages, so its chapters can’t be loaded.`,
+		);
+	const bytes = new Uint8Array(Buffer.from(data.httpResponseBody, 'base64'));
+	const contentType = data.httpResponseHeaders?.find((h) => h.name.toLowerCase() === 'content-type')?.value ?? null;
+	// PER-HOST COST OVERRIDE (THIS HOST'S OBSERVED ZYTE TIER, FROM INVOICE RECONCILIATION) WHEN SET, ELSE THE ENV ESTIMATE.
+	return {
+		html: decodeHtmlBytes(bytes, contentType, hints),
+		provider: 'zyte',
+		costUsd: (await hostFetchCost(url)) ?? ZYTE_COST_HTTP,
+	};
+}
+
+// DIRECT TRANSPORT — node fetch, FALLING BACK TO SYSTEM curl WHEN THE NODE CLIENT IS BLOCKED (CLOUDFLARE 403).
 // REDIRECTS ARE FOLLOWED *MANUALLY* SO EVERY HOP IS RE-VALIDATED BY THE SSRF GUARD — A PUBLIC URL THAT
-// 30x-REDIRECTS TO 127.0.0.1 / 169.254.169.254 / AN INTERNAL HOST IS REJECTED INSTEAD OF FOLLOWED.
-async function fetchHtml(url: string, acceptLanguage: string, hints: string[]): Promise<string> {
+// 30x-REDIRECTS TO 127.0.0.1 / 169.254.169.254 / AN INTERNAL HOST IS REJECTED INSTEAD OF FOLLOWED. THIS IS THE
+// FREE PATH (costUsd 0): USED WHEN ZYTE ISN'T CONFIGURED, OR AS THE FALLBACK ON A ZYTE TRANSPORT FAILURE.
+async function directFetchHtml(url: string, acceptLanguage: string, hints: string[]): Promise<FetchResult> {
 	const headers = browserHeaders(acceptLanguage);
 	let current = url;
 	for (let hop = 0; hop < MAX_REDIRECTS; hop++) {
@@ -239,7 +422,15 @@ async function fetchHtml(url: string, acceptLanguage: string, hints: string[]): 
 			continue;
 		}
 		if (res.ok)
-			return decodeHtmlBytes(new Uint8Array(await res.arrayBuffer()), res.headers.get('content-type'), hints);
+			return {
+				html: decodeHtmlBytes(
+					await readBodyCapped(res, pin.url.hostname),
+					res.headers.get('content-type'),
+					hints,
+				),
+				provider: 'direct',
+				costUsd: 0,
+			};
 		// CLOUDFLARE / BOT-CHECK BLOCK → curl FALLBACK ON THE SAME VALIDATED URL; ANYTHING ELSE IS FATAL
 		if (res.status === 403 || res.status === 503) return await curlFetch(pin.url, pin, acceptLanguage, hints);
 		if (res.status === 404)
@@ -252,60 +443,44 @@ async function fetchHtml(url: string, acceptLanguage: string, hints: string[]): 
 	throw new FetchError('http_error', 'This page kept redirecting and couldn’t be opened.');
 }
 
-// APPROX VISIBLE-TEXT LENGTH OF A PAGE (TAGS/SCRIPTS STRIPPED) — TINY VALUES MEAN A CLIENT-RENDERED SHELL.
-function visibleTextLen(html: string): number {
-	return html
-		.replace(/<(script|style)[\s\S]*?<\/\1>/gi, '')
-		.replace(/<[^>]+>/g, ' ')
-		.replace(/\s+/g, ' ')
-		.trim().length;
-}
-
-// RENDER A JS-BUILT PAGE IN HEADLESS CHROMIUM AND RETURN ITS HTML — SSRF-GUARDED (WE VALIDATE THE HOST
-// IS PUBLIC BEFORE NAVIGATING) AND BEST-EFFORT (null IF RENDERING IS UNAVAILABLE OR FAILS).
-async function tryRender(url: string, acceptLanguage: string): Promise<string | null> {
-	try {
-		await assertPublicUrl(url);
-		return await renderHtml(url, acceptLanguage);
-	} catch {
-		return null;
+// PRIMARY-TRANSPORT SELECTOR. WHEN ZYTE IS CONFIGURED IT FETCHES EVERY PAGE (httpResponseBody TIER) AND WE
+// BILL THE USER PASS-THROUGH; A ZYTE *TRANSPORT* FAILURE (network) DEGRADES TO THE FREE node-fetch→curl PATH SO
+// AN OUTAGE / MISSING KEY NEVER TAKES DOWN ALL FETCHES. A REAL TARGET OUTCOME (404 / blocked) PROPAGATES AS-IS.
+async function fetchHtml(url: string, acceptLanguage: string, hints: string[]): Promise<FetchResult> {
+	if (ZYTE_API_KEY) {
+		try {
+			return await zyteFetch(url, hints);
+		} catch (e) {
+			if (!(e instanceof FetchError) || e.kind !== 'network') throw e;
+			// ZYTE WAS UNREACHABLE / ERRORED — FALL THROUGH TO THE FREE DIRECT PATH (NO CHARGE).
+		}
 	}
-}
-
-// ONLY A PARSE-STAGE FAILURE (NO CHAPTER FOUND IN STATIC HTML) IS WORTH A RENDER RETRY — NOT A TRANSPORT
-// OR CONFIG FAILURE (BLOCKED / NOT FOUND / NO API KEY): RENDERING THOSE WOULD FAIL THE SAME WAY.
-function isRenderableFailure(e: unknown): boolean {
-	return e instanceof FetchError && (e.kind === 'unsupported_site' || e.kind === 'parse_failed');
+	return await directFetchHtml(url, acceptLanguage, hints);
 }
 
 // FETCH A CHAPTER PAGE FROM ANY SUPPORTED HOST. TRANSPORT LIVES HERE; THE SITE-SPECIFIC PARSING IS
 // DELEGATED TO THE AI-LEARNED, SELF-HEALING ADAPTER. `sourceLang` TUNES Accept-Language AND THE LEGACY
-// CHARSET CANDIDATES (zh→Big5/GBK, ja→Shift_JIS/EUC-JP, ko→EUC-KR). FOR JS-RENDERED (SPA) PAGES WHERE THE
-// STATIC HTML HAS NO CHAPTER, IT FALLS BACK TO A HEADLESS RENDER AND PARSES THAT INSTEAD. EVERY FAILURE
-// SURFACES AS A TYPED FetchError SO THE API CAN REPORT EXACTLY WHY.
-export async function fetchChapter(url: string, sourceLang?: string): Promise<ParsedChapter> {
+// CHARSET CANDIDATES (zh→Big5/GBK, ja→Shift_JIS/EUC-JP, ko→EUC-KR). ZYTE'S httpResponseBody TIER IS THE
+// PRIMARY TRANSPORT (FREE node-fetch→curl FALLBACK). `onBill` (WHEN GIVEN) RECEIVES EACH BILLED ZYTE FETCH
+// (PAY-PER-SUCCESS) SO THE CALLER CAN CHARGE THE USER AND ATTRIBUTE IT TO THE CHAPTER; OMIT IT FOR UNBILLED
+// (e.g. TEST-HARNESS) CALLS. EVERY FAILURE SURFACES AS A TYPED FetchError SO THE API CAN REPORT WHY.
+export async function fetchChapter(
+	url: string,
+	sourceLang?: string,
+	onBill?: (e: FetchBilling) => void,
+): Promise<ParsedChapter> {
 	const lang = getLanguage(sourceLang);
+	// REPORT A BILLED (ZYTE) TRANSPORT ON A RETURNED PAGE — ZYTE CHARGES FOR THE RESPONSE WHETHER OR NOT PARSING
+	// LATER SUCCEEDS, SO EMIT AS SOON AS THE PAGE COMES BACK. FREE PATHS (costUsd 0) ARE SKIPPED; site_events
+	// ALREADY LOGS EVERY FETCH FOR THE DASHBOARD.
+	const bill = (r: FetchResult) => {
+		if (onBill && r.costUsd > 0) onBill({ host: hostOf(url), provider: r.provider, costUsd: r.costUsd });
+	};
 	try {
-		const html = await fetchHtml(url, lang.acceptLanguage, lang.charsetHints);
-
-		// PRE-CHECK: AN OBVIOUS SPA SHELL (ALMOST NO VISIBLE TEXT) → RENDER FIRST, SO WE DON'T SPEND AN AI
-		// MAPPING CALL ON EMPTY HTML. OTHERWISE PARSE THE STATIC HTML AND RENDER ONLY IF IT CAN'T BE PARSED.
-		let chapter: ParsedChapter;
-		if (visibleTextLen(html) < 600) {
-			const rendered = await tryRender(url, lang.acceptLanguage);
-			chapter = await parseChapter(rendered ?? html, url);
-		} else {
-			try {
-				chapter = await parseChapter(html, url);
-			} catch (e) {
-				if (!isRenderableFailure(e)) throw e;
-				const rendered = await tryRender(url, lang.acceptLanguage);
-				if (!rendered || rendered === html) throw e;
-				chapter = await parseChapter(rendered, url);
-			}
-		}
-
-		// RECORD THE OUTCOME FOR THE /admin DASHBOARD (BEST-EFFORT, NEVER BLOCKS THE FETCH).
+		const res = await fetchHtml(url, lang.acceptLanguage, lang.charsetHints);
+		bill(res);
+		const chapter = await parseChapter(res.html, url);
+		// RECORD THE OUTCOME FOR THE SITE-RELIABILITY LEDGER (BEST-EFFORT, NEVER BLOCKS THE FETCH).
 		void recordFetchOk(url);
 		return chapter;
 	} catch (e) {
@@ -314,15 +489,23 @@ export async function fetchChapter(url: string, sourceLang?: string): Promise<Pa
 	}
 }
 
-// FETCH A BOOK'S COVER IMAGE FROM ITS INDEX/BOOK PAGE. SSRF-GUARDED, BEST-EFFORT (null ON ANY FAILURE).
-// TRIES og:image / scored <img> DETERMINISTICALLY, THEN AN AI PICK FROM THE PAGE'S IMAGES AS A FALLBACK.
-export async function fetchBookCover(indexUrl: string, sourceLang?: string): Promise<string | null> {
+// FETCH A BOOK'S METADATA (COVER + CLEAN TITLE) FROM ITS INDEX/BOOK PAGE IN ONE REQUEST. BEST-EFFORT (NULLS
+// ON ANY FAILURE). COVER: og:image / scored <img> DETERMINISTICALLY, THEN AN AI PICK AS A FALLBACK. TITLE:
+// og:title — THE AUTHORITATIVE BOOK NAME WHEN THE CHAPTER PAGE'S HEADING MASHES BOOK + CHAPTER TOGETHER. THE
+// INDEX/BOOK PAGE IS THE RIGHT SOURCE FOR BOTH, SO THEY SHARE THE (BILLED) FETCH — `onBill` IS CALLED LIKE
+// fetchChapter (BOOK-LEVEL: NO chapterId). INPUT VALIDATION + SSRF GUARDING LIVE IN THE TRANSPORT.
+export async function fetchBookMeta(
+	indexUrl: string,
+	sourceLang?: string,
+	onBill?: (e: FetchBilling) => void,
+): Promise<{ cover: string | null; title: string | null }> {
 	try {
-		await assertPublicUrl(indexUrl);
 		const lang = getLanguage(sourceLang);
-		const html = await fetchHtml(indexUrl, lang.acceptLanguage, lang.charsetHints);
-		return extractCover(html, indexUrl) ?? (await learnCover(html, indexUrl));
+		const res = await fetchHtml(indexUrl, lang.acceptLanguage, lang.charsetHints);
+		if (onBill && res.costUsd > 0) onBill({ host: hostOf(indexUrl), provider: res.provider, costUsd: res.costUsd });
+		const cover = extractCover(res.html, indexUrl) ?? (await learnCover(res.html, indexUrl));
+		return { cover, title: extractBookTitle(res.html) };
 	} catch {
-		return null;
+		return { cover: null, title: null };
 	}
 }

@@ -37,6 +37,13 @@ const KO_CHAPTER_RE = /제\s*(\d{1,7})\s*[장화권부편]/;
 
 const EN_CHAPTER_RE = /\bchapter\s+(\d{1,7})\b/i;
 
+// KOREAN / GENERIC LEADING-NUMBER TITLES — MANY KOREAN WEB-NOVEL SITES NUMBER A CHAPTER WITH A BARE LEADING
+// NUMBER ("1 - 각성이니라", "1 첫만남", "123화 제목"), NOT A 제N화 MARKER. THE NUMBER MUST BE DELIMITED FROM THE
+// REST (AN OPTIONAL KOREAN MARKER THEN A SEPARATOR/SPACE/END) SO A TITLE LIKE "5분 후" ISN'T READ AS CHAPTER 5.
+// CONSULTED LAST (AFTER 第N章 / 제N화 / Chapter N), SO IT NEVER OVERRIDES AN EXPLICIT MARKER.
+const KO_MARK = '화話장회권부편';
+const LEADING_NUM_RE = new RegExp(`^\\s*제?\\s*0*(\\d{1,7})(?:\\s*[${KO_MARK}])?(?=[\\s\\-–—.:、)\\]]|$)`);
+
 // NON-CHAPTER ENTRIES — ONLY CONSULTED WHEN NO CHAPTER NUMBER IS PRESENT (CN · JP · KO · EN)
 const SPECIAL: { re: RegExp; tag: string }[] = [
 	{ re: /楔子|序章|序言|引子|プロローグ|프롤로그/, tag: 'Prologue' },
@@ -55,6 +62,10 @@ const SPECIAL: { re: RegExp; tag: string }[] = [
 const STRIP_ZH = new RegExp(`^\\s*第\\s*(?:\\d{1,7}|[${ZH_NUM}]{1,12})\\s*[章回節节卷][\\s:：、.\\-—]*`);
 
 const STRIP_EN = /^\s*chapter\s+\d{1,7}\s*[:：.\-—]*\s*/i;
+
+// STRIP A LEADING-NUMBER PREFIX ("1 - ", "1 ", "123화 ") FOR DISPLAY — THE NUMBER IS SHOWN SEPARATELY. THE
+// TRAILING DELIMITER (SEP/SPACE/END) IS REQUIRED SO "5분 후" KEEPS ITS "5" (MIRRORS LEADING_NUM_RE'S GUARD).
+const STRIP_LEADING_NUM = new RegExp(`^\\s*제?\\s*0*\\d{1,7}(?:\\s*[${KO_MARK}])?(?:[\\s\\-–—.:、)\\]]+|$)`);
 
 // A LEADING "第N章…" / "Chapter N…" LINE (OPTIONALLY MARKDOWN "# ") IS A REDUNDANT HEADING IN THESE
 // NOVELS — THE BODY NEVER REALLY OPENS THAT WAY, SO THIS SIGNAL ALONE IS ENOUGH TO CUT IT.
@@ -94,6 +105,9 @@ function numberFrom(title: string | null | undefined): number | null {
 	if (ko) return parseInt(ko[1], 10);
 	const en = EN_CHAPTER_RE.exec(title);
 	if (en) return parseInt(en[1], 10);
+	// LAST RESORT — A BARE LEADING NUMBER (KOREAN "1 - 제목" / "1 제목" / "123화 제목").
+	const lead = LEADING_NUM_RE.exec(title);
+	if (lead) return parseInt(lead[1], 10);
 	return null;
 }
 
@@ -112,10 +126,14 @@ export function chapterLabel(titleSource: string, titleTarget?: string | null): 
 	return { kind: 'plain' };
 }
 
-/** REMOVE A LEADING "第555章" / "Chapter 555:" PREFIX FOR DISPLAY (THE NUMBER IS SHOWN SEPARATELY). */
+/**
+ * REMOVE A LEADING "第555章" / "Chapter 555:" PREFIX, RETURNING THE *SUBTITLE* THAT FOLLOWS IT (THE NUMBER IS
+ * SHOWN SEPARATELY VIA chapterLabel). RETURNS '' WHEN THE TITLE IS ONLY A CHAPTER MARKER ("第一章" / "Chapter 1")
+ * WITH NO SUBTITLE — SO A CALLER THAT ALSO RENDERS THE "Chapter N" LABEL DOESN'T REPEAT IT ("Chapter 1: Chapter 1").
+ * A CALLER THAT SHOWS THIS AS THE SOLE TITLE (NO SEPARATE NUMBER) SHOULD FALL BACK: `stripChapterPrefix(t) || t`.
+ */
 export function stripChapterPrefix(title: string): string {
-	const out = title.replace(STRIP_ZH, '').replace(STRIP_EN, '').trim();
-	return out || title;
+	return title.replace(STRIP_ZH, '').replace(STRIP_EN, '').replace(STRIP_LEADING_NUM, '').trim();
 }
 
 function normalizeForCompare(s: string): string {

@@ -18,7 +18,7 @@ import type { Sentence } from './text';
 import { get, writable } from 'svelte/store';
 import { browser } from '$app/environment';
 // IMPORTED MODULES
-import { ttsSettings, voices, wordTimingSupport } from '$lib/stores/tts';
+import { ttsSettings, wordTimingSupport } from '$lib/stores/tts';
 import { analyzeParagraph } from './text';
 
 // -- TYPES -- //
@@ -290,13 +290,6 @@ function createEngine() {
 		finish();
 	}
 
-	function toggle() {
-		const st = get(state).status;
-		if (st === 'playing') pause();
-		else if (st === 'paused') resume();
-		else play(0, 0);
-	}
-
 	// JUMP ONE SENTENCE FORWARD/BACK, CROSSING PARAGRAPH BOUNDARIES.
 	function step(delta: number) {
 		const st = get(state);
@@ -377,7 +370,6 @@ function createEngine() {
 		pause,
 		resume,
 		stop,
-		toggle,
 		next,
 		prev,
 		seekToOffset,
@@ -385,4 +377,3 @@ function createEngine() {
 }
 
 export const tts = createEngine();
-export { voices };

@@ -24,6 +24,8 @@ export interface ReaderSettings {
 	measureCh: number;
 	align: Align;
 	indent: boolean;
+	// BOLD MATCHED GLOSSARY TERMS IN THE READER, TAPPABLE FOR A DETAILS POPUP (OFF BY DEFAULT)
+	boldTerms: boolean;
 	theme: Theme;
 	layout: LayoutMode;
 	// PIPELINE: AUTO-EXTRACT + SAVE GLOSSARY TERMS ONCE PER CHAPTER BEFORE TRANSLATING
@@ -51,7 +53,7 @@ export const TRANSLATION_MODELS: { id: string; label: string; blurb: string }[] 
 
 // BUMP version WHEN DEFAULTS CHANGE — TRIGGERS A ONE-TIME MIGRATION OF SAVED SETTINGS
 export const DEFAULTS: ReaderSettings = {
-	version: 5,
+	version: 6,
 	latinFont: 'literata',
 	cjkFont: 'noto-serif-tc',
 	fontSizePx: 19,
@@ -61,6 +63,7 @@ export const DEFAULTS: ReaderSettings = {
 	measureCh: 90,
 	align: 'left',
 	indent: false,
+	boldTerms: false,
 	theme: 'sepia',
 	layout: 'target',
 	autoExtract: true,
@@ -79,20 +82,22 @@ export const THEME_COOKIE = 'xs_theme';
 const DARK_THEMES: Theme[] = ['dark', 'oled', 'contrast'];
 
 // SINGLE SOURCE OF TRUTH FOR THEME SURFACE COLOURS — APPLIED APP-WIDE AT THE LAYOUT ROOT
-// SOFTER FOREGROUNDS — DARK THEMES USE MUTED SLATE (NOT PURE WHITE) TO REDUCE EYE STRAIN
+// WUXIA ART DIRECTION (SEE DESIGN_VISION.md): WARM INK ON PAPER (light/sepia) AND WARM OFF-WHITE ON WARM
+// LACQUER / TRUE BLACK (dark/oled/contrast). THE OLD COOL slate-400 BODY WAS TOO LOW-CONTRAST AND TOO COLD
+// FOR LONG-FORM READING — REPLACED WITH A WARM OFF-WHITE THAT READS COMFORTABLY AND PASSES AA.
 export const THEME_CLASS: Record<Theme, string> = {
-	light: 'bg-[#fbfaf7] text-slate-800',
+	light: 'bg-[#fbfaf7] text-[#2b2320]',
 	sepia: 'bg-[#f4ecd8] text-[#5b4636]',
-	dark: 'bg-[#0e131c] text-slate-400',
-	oled: 'bg-black text-slate-400',
-	contrast: 'bg-black text-slate-100',
+	dark: 'bg-[#13100c] text-[#d8cfc2]',
+	oled: 'bg-black text-[#d8cfc2]',
+	contrast: 'bg-black text-white',
 };
 
 // ROOT BACKGROUND PER THEME — KEEPS BROWSER CHROME, SCROLLBARS, AND OVERSCROLL IN SYNC
 export const THEME_BG: Record<Theme, string> = {
 	light: '#fbfaf7',
 	sepia: '#f4ecd8',
-	dark: '#0e131c',
+	dark: '#13100c',
 	oled: '#000000',
 	contrast: '#000000',
 };
@@ -104,19 +109,19 @@ export const THEME_BG: Record<Theme, string> = {
 // THE 5-THEME WORLD INSTEAD OF COLLAPSING TO A COLD WHITE / SLATE PLANE (SEE GUIDELINE: A COMPONENT THAT
 // NEEDS ITS OWN SURFACE SHOULD PREFER THE CENTRALISED THEME MAP).
 export const THEME_PANEL: Record<Theme, string> = {
-	light: 'bg-white text-slate-800',
+	light: 'bg-white text-[#2b2320]',
 	sepia: 'bg-[#fbf6ea] text-[#5b4636]',
-	dark: 'bg-[#161d29] text-slate-200',
-	oled: 'bg-[#0c0c0e] text-slate-200',
+	dark: 'bg-[#211c15] text-[#e6ded2]',
+	oled: 'bg-[#0c0b0a] text-[#e6ded2]',
 	contrast: 'bg-black text-white',
 };
 
 // POPOVERS / DROPDOWN MENUS — ONE ELEVATION HIGHER THAN A PANEL (THEY OFTEN OPEN ON TOP OF ONE)
 export const THEME_POPOVER: Record<Theme, string> = {
-	light: 'bg-white text-slate-800',
+	light: 'bg-white text-[#2b2320]',
 	sepia: 'bg-[#fdf9f0] text-[#5b4636]',
-	dark: 'bg-[#1b2433] text-slate-200',
-	oled: 'bg-[#161618] text-slate-200',
+	dark: 'bg-[#2a231a] text-[#e6ded2]',
+	oled: 'bg-[#161310] text-[#e6ded2]',
 	contrast: 'bg-[#050505] text-white',
 };
 
@@ -129,6 +134,34 @@ export const THEME_PANEL_BORDER: Record<Theme, string> = {
 	oled: 'border-white/[0.12]',
 	contrast: 'border-white/40',
 };
+
+// TRANSLUCENT CHROME BARS (READER TOP/BOTTOM BAR, STICKY HEADERS) — SIT OVER backdrop-blur AND THE THEME BG.
+// REPLACES THE OLD BINARY `theme === 'light' ? 'bg-white/70' : 'bg-black/20'` SO sepia/oled/contrast EACH GET
+// A CORRECT, IN-WORLD TINT INSTEAD OF COLLAPSING TO ONE COLD PLANE.
+export const THEME_BAR: Record<Theme, string> = {
+	light: 'bg-white/70',
+	sepia: 'bg-[#f4ecd8]/72',
+	dark: 'bg-[#13100c]/70',
+	oled: 'bg-black/55',
+	contrast: 'bg-black/80',
+};
+
+// BRAND PALETTE — THE WUXIA ART DIRECTION (SEE DESIGN_VISION.md). CINNABAR REPLACES THE OLD sky ACCENT.
+// COMPLETE LITERAL CLASS STRINGS SO TAILWIND'S CONTENT SCANNER PICKS THEM UP FROM THIS .ts FILE.
+// CINNABAR 朱砂 — THE PRIMARY ACTION ACCENT (BUTTONS, LINKS, SELECTED STATES, PROGRESS, SEALS).
+export const ACCENT_SOLID = 'bg-[#b23a2e] text-white hover:bg-[#c0392b]';
+// CINNABAR TEXT / ICON ACCENT — ONE STEP BRIGHTER ON THE DARK GROUP FOR CONTRAST.
+export const ACCENT_TEXT = 'text-[#b23a2e] dark:text-[#e08a63]';
+// CINNABAR TINTED FILL FOR ACTIVE / SELECTED PILLS.
+export const ACCENT_SOFT = 'bg-[#b23a2e]/12 text-[#b23a2e] dark:text-[#e08a63]';
+// CINNABAR FOCUS RING.
+export const ACCENT_RING = 'focus:ring-2 focus:ring-[#b23a2e]/40';
+// JADE 青 — SUCCESS / "READ" / CONSISTENT STATE.
+export const JADE_TEXT = 'text-[#4f7a64] dark:text-[#83b39a]';
+export const JADE_SOFT = 'bg-[#5b8a72]/14 text-[#4f7a64] dark:text-[#83b39a]';
+// AGED GOLD 赤金 — PREMIUM (PROFOUND MODEL, HIGHER REALMS).
+export const GOLD_TEXT = 'text-[#a97f28] dark:text-[#d8b15a]';
+export const GOLD_SOFT = 'bg-[#c9a24b]/16 text-[#a97f28] dark:text-[#d8b15a]';
 
 // -- STORES -- //
 
@@ -204,7 +237,7 @@ function createSettings() {
 				// MIRROR THE THEME TO A COOKIE SO SSR CAN PRE-RENDER IT
 				document.cookie = `${THEME_COOKIE}=${s.theme}; path=/; max-age=31536000; samesite=lax`;
 			} catch {
-				// IGNORE QUOTA ERRORS
+				// IGNORE STORAGE ERRORS (PRIVATE MODE / QUOTA)
 			}
 			// ONLY TOUCH THE DOCUMENT ROOT WHEN THE THEME ACTUALLY CHANGED — TYPOGRAPHY/LAYOUT EDITS (THE
 			// COMMON CASE) SHOULDN'T REWRITE classList/colorScheme/backgroundColor ON EVERY KEYSTROKE.

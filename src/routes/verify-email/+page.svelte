@@ -47,7 +47,7 @@
 	<!-- AMBIENT GLOW (DECORATIVE) -->
 	<div class="pointer-events-none absolute inset-0 -z-10" aria-hidden="true">
 		<div
-			class="absolute left-1/2 top-1/4 h-72 w-72 -translate-x-1/2 rounded-full bg-gradient-to-br from-sky-500/15 to-indigo-500/15 blur-3xl"
+			class="absolute left-1/2 top-1/4 h-72 w-72 -translate-x-1/2 rounded-full bg-gradient-to-br from-[#c0392b]/15 to-indigo-500/15 blur-3xl"
 		></div>
 	</div>
 	<div
@@ -55,9 +55,9 @@
 	>
 		<!-- MAIL ICON WITH A SOFT GLOW -->
 		<div class="relative mx-auto mb-3 flex h-14 w-14 items-center justify-center">
-			<div class="absolute inset-0 -z-10 rounded-full bg-sky-500/20 blur-lg" aria-hidden="true"></div>
-			<div class="flex h-14 w-14 items-center justify-center rounded-full bg-sky-500/10">
-				<MailCheck size={28} class="text-sky-600 dark:text-sky-400" />
+			<div class="absolute inset-0 -z-10 rounded-full bg-[#c0392b]/20 blur-lg" aria-hidden="true"></div>
+			<div class="flex h-14 w-14 items-center justify-center rounded-full bg-[#c0392b]/10">
+				<MailCheck size={28} class="text-[#b23a2e] dark:text-[#e08a63]" />
 			</div>
 		</div>
 		<h1 class="text-xl font-bold">Check your inbox</h1>
@@ -72,7 +72,7 @@
 			<a
 				href="/app/"
 				use:ripple
-				class="rounded-lg bg-sky-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition-all hover:bg-sky-500 active:scale-[0.99]"
+				class="rounded-lg bg-[#b23a2e] px-4 py-2.5 text-sm font-medium text-white shadow-sm transition-all hover:bg-[#c0392b] active:scale-[0.99]"
 				>Continue to my library</a
 			>
 			<button

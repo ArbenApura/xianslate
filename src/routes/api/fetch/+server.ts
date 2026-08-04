@@ -7,7 +7,6 @@ import { z } from 'zod';
 import { requireUser } from '$lib/server/auth/user';
 import { ingestWebChapter } from '$lib/server/books';
 import { isFetchError } from '$lib/server/fetch-error';
-import { assertWithinBudget } from '$lib/server/quota';
 
 // -- CONSTANTS -- //
 
@@ -29,8 +28,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 	const user = requireUser(locals);
 	const parsed = Body.safeParse(await request.json().catch(() => null));
 	if (!parsed.success) throw error(400, 'A valid chapter URL is required.');
-	// COST GATE BEFORE A FETCH THAT MAY TRIGGER (BILLED) SITE-SELECTOR LEARNING + AUTO-TRANSLATE DOWNSTREAM.
-	await assertWithinBudget(user.id);
+	// A FETCH MAY TRIGGER (BILLED) SITE-SELECTOR LEARNING + AUTO-TRANSLATE DOWNSTREAM.
 	try {
 		const { url, fromChapterId, dir, targetBookId, sourceLang, targetLang } = parsed.data;
 		const anchor = fromChapterId && dir ? { fromChapterId, dir } : undefined;

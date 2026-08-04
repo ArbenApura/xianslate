@@ -51,15 +51,25 @@ export const GET: RequestHandler = async ({ params, locals }) => {
 	const resumeUuid = list.find((c) => c.id === book.lastChapterId)?.uuid ?? null;
 
 	return json({
+		// title IS THE RAW SOURCE TITLE HERE (NOT titleTarget ?? title) — THE MANAGE PAGE EDITS BOTH SIDES AND
+		// DERIVES ITS OWN DISPLAY TITLE. THE READER'S RESUME LOADER IGNORES book.title, SO THIS IS SAFE.
 		book: {
 			id: book.id,
-			title: book.titleTarget ?? book.title,
+			title: book.title,
+			titleTarget: book.titleTarget,
+			author: book.author,
+			authorTarget: book.authorTarget,
+			coverUrl: book.coverUrl,
+			sourceUrl: book.sourceUrl,
 			sourceType: book.sourceType,
 			sourceLang: book.sourceLang,
 			targetLang: book.targetLang,
 		},
 		resumeUuid,
 		chapters: list.map((c) => ({
+			// NUMERIC id IS NEEDED CLIENT-SIDE TO DRIVE /api/translate (WHICH KEYS ON chapterId), E.G. THE MANAGE
+			// PAGE'S BATCH TRANSLATE. OWNERSHIP IS RE-CHECKED THERE, SO EXPOSING IT IS SAFE (THE READER ALSO DOES).
+			id: c.id,
 			uuid: c.uuid!,
 			seq: c.seq,
 			titleSource: c.titleSource,

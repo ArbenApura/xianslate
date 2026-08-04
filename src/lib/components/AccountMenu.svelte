@@ -25,26 +25,24 @@
 	import { ripple } from '$lib/actions/ripple';
 	// IMPORTED DEP-COMPONENTS
 	import LogOut from 'lucide-svelte/icons/log-out';
-	import Shield from 'lucide-svelte/icons/shield';
 	import UserCog from 'lucide-svelte/icons/user-cog';
+	import UserRound from 'lucide-svelte/icons/user-round';
+	// IMPORTED COMPONENTS
+	import Avatar from '$lib/components/ui/Avatar.svelte';
 
 	// -- REQUIRED PROPS -- //
 
 	export let user: SessionUser | null;
 
+	// -- OPTIONAL PROPS -- //
+
+	// PLAIN MODE — RENDER A NEUTRAL PROFILE ICON TRIGGER (NOT THE AVATAR), FOR THE READER'S MINIMAL TOP BAR.
+	export let plain = false;
+
 	// -- CONSTANTS -- //
 
 	// FIXED MENU WIDTH SO THE PORTALED POPOVER CAN BE PLACED WITHOUT MEASURING ITS CONTENTS.
 	const MENU_W = 240;
-	// DETERMINISTIC AVATAR GRADIENTS (COMPLETE LITERAL CLASSES — KEEPS cn()/TAILWIND HAPPY).
-	const AVATARS = [
-		'from-rose-500 to-orange-400',
-		'from-sky-500 to-indigo-600',
-		'from-emerald-500 to-teal-600',
-		'from-violet-500 to-fuchsia-600',
-		'from-amber-500 to-red-500',
-		'from-cyan-500 to-blue-600',
-	];
 
 	// -- STATES -- //
 
@@ -58,29 +56,11 @@
 	// -- REACTIVE STATES -- //
 
 	$: label = user?.name?.trim() || user?.email || 'Account';
-	$: initials = initialsOf(label);
-	$: avatarClass = AVATARS[hash(label) % AVATARS.length];
 	// THEME-AWARE OPAQUE POPOVER SURFACE + BORDER (WAS A HARDCODED white / slate-800 PLANE)
 	$: popover = THEME_POPOVER[$settings.theme];
 	$: popoverBorder = THEME_PANEL_BORDER[$settings.theme];
 
 	// -- FUNCTIONS -- //
-
-	function hash(s: string): number {
-		let h = 0;
-		for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
-		return h;
-	}
-
-	function initialsOf(s: string): string {
-		const parts = s
-			.replace(/@.*/, '')
-			.split(/[\s._-]+/)
-			.filter(Boolean);
-		const a = parts[0]?.[0] ?? s[0] ?? '?';
-		const b = parts.length > 1 ? parts[parts.length - 1][0] : '';
-		return (a + b).toUpperCase();
-	}
 
 	function updatePosition() {
 		if (!triggerEl) return;
@@ -166,15 +146,20 @@
 	aria-expanded={open}
 	aria-label="Account menu"
 	class={cn(
-		'flex h-9 w-9 items-center justify-center overflow-hidden rounded-full border border-black/10 text-xs font-semibold text-white transition-transform hover:scale-105 dark:border-white/10',
-		!user?.avatarUrl && 'bg-gradient-to-br',
-		!user?.avatarUrl && avatarClass,
+		plain
+			? 'rounded-md p-1.5 opacity-70 transition-opacity hover:opacity-100'
+			: 'overflow-hidden rounded-full transition-transform hover:scale-105',
 	)}
 >
-	{#if user?.avatarUrl}
-		<img src={user.avatarUrl} alt="" class="h-full w-full object-cover" />
+	{#if plain}
+		<UserRound size={18} />
 	{:else}
-		{initials}
+		<Avatar
+			name={label}
+			src={user?.avatarUrl ?? null}
+			size={36}
+			class="border border-black/10 dark:border-white/10"
+		/>
 	{/if}
 </button>
 
@@ -192,19 +177,7 @@
 	>
 		<!-- IDENTITY HEADER -->
 		<div class="flex items-center gap-2.5 px-2.5 py-2.5">
-			<div
-				class={cn(
-					'flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full text-xs font-semibold text-white',
-					!user?.avatarUrl && 'bg-gradient-to-br',
-					!user?.avatarUrl && avatarClass,
-				)}
-			>
-				{#if user?.avatarUrl}<img
-						src={user.avatarUrl}
-						alt=""
-						class="h-full w-full object-cover"
-					/>{:else}{initials}{/if}
-			</div>
+			<Avatar name={label} src={user?.avatarUrl ?? null} size={36} class="shrink-0" />
 			<div class="min-w-0 flex-1">
 				<p class="truncate text-sm font-medium">{label}</p>
 				{#if user?.email && user.email !== label}
@@ -231,19 +204,6 @@
 		>
 			<UserCog size={15} class="shrink-0" /> <span class="flex-1">Account settings</span>
 		</button>
-
-		<!-- ADMIN (ADMINS ONLY) -->
-		{#if user?.role === 'admin'}
-			<button
-				type="button"
-				role="menuitem"
-				use:ripple
-				on:click={() => go('/admin/')}
-				class="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm transition-colors hover:bg-black/5 dark:hover:bg-white/5"
-			>
-				<Shield size={15} class="shrink-0" /> <span class="flex-1">Admin dashboard</span>
-			</button>
-		{/if}
 
 		<div class="my-1 h-px bg-black/[0.06] dark:bg-white/10"></div>
 

@@ -3,9 +3,10 @@
 #
 # SECRETS (set once, not in this file): see DEPLOYMENT.md —
 #   fly secrets set DATABASE_URL=... DATABASE_URL_DIRECT=... DATABASE_URL_REPLICA=... \
-#                   DEEPSEEK_API_KEY=... FIREBASE_SERVICE_ACCOUNT='{...}' \
+#                   DEEPSEEK_API_KEY=... ZYTE_API_KEY=... FIREBASE_SERVICE_ACCOUNT='{...}' \
 #                   PUBLIC_FIREBASE_API_KEY=... PUBLIC_FIREBASE_AUTH_DOMAIN=... \
 #                   PUBLIC_FIREBASE_PROJECT_ID=... PUBLIC_FIREBASE_APP_ID=...
+# ZYTE_API_KEY is the managed-fetch transport (proxies + HTTP/JS-render). UNSET → free node-fetch→curl only.
 
 app = "xianslate"
 primary_region = "sin" # Singapore — MUST match the Neon region (ap-southeast-1). East-Asia alt: nrt / ap-northeast-1.
@@ -13,15 +14,24 @@ primary_region = "sin" # Singapore — MUST match the Neon region (ap-southeast-
 [build]
 dockerfile = "Dockerfile"
 
+# VM SPEC. The workload is I/O-bound (DeepSeek/Zyte/Neon are all remote; no local model, no Chromium), so
+# SHARED CPU is right — RAM is the binding constraint (in-flight chapter buffers × DEEPSEEK_CONCURRENCY + heap).
+# 4 GB matches NODE_OPTIONS=--max-old-space-size=3072 below (~75% of RAM). Scale UP (shared-cpu-4x / 8gb), not
+# out — see the single-instance note at the bottom. Budget option: shared-cpu-1x / 2gb with NODE_OPTIONS=1536.
+[[vm]]
+size = "shared-cpu-2x"
+memory = "4gb"
+
 [env]
 PORT = "3000"
 # GIVE NODE MORE HEAP THAN ITS ~2GB DEFAULT (SIZE TO ~75% OF THE MACHINE RAM — 3072 SUITS A 4GB VM).
 NODE_OPTIONS = "--max-old-space-size=3072"
-# TUNABLES (override per deployment): translation/scrape concurrency, DB pool, per-user budget.
-QUOTA_USD_PER_WINDOW = "0.50"
+# TUNABLES (override per deployment): translation concurrency, DB pool.
 DEEPSEEK_CONCURRENCY = "64"
-SCRAPER_CONCURRENCY = "5"
 DB_POOL_MAX = "25"
+# ZYTE PER-KEY RATE CAP (Zyte default 2 req/s). The in-process queue paces every Zyte call to this — it is
+# PER MACHINE, so it only holds while this stays a single instance (see the scaling note below).
+ZYTE_RPS = "2"
 
 [http_service]
 internal_port = 3000
@@ -43,6 +53,10 @@ grace_period = "10s"
 method = "GET"
 path = "/"
 
-# NOTE: translation is in-process and stateful per machine, so keep this to ONE machine (don't `fly scale
-# count > 1`). Scale UP (bigger machine) for more headroom, not out. Horizontal scaling would need a shared
-# queue (removed) again.
+# NOTE: keep this to ONE machine (don't `fly scale count > 1`); scale UP (bigger VM) for headroom, not out.
+# Three things are in-process/per-machine and would break or double-count if you ran more than one instance:
+#   • translation (stateful, no shared queue),
+#   • the Zyte rate-limit queue (each machine would get its own ZYTE_RPS budget → collectively exceed the key
+#     limit; if you must scale out, set ZYTE_RPS = floor(keyLimit / instanceCount) per machine),
+#   • the per-host render/cost caches (site-adapter) — a warm cache per machine, re-primed from the DB anyway.
+# Horizontal scaling would need a shared queue + a shared (e.g. Redis) limiter again.

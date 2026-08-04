@@ -151,7 +151,7 @@
 				bind:value={query}
 				type="search"
 				placeholder="Find chapter…"
-				class="w-full rounded-md border border-black/10 bg-transparent px-2 py-1.5 text-sm outline-none focus:border-sky-500 dark:border-white/[0.06]"
+				class="w-full rounded-md border border-black/10 bg-transparent px-2 py-1.5 text-sm outline-none focus:border-[#c0392b] dark:border-white/[0.06]"
 			/>
 		</div>
 	{/if}
@@ -176,7 +176,7 @@
 							class={cn(
 								'hover:bg-current/5 relative flex w-full items-center gap-1.5 border-l-2 py-2 pl-1.5 pr-3 text-left text-sm',
 								it.uuid === currentUuid
-									? 'border-sky-500 bg-sky-500/10 font-medium text-sky-600 dark:text-sky-300'
+									? 'border-[#c0392b] bg-[#c0392b]/10 font-medium text-[#b23a2e] dark:text-[#e08a63]'
 									: isRead
 										? 'border-transparent opacity-55'
 										: 'border-transparent',
@@ -193,7 +193,9 @@
 							<span class="flex min-w-0 flex-1 items-center gap-1.5">
 								{#if isRead}<Check size={13} class="shrink-0 text-emerald-500 opacity-90" />{/if}
 								<span class="min-w-0 flex-1 truncate"
-									>{stripChapterPrefix(it.titleTarget || it.titleSource)}</span
+									>{stripChapterPrefix(it.titleTarget || it.titleSource) ||
+										it.titleTarget ||
+										it.titleSource}</span
 								>
 							</span>
 							{#if translating.has(it.uuid)}

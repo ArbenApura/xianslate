@@ -9,7 +9,8 @@ import { alias } from 'drizzle-orm/pg-core';
 import { AUTO_SOURCE, DEFAULT_SOURCE_LANG, DEFAULT_TARGET_LANG, detectSourceLang } from '$lib/languages';
 import { db } from './db';
 import { books, chapters, type Book, type Chapter } from './db/schema';
-import { fetchBookCover, fetchChapter } from './fetcher';
+import { fetchBookMeta, fetchChapter, type FetchBilling } from './fetcher';
+import { recordFetchUsage } from './site-stats';
 
 // -- CONSTANTS -- //
 
@@ -55,6 +56,9 @@ export interface BookSummary {
 	targetLang: string;
 	sourceUrl: string | null;
 	coverUrl: string | null;
+	// LIBRARY ORGANIZATION: pinned FLOATS TO THE TOP; archived HIDES FROM THE DEFAULT SHELF.
+	pinned: boolean;
+	archived: boolean;
 	chapterCount: number;
 	// CHAPTERS UP TO & INCLUDING THE RESUME POINT (READING PROGRESS); 0 IF NOTHING READ YET
 	readChapters: number;
@@ -170,7 +174,10 @@ export async function refreshChapterNav(uuid: string): Promise<ChapterView | nul
 	const book = await getBook(row.bookId);
 	if (!book || book.sourceType !== 'web') return null;
 
-	const parsed = await fetchChapter(row.chapterUrl, book.sourceLang);
+	// RE-FETCH IS BILLED LIKE INGEST; THE CHAPTER ALREADY EXISTS SO WE ATTRIBUTE IT DIRECTLY (row.id).
+	const parsed = await fetchChapter(row.chapterUrl, book.sourceLang, (e) => {
+		void recordFetchUsage(book.userId, e.host, e.provider, e.costUsd, row.id);
+	});
 	await db
 		.update(chapters)
 		.set({ prevUrl: parsed.prevUrl ?? null, nextUrl: parsed.nextUrl ?? null, indexUrl: parsed.indexUrl ?? null })
@@ -297,6 +304,8 @@ export async function listBooks(userId: string): Promise<BookSummary[]> {
 			targetLang: b.targetLang,
 			sourceUrl: b.sourceUrl,
 			coverUrl: b.coverUrl,
+			pinned: b.pinned,
+			archived: b.archived,
 			chapterCount: Number(a?.n ?? 0),
 			readChapters: readByBook.get(b.id) ?? 0,
 			translatedChapters: Number(a?.translated ?? 0),
@@ -326,7 +335,9 @@ export async function refetchCover(
 	if (!book) return { ok: false, coverUrl: null, reason: 'not_found' };
 	if (!book.sourceUrl || !/^https?:\/\//i.test(book.sourceUrl))
 		return { ok: false, coverUrl: null, reason: 'no_source' };
-	const cover = await fetchBookCover(book.sourceUrl, book.sourceLang);
+	const { cover } = await fetchBookMeta(book.sourceUrl, book.sourceLang, (e) =>
+		recordFetchUsage(book.userId, e.host, e.provider, e.costUsd),
+	);
 	if (cover) await db.update(books).set({ coverUrl: cover }).where(eq(books.id, id));
 	return { ok: true, coverUrl: cover };
 }
@@ -423,8 +434,12 @@ export async function ingestWebChapter(
 	const effPair: LangPair = preBook ? { sourceLang: preBook.sourceLang, targetLang: preBook.targetLang } : pair;
 
 	// 'auto' SOURCE → FETCH WITH NEUTRAL HEADERS (CHARSET STILL AUTO-DETECTS), THEN INFER THE SOURCE
-	// LANGUAGE FROM THE DECODED TEXT BEFORE CREATING THE BOOK.
-	const parsed = await fetchChapter(url, effPair.sourceLang === AUTO_SOURCE ? undefined : effPair.sourceLang);
+	// LANGUAGE FROM THE DECODED TEXT BEFORE CREATING THE BOOK. COLLECT BILLED (ZYTE) FETCHES HERE AND CHARGE
+	// THEM ONCE WE KNOW THE CHAPTER id (BELOW), SO THE STATS DIALOG CAN ATTRIBUTE THE FETCH SPEND.
+	const fetchBills: FetchBilling[] = [];
+	const parsed = await fetchChapter(url, effPair.sourceLang === AUTO_SOURCE ? undefined : effPair.sourceLang, (e) =>
+		fetchBills.push(e),
+	);
 	if (effPair.sourceLang === AUTO_SOURCE) {
 		effPair.sourceLang = detectSourceLang(`${parsed.titleSource}\n${parsed.contentSource}`);
 	}
@@ -453,16 +468,31 @@ export async function ingestWebChapter(
 			.onConflictDoNothing();
 		book = await getBook(bookId);
 
-		// COVER: PULL THE BOOK'S COVER FROM ITS INDEX PAGE IN THE BACKGROUND — A SEPARATE FETCH THAT MUST
-		// NEVER BLOCK (OR FAIL) THE FIRST CHAPTER. THE LIBRARY PICKS IT UP ON THE NEXT RENDER.
-		const coverIndexUrl = parsed.indexUrl ?? url;
-		void fetchBookCover(coverIndexUrl, effPair.sourceLang).then((cover) => {
-			if (cover) {
-				db.update(books)
-					.set({ coverUrl: cover })
-					.where(eq(books.id, bookId))
-					.catch((e) => console.error(`[cover] failed to persist for ${bookId}:`, e));
+		// WE HAD NO REAL BOOK TITLE FROM THE CHAPTER PAGE → THE INSERT ABOVE FELL BACK TO THE CHAPTER HEADING,
+		// WHICH ON SOME SITES (e.g. faloo) IS "BookName ChapterName" MASHED TOGETHER. THE INDEX PAGE'S og:title
+		// IS THE AUTHORITATIVE BOOK NAME — BACKFILL IT BELOW.
+		const titleIsFallback = !parsed.bookTitle;
+
+		// BOOK METADATA: PULL THE COVER (+ CLEAN TITLE) FROM THE INDEX PAGE IN THE BACKGROUND — A SEPARATE FETCH
+		// THAT MUST NEVER BLOCK (OR FAIL) THE FIRST CHAPTER. THE LIBRARY PICKS IT UP ON THE NEXT RENDER.
+		const metaIndexUrl = parsed.indexUrl ?? url;
+		// BOOK-LEVEL FETCH (COVER/TITLE) — BILL THE USER, BUT NO chapterId (IT BELONGS TO THE BOOK, NOT A CHAPTER).
+		void fetchBookMeta(metaIndexUrl, effPair.sourceLang, (e) =>
+			recordFetchUsage(userId, e.host, e.provider, e.costUsd),
+		).then((meta) => {
+			const set: { coverUrl?: string; title?: string; titleTarget?: null } = {};
+			if (meta.cover) set.coverUrl = meta.cover;
+			// ONLY OVERRIDE THE NAME WHEN OURS WAS A FALLBACK AND THE INDEX GIVES A DIFFERENT, CLEAN TITLE. NULL
+			// titleTarget SO THE LIBRARY LAZILY RE-TRANSLATES THE CORRECTED NAME ON THE NEXT BOOK-META READ.
+			if (titleIsFallback && meta.title && meta.title !== parsed.titleSource) {
+				set.title = meta.title;
+				set.titleTarget = null;
 			}
+			if (Object.keys(set).length === 0) return;
+			db.update(books)
+				.set(set)
+				.where(eq(books.id, bookId))
+				.catch((e) => console.error(`[book-meta] failed to persist for ${bookId}:`, e));
 		});
 	}
 	if (!book) throw new Error('Failed to create book.');
@@ -533,6 +563,12 @@ export async function ingestWebChapter(
 			.limit(1);
 		return row;
 	});
+
+	// CHARGE THE (ZYTE) FETCH(ES) FOR THIS CHAPTER NOW THAT WE HAVE ITS id — userId FEEDS THE ROLLING BUDGET,
+	// chapterId LETS THE STATS DIALOG REPORT PER-CHAPTER FETCH SPEND (HTTP vs RENDER). BEST-EFFORT.
+	for (const b of fetchBills) {
+		void recordFetchUsage(userId, b.host, b.provider, b.costUsd, inserted.id);
+	}
 
 	return toView(inserted, book);
 }

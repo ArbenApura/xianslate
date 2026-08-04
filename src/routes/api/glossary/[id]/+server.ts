@@ -16,6 +16,24 @@ const PutBody = z.object({
 	// AN EMPTY STRING CLEARS THE NOTE; OMITTING THE FIELD LEAVES IT UNCHANGED
 	context: z.string().nullable().optional(),
 	tags: z.string().nullable().optional(),
+	// OMITTING LEAVES UNCHANGED; null CLEARS category / aliases.
+	category: z
+		.enum([
+			'character',
+			'location',
+			'organization',
+			'technique',
+			'item',
+			'realm',
+			'creature',
+			'title',
+			'concept',
+			'other',
+		])
+		.nullable()
+		.optional(),
+	pinned: z.boolean().optional(),
+	aliases: z.array(z.string()).nullable().optional(),
 });
 
 // -- FUNCTIONS -- //

@@ -1,31 +1,21 @@
-// IMPORTED ENVS ($env/...)
-import { env } from '$env/dynamic/public';
-// IMPORTED MODULES
-import { browser } from '$app/environment';
-import { firebaseAuth } from '$lib/firebase';
-
-// -- CONSTANTS -- //
-
-// THE HOSTED API ORIGIN FOR THE NATIVE (CAPACITOR) BUILD (e.g. https://xianslate.com). EMPTY ON WEB, WHERE
-// /api IS SAME-ORIGIN. TRAILING SLASH TRIMMED SO `${API_BASE}/api/x` IS CLEAN.
-const API_BASE = (env.PUBLIC_API_BASE ?? '').replace(/\/$/, '');
-
 // -- FUNCTIONS -- //
 
-// THE ONE CLIENT ENTRY POINT FOR /api CALLS.
-//  - WEB: a same-origin fetch — the httpOnly session cookie rides along automatically; nothing extra.
-//  - NATIVE (capacitor): prepend PUBLIC_API_BASE and attach the Firebase ID token as `Authorization: Bearer`
-//    (no cookies cross-origin). Streaming responses (the translate SSE) pass straight through.
+// THE ONE CLIENT ENTRY POINT FOR /api CALLS — A SAME-ORIGIN fetch; THE httpOnly SESSION COOKIE RIDES ALONG
+// AUTOMATICALLY. STREAMING RESPONSES (THE TRANSLATE SSE) PASS STRAIGHT THROUGH.
 export async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
-	if (!__CAPACITOR_BUILD__) return fetch(path, init);
+	return fetch(path, init);
+}
 
-	const url = /^https?:\/\//.test(path) ? path : `${API_BASE}${path}`;
-	const headers = new Headers(init.headers);
-	if (browser) {
-		const token = await firebaseAuth()
-			.currentUser?.getIdToken()
-			.catch(() => null);
-		if (token) headers.set('Authorization', `Bearer ${token}`);
-	}
-	return fetch(url, { ...init, headers });
+// CONVENIENCE WRAPPER OVER apiFetch FOR JSON ENDPOINTS — PARSES THE BODY, AND ON A NON-OK RESPONSE THROWS AN
+// Error CARRYING THE SERVER'S { message } (FALLING BACK TO fallbackMsg). REPLACES THE ~40 HAND-ROLLED
+// `if (!res.ok) throw new Error((await res.json().catch(() => ({}))).message ?? '…')` BLOCKS ACROSS THE APP.
+export async function apiJson<T = unknown>(
+	path: string,
+	init: RequestInit = {},
+	fallbackMsg = 'Something went wrong. Try again.',
+): Promise<T> {
+	const res = await apiFetch(path, init);
+	const data = await res.json().catch(() => ({}) as Record<string, unknown>);
+	if (!res.ok) throw new Error((data as { message?: string }).message ?? fallbackMsg);
+	return data as T;
 }

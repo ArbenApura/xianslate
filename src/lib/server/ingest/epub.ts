@@ -29,6 +29,23 @@ const PREAMBLE_MIN_CHARS = 200;
 
 // -- FUNCTIONS -- //
 
+// A NUMERIC HTML ENTITY CAN NAME A CODE POINT OUTSIDE THE VALID U+0000–U+10FFFF RANGE (e.g. &#9999999999;);
+// String.fromCodePoint THROWS RangeError ON THOSE, WHICH WOULD ABORT THE WHOLE IMPORT. DROP AN OUT-OF-RANGE
+// CODE POINT INSTEAD SO ONE MALFORMED ENTITY NEVER CRASHES A BORDERLINE-VALID EPUB.
+function fromCodePointSafe(cp: number): string {
+	return Number.isInteger(cp) && cp >= 0 && cp <= 0x10ffff ? String.fromCodePoint(cp) : '';
+}
+
+// decodeURIComponent THROWS URIError ON A MALFORMED %-SEQUENCE (LEGAL IN A ZIP ENTRY NAME, e.g. "%ZZ");
+// RETURN null SO A SINGLE BAD MANIFEST HREF FALLS THROUGH INSTEAD OF ABORTING THE ENTIRE EPUB IMPORT.
+function decodeUriComponentSafe(s: string): string | null {
+	try {
+		return decodeURIComponent(s);
+	} catch {
+		return null;
+	}
+}
+
 function decodeEntities(s: string): string {
 	return s
 		.replace(/&nbsp;/g, ' ')
@@ -45,8 +62,8 @@ function decodeEntities(s: string): string {
 		.replace(/&lt;/g, '<')
 		.replace(/&gt;/g, '>')
 		.replace(/&quot;/g, '"')
-		.replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(Number(d)))
-		.replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCodePoint(parseInt(h, 16)));
+		.replace(/&#(\d+);/g, (_, d) => fromCodePointSafe(Number(d)))
+		.replace(/&#x([0-9a-fA-F]+);/g, (_, h) => fromCodePointSafe(parseInt(h, 16)));
 }
 
 // THE INNER HTML OF <body> (OR THE WHOLE STRING IF THERE'S NO BODY TAG).
@@ -233,7 +250,10 @@ export function importEpub(bytes: Uint8Array, fallbackTitle: string, hints: stri
 			const href = manifest.get(m[1]);
 			if (!href) continue;
 			const full = resolvePath(opfDir, href);
-			const raw = get(full) ?? get(decodeURIComponent(full));
+			// FALL BACK TO A PERCENT-DECODED NAME FOR HREFS ENCODED IN THE OPF — decodeUriComponentSafe RETURNS
+			// null ON A MALFORMED SEQUENCE SO ONE BAD HREF SKIPS INSTEAD OF ABORTING THE WHOLE IMPORT.
+			const decoded = decodeUriComponentSafe(full);
+			const raw = get(full) ?? (decoded ? get(decoded) : null);
 			if (!raw) continue;
 			for (const c of docToChapters(raw, `Chapter ${chapters.length + 1}`)) chapters.push(c);
 		}

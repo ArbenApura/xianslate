@@ -1,13 +1,15 @@
 <script lang="ts">
 	// IMPORTED TYPES
-	import type { Gender, GlossaryScope } from '$lib/types';
-	import type { MenuAction } from '$lib/components/ui/ActionMenu.svelte';
+	import type { Gender, GlossaryRow, GlossaryScope, TermCategory, TermStatus } from '$lib/types';
 	// IMPORTED DEP-MODULES
 	import { toast } from 'svelte-sonner';
 	import { onMount, onDestroy } from 'svelte';
 	// IMPORTED MODULES
 	import { apiFetch } from '$lib/api';
 	import { cn } from '$lib/utils/cn';
+	import { ripple } from '$lib/actions/ripple';
+	import { TERM_CATEGORIES } from '$lib/types';
+	import { chapterLabel } from '$lib/chapter-label';
 	import { DEFAULT_SOURCE_LANG, DEFAULT_TARGET_LANG } from '$lib/languages';
 	import { settings, THEME_CLASS } from '$lib/stores/settings';
 	// IMPORTED DEP-COMPONENTS
@@ -19,10 +21,10 @@
 	import Languages from 'lucide-svelte/icons/languages';
 	import Plus from 'lucide-svelte/icons/plus';
 	import Search from 'lucide-svelte/icons/search';
+	import Star from 'lucide-svelte/icons/star';
 	import Trash2 from 'lucide-svelte/icons/trash-2';
 	import Upload from 'lucide-svelte/icons/upload';
 	// IMPORTED COMPONENTS
-	import ActionMenu from '$lib/components/ui/ActionMenu.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
 	import Modal from '$lib/components/ui/Modal.svelte';
 	import Select from '$lib/components/ui/Select.svelte';
@@ -35,6 +37,9 @@
 
 	export let bookId: string | null = null;
 	export let bookTitle = '';
+	// WHEN THE PANEL IS OPEN INSIDE A CHAPTER READING CONTEXT (THE READER), THE CHAPTER A ONE-OFF "Translate"
+	// IS BILLED AGAINST — SO ITS TERM-TRANSLATE SPEND LANDS ON THAT CHAPTER'S STATS. null OUTSIDE A READER.
+	export let chapterId: number | null = null;
 	// SURFACE THE STICKY SEARCH BAR PAINTS OVER. DEFAULTS TO THE THEMED PAGE BG; THE DIALOG OVERRIDES
 	// IT WITH THE MODAL'S OWN SURFACE SO THE PINNED BAR ALWAYS MATCHES WHAT'S BEHIND IT.
 	export let surface = '';
@@ -52,18 +57,58 @@
 		gender: Gender;
 		context: string | null;
 		tags: string | null;
+		category: TermCategory | null;
+		pinned: boolean;
+		status: TermStatus;
+		aliases: string[];
+		// THE first-appearance CHAPTER — seq IS ONLY A FALLBACK POSITION; THE REAL STORY NUMBER IS PARSED
+		// FROM THE TITLE (chapterLabel), SO A WEB BOOK STARTED AT Ch. 562 SHOWS 562, NOT ITS ROW INDEX.
+		firstSeq: number | null;
+		firstChapterTitle: string | null;
+		firstChapterTitleTarget: string | null;
 	};
 
 	// -- CONSTANTS -- //
 
 	const GENDERS: Gender[] = ['neuter', 'masculine', 'feminine'];
-	const GENDER_ITEMS = GENDERS.map((g) => ({ value: g, label: g }));
-	const PAGE_SIZE_ITEMS = [10, 25, 50, 100, 200].map((n) => ({ value: String(n), label: `${n} / page` }));
-	// PER-ROW KEBAB MENU OPTIONS (HANDLED IN onRowAction)
-	const ROW_MENU: MenuAction[] = [
-		{ value: 'translate', label: 'Translate', icon: Languages },
-		{ value: 'delete', label: 'Delete', icon: Trash2, danger: true },
+	// TITLE-CASE LABELS FOR THE gender Select / DISPLAY CHIPS — THE STORED value STAYS LOWERCASE.
+	const GENDER_LABELS: Record<Gender, string> = {
+		neuter: 'Neuter',
+		masculine: 'Masculine',
+		feminine: 'Feminine',
+	};
+	const GENDER_ITEMS = GENDERS.map((g) => ({ value: g, label: GENDER_LABELS[g] }));
+	// HUMAN LABELS FOR THE category Select / DISPLAY CHIP; THE EMPTY value CLEARS IT (UNCATEGORISED).
+	const CATEGORY_LABELS: Record<TermCategory, string> = {
+		character: 'Character',
+		location: 'Location',
+		organization: 'Organization',
+		technique: 'Technique',
+		item: 'Item',
+		realm: 'Realm',
+		creature: 'Creature',
+		title: 'Title',
+		concept: 'Concept',
+		other: 'Other',
+	};
+	// PER-CATEGORY ACCENT (ARBITRARY HEX — NON-STANDARD PALETTE) FOR THE TINTED CHIP ON EACH CARD.
+	const CATEGORY_COLOR: Record<TermCategory, string> = {
+		character: '#e0567a',
+		location: '#3aa17e',
+		organization: '#a4793a',
+		technique: '#6d6fe0',
+		item: '#c9913a',
+		realm: '#9a59c9',
+		creature: '#c75b3a',
+		title: '#3a8fc9',
+		concept: '#5a8a3a',
+		other: '#8a8f99',
+	};
+	const CATEGORY_ITEMS = [
+		{ value: '', label: 'Uncategorized' },
+		...TERM_CATEGORIES.map((c) => ({ value: c, label: CATEGORY_LABELS[c] })),
 	];
+	const PAGE_SIZE_ITEMS = [10, 25, 50, 100, 200].map((n) => ({ value: String(n), label: `${n} / page` }));
 
 	// -- STATES -- //
 
@@ -75,11 +120,20 @@
 	let query = '';
 	let loading = true;
 	let busy = false;
-	let newSource = '';
-	let newTarget = '';
-	let newGender: Gender = 'neuter';
-	let newContext = '';
-	let showAdd = false;
+	// ONE UNIFIED ADD / EDIT DIALOG — THE LIST ITSELF IS READ-ONLY; ALL EDITING HAPPENS HERE.
+	let formOpen = false;
+	let formMode: 'add' | 'edit' = 'add';
+	let formId: number | null = null;
+	let fSource = '';
+	let fTarget = '';
+	let fGender: Gender = 'neuter';
+	let fCategory: TermCategory | null = null;
+	let fPinned = false;
+	let fContext = '';
+	let fAliases = '';
+	let fStatus: TermStatus = 'ai';
+	let fFirstLabel: string | null = null;
+	let translating = false;
 	let fileInput: HTMLInputElement;
 	let debounce: ReturnType<typeof setTimeout>;
 	let loadToken = 0; // GUARDS AGAINST OUT-OF-ORDER load() RESPONSES PAINTING STALE ROWS
@@ -96,15 +150,15 @@
 	$: rangeTo = Math.min(page * pageSize, total);
 	$: pageSurface = THEME_CLASS[$settings.theme] || 'bg-white dark:bg-slate-900';
 	// IN A DIALOG (surface SET) THE PANEL IS A FLEX COLUMN THAT FILLS THE MODAL BODY: THE HEADER AND THE
-	// PAGINATION FOOTER ARE FIXED FLEX ITEMS (shrink-0) AND ONLY THE TABLE AREA BETWEEN THEM SCROLLS — SO
-	// THE SCROLLBAR LIVES ON THE TABLE, NOT THE WHOLE DIALOG. ON A STANDALONE PAGE THE PANEL FLOWS NORMALLY
+	// PAGINATION FOOTER ARE FIXED FLEX ITEMS (shrink-0) AND ONLY THE LIST AREA BETWEEN THEM SCROLLS — SO
+	// THE SCROLLBAR LIVES ON THE LIST, NOT THE WHOLE DIALOG. ON A STANDALONE PAGE THE PANEL FLOWS NORMALLY
 	// AND THE HEADER STICKS TO THE DOCUMENT TOP.
 	$: rootClass = surface ? 'flex min-h-0 flex-1 flex-col' : 'flex flex-col gap-4';
 	$: headerClass = cn(
 		'flex flex-col gap-3 border-b border-black/[0.06] pb-3 dark:border-white/[0.045]',
 		surface ? `shrink-0 pt-5 ${surface}` : `sticky top-0 z-20 pt-4 ${pageSurface}`,
 	);
-	// THE TABLE SCROLL AREA — THE ONLY SCROLLER IN DIALOG MODE; A TRANSPARENT PASS-THROUGH STANDALONE.
+	// THE LIST SCROLL AREA — THE ONLY SCROLLER IN DIALOG MODE; A TRANSPARENT PASS-THROUGH STANDALONE.
 	$: scrollClass = surface ? 'min-h-0 flex-1 overflow-y-auto py-4' : '';
 	$: footerClass = cn(
 		'flex flex-col gap-3 border-t border-black/[0.06] pt-3 text-sm dark:border-white/[0.045] sm:flex-row sm:items-center sm:justify-between',
@@ -126,7 +180,21 @@
 			// IGNORE A RESPONSE THAT A NEWER load() (FROM RAPID PAGINATION/SEARCH) HAS ALREADY SUPERSEDED,
 			// SO AN OLDER, SLOWER RESPONSE CAN'T OVERWRITE THE FRESH ROWS.
 			if (token !== loadToken) return;
-			rows = data.rows ?? [];
+			rows = ((data.rows ?? []) as GlossaryRow[]).map((r) => ({
+				id: r.id,
+				source: r.source,
+				target: r.target,
+				gender: r.gender,
+				context: r.context,
+				tags: r.tags,
+				category: r.category,
+				pinned: r.pinned,
+				status: r.status,
+				aliases: r.aliases ?? [],
+				firstSeq: r.firstSeq,
+				firstChapterTitle: r.firstChapterTitle,
+				firstChapterTitleTarget: r.firstChapterTitleTarget,
+			}));
 			total = data.total ?? 0;
 		} catch {
 			if (token === loadToken) toast.error('Could not load the glossary.');
@@ -161,100 +229,155 @@
 		gotoPage(Number.isFinite(n) && n > 0 ? Math.floor(n) : 1);
 	}
 
-	async function addRow() {
-		if (!newSource.trim() || !newTarget.trim()) {
+	// PARSE THE COMMA-SEPARATED ALIAS INPUT INTO A CLEAN, DEDUPED ARRAY.
+	function splitAliases(text: string): string[] {
+		return [
+			...new Set(
+				text
+					.split(',')
+					.map((a) => a.trim())
+					.filter(Boolean),
+			),
+		];
+	}
+
+	// THE REAL STORY CHAPTER WHERE A TERM FIRST APPEARS: PARSE THE NUMBER FROM THE TITLE (第562章 → "Ch. 562")
+	// OR USE A SPECIAL TAG (Prologue / Extra …); FALL BACK TO THE BOOK POSITION ONLY FOR A PLAIN, UNNUMBERED
+	// TITLE (SEQUENTIAL epub/txt). null WHEN THERE IS NO first-appearance CHAPTER (GLOBAL TERM / DELETED CHAPTER).
+	function firstAppearanceLabel(e: Entry): string | null {
+		if (e.firstChapterTitle) {
+			const lbl = chapterLabel(e.firstChapterTitle, e.firstChapterTitleTarget);
+			if (lbl.kind === 'chapter') return `Ch. ${lbl.number}`;
+			if (lbl.kind === 'special') return lbl.tag;
+		}
+		if (e.firstSeq !== null) return `Ch. ${e.firstSeq + 1}`;
+		return null;
+	}
+
+	// OPEN THE DIALOG IN ADD MODE (BLANK FIELDS).
+	function openAdd() {
+		formMode = 'add';
+		formId = null;
+		fSource = '';
+		fTarget = '';
+		fGender = 'neuter';
+		fCategory = null;
+		fPinned = false;
+		fContext = '';
+		fAliases = '';
+		fStatus = 'ai';
+		fFirstLabel = null;
+		formOpen = true;
+	}
+
+	// OPEN THE DIALOG IN EDIT MODE, PREFILLED FROM THE TAPPED CARD.
+	function openEdit(e: Entry) {
+		formMode = 'edit';
+		formId = e.id;
+		fSource = e.source;
+		fTarget = e.target;
+		fGender = e.gender;
+		fCategory = e.category;
+		fPinned = e.pinned;
+		fContext = e.context ?? '';
+		fAliases = e.aliases.join(', ');
+		fStatus = e.status;
+		fFirstLabel = firstAppearanceLabel(e);
+		formOpen = true;
+	}
+
+	function closeForm() {
+		formOpen = false;
+	}
+
+	// CREATE (add) OR UPDATE (edit) THE TERM FROM THE DIALOG FIELDS.
+	async function submitForm() {
+		if (!fSource.trim() || !fTarget.trim()) {
 			toast.error('Both source and target are required.');
 			return;
 		}
 		busy = true;
 		try {
-			const res = await apiFetch('/api/glossary', {
-				method: 'POST',
-				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({
-					scope,
-					bookId,
-					// LANG PAIR IS ONLY USED FOR GLOBAL SCOPE (BOOK SCOPE INHERITS THE BOOK'S DIRECTION)
-					sourceLang,
-					targetLang,
-					source: newSource,
-					target: newTarget,
-					gender: newGender,
-					context: newContext.trim() || null,
-				}),
-			});
-			if (!res.ok) throw new Error('Add failed');
-			newSource = '';
-			newTarget = '';
-			newGender = 'neuter';
-			newContext = '';
-			showAdd = false;
+			const fields = {
+				source: fSource,
+				target: fTarget,
+				gender: fGender,
+				context: fContext.trim() || null,
+				category: fCategory,
+				pinned: fPinned,
+				aliases: splitAliases(fAliases),
+			};
+			const res =
+				formMode === 'add'
+					? await apiFetch('/api/glossary', {
+							method: 'POST',
+							headers: { 'content-type': 'application/json' },
+							// LANG PAIR IS ONLY USED FOR GLOBAL SCOPE (BOOK SCOPE INHERITS THE BOOK'S DIRECTION)
+							body: JSON.stringify({ scope, bookId, sourceLang, targetLang, ...fields }),
+						})
+					: await apiFetch(`/api/glossary/${formId}`, {
+							method: 'PUT',
+							headers: { 'content-type': 'application/json' },
+							body: JSON.stringify(fields),
+						});
+			if (!res.ok) throw new Error('Save failed');
+			formOpen = false;
 			await load();
-			toast.success('Term added.');
+			toast.success(formMode === 'add' ? 'Term added.' : 'Term saved.');
 		} catch {
-			toast.error('Could not add the term.');
+			toast.error(formMode === 'add' ? 'Could not add the term.' : 'Could not save that term.');
 		} finally {
 			busy = false;
 		}
 	}
 
-	async function saveRow(e: Entry) {
+	// DELETE THE TERM BEING EDITED.
+	async function deleteCurrent() {
+		if (formId === null) return;
+		busy = true;
 		try {
-			const res = await apiFetch(`/api/glossary/${e.id}`, {
-				method: 'PUT',
-				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({
-					source: e.source,
-					target: e.target,
-					gender: e.gender,
-					context: e.context,
-					tags: e.tags,
-				}),
-			});
-			if (!res.ok) throw new Error('Save failed');
-		} catch {
-			toast.error('Could not save that term.');
-		}
-	}
-
-	async function removeRow(id: number) {
-		try {
-			await apiFetch(`/api/glossary/${id}`, { method: 'DELETE' });
+			const res = await apiFetch(`/api/glossary/${formId}`, { method: 'DELETE' });
+			if (!res.ok) throw new Error('Delete failed');
+			formOpen = false;
 			await load();
+			toast.success('Term deleted.');
 		} catch {
 			toast.error('Could not delete that term.');
+		} finally {
+			busy = false;
 		}
 	}
 
-	// AI-FILL A ROW'S TARGET-LANGUAGE RENDERING FROM ITS SOURCE TERM, THEN PERSIST IT
-	async function translateRow(e: Entry) {
-		const source = e.source.trim();
+	// AI-FILL THE DIALOG'S TARGET RENDERING FROM ITS SOURCE TERM.
+	async function translateTarget() {
+		const source = fSource.trim();
 		if (!source) {
 			toast.error('Add the source term first.');
 			return;
 		}
-		const tid = toast.loading('Translating…');
+		translating = true;
 		try {
 			const res = await apiFetch('/api/translate-text', {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ text: source, kind: 'term', bookId: scope === 'book' ? bookId : undefined }),
+				body: JSON.stringify({
+					text: source,
+					kind: 'term',
+					bookId: scope === 'book' ? bookId : undefined,
+					// ATTRIBUTE THE SPEND TO THE CHAPTER BEING READ (book SCOPE ONLY) SO IT SHOWS ON ITS STATS.
+					chapterId: scope === 'book' ? (chapterId ?? undefined) : undefined,
+					// REGENERATE EVEN FOR AN EXISTING TERM — OTHERWISE THE ENDPOINT JUST ECHOES THE STORED target.
+					fresh: true,
+				}),
 			});
 			const d = await res.json();
 			if (!res.ok) throw new Error(d.message ?? 'Translation failed');
-			e.target = d.text;
-			rows = rows; // REASSIGN SO THE BOUND INPUT REFLECTS THE NEW VALUE
-			await saveRow(e);
-			toast.success('Translated.', { id: tid });
+			fTarget = d.text;
 		} catch (err) {
-			toast.error(err instanceof Error ? err.message : 'Could not translate the term.', { id: tid });
+			toast.error(err instanceof Error ? err.message : 'Could not translate the term.');
+		} finally {
+			translating = false;
 		}
-	}
-
-	// KEBAB MENU ROUTER FOR A GLOSSARY ROW
-	function onRowAction(e: Entry, action: string) {
-		if (action === 'translate') translateRow(e);
-		else if (action === 'delete') removeRow(e.id);
 	}
 
 	async function onImport(ev: Event) {
@@ -297,12 +420,12 @@
 	}
 
 	// CAST IN SCRIPT (TS `as` IS NOT ALLOWED INSIDE SVELTE TEMPLATE EXPRESSIONS)
-	function setNewGender(v: string) {
-		newGender = v as Gender;
+	function setFGender(v: string) {
+		fGender = v as Gender;
 	}
-	function setRowGender(e: Entry, v: string) {
-		e.gender = v as Gender;
-		saveRow(e);
+	// EMPTY value = UNCATEGORISED (→ null).
+	function setFCategory(v: string) {
+		fCategory = v ? (v as TermCategory) : null;
 	}
 
 	// -- LIFECYCLES -- //
@@ -311,22 +434,25 @@
 	onDestroy(() => clearTimeout(debounce));
 </script>
 
-<!-- GLOSSARY PANEL: PAGINATED, SEARCHABLE, IMPORT/EXPORT. IN A DIALOG IT IS A FLEX COLUMN WHOSE TABLE
-     AREA IS THE ONLY SCROLLER, KEEPING THE HEADER AND PAGINATION FOOTER FIXED. -->
+<!-- GLOSSARY PANEL: PAGINATED, SEARCHABLE, IMPORT/EXPORT. THE LIST IS READ-ONLY CARDS; TAPPING A CARD OPENS
+     THE EDIT DIALOG. IN A DIALOG IT IS A FLEX COLUMN WHOSE LIST AREA IS THE ONLY SCROLLER. -->
 <div class={rootClass}>
 	<!-- FIXED HEADER: TOOLBAR + SEARCH (shrink-0 IN A DIALOG, STICKY ON A STANDALONE PAGE) -->
 	<div class={headerClass}>
 		<!-- TOOLBAR: ACTIONS ON ONE TIDY ROW, TERM COUNT RIGHT-ALIGNED (PREDICTABLE AT EVERY WIDTH) -->
-		<div class="grid grid-cols-2 items-center gap-2 sm:flex sm:flex-wrap">
-			<Button variant="primary" class="col-span-2 sm:col-auto" on:click={() => (showAdd = true)}>
-				<Plus size={14} /> Add term
+		<!-- ICON-ONLY ON MOBILE (LABELS sr-only), FULL LABELS FROM sm UP — KEEPS THE BAR COMPACT ON A PHONE -->
+		<div class="flex flex-wrap items-center gap-2">
+			<Button variant="primary" on:click={openAdd}>
+				<Plus size={14} /><span class="sr-only sm:not-sr-only sm:ml-1.5">Add term</span>
 			</Button>
 			<!-- IMPORT USES Download (ARROW IN), EXPORT USES Upload (ARROW OUT) — ARROWS MATCH THE IN/OUT MEANING -->
-			<Button on:click={() => fileInput.click()} disabled={busy}><Download size={14} /> Import CSV</Button>
-			<Button href={exportHref(scope)}><Upload size={14} /> Export</Button>
-			<span class="col-span-2 text-center text-xs tabular-nums opacity-60 sm:col-auto sm:ml-auto sm:text-right">
-				{total.toLocaleString()} terms
-			</span>
+			<Button on:click={() => fileInput.click()} disabled={busy}>
+				<Download size={14} /><span class="sr-only sm:not-sr-only sm:ml-1.5">Import CSV</span>
+			</Button>
+			<Button href={exportHref(scope)}>
+				<Upload size={14} /><span class="sr-only sm:not-sr-only sm:ml-1.5">Export</span>
+			</Button>
+			<span class="ml-auto text-xs tabular-nums opacity-60">{total.toLocaleString()} terms</span>
 			<input bind:this={fileInput} type="file" accept=".csv,text/csv" class="hidden" on:change={onImport} />
 		</div>
 		<!-- SCOPE NOTE -->
@@ -344,85 +470,114 @@
 				on:input={onSearch}
 				type="search"
 				placeholder="Search terms…"
-				class="w-full rounded-lg border border-black/10 bg-transparent py-2 pl-9 pr-3 text-sm outline-none transition-colors placeholder:opacity-40 focus:border-sky-500 dark:border-white/[0.06]"
+				class="w-full rounded-lg border border-black/10 bg-transparent py-2 pl-9 pr-3 text-sm outline-none transition-colors placeholder:opacity-40 focus:border-[#c0392b] dark:border-white/[0.06]"
 			/>
 		</div>
 	</div>
 
-	<!-- TABLE SCROLL AREA: ONLY THIS REGION SCROLLS IN A DIALOG; HEADER AND FOOTER STAY FIXED -->
+	<!-- LIST SCROLL AREA: ONLY THIS REGION SCROLLS IN A DIALOG; HEADER AND FOOTER STAY FIXED -->
 	<div class={scrollClass}>
 		{#if loading && rows.length === 0}
-			<!-- FIRST LOAD ONLY — PAGINATION KEEPS THE CURRENT ROWS VISIBLE (JUST DIMMED) TO AVOID FLICKER -->
-			<p class="py-6 text-center text-sm opacity-50">Loading…</p>
+			<!-- FIRST-LOAD SKELETON: MIRRORS THE CARD LAYOUT (SOURCE→TARGET LINE + A CHIP ROW) -->
+			<ul
+				class="divide-y divide-black/[0.06] overflow-hidden rounded-xl border border-black/[0.06] dark:divide-white/[0.045] dark:border-white/[0.045]"
+			>
+				{#each [0, 1, 2, 3, 4, 5] as i (i)}
+					<li class="flex flex-col gap-2 px-3 py-3">
+						<div class="flex items-center gap-2">
+							<div class="h-3.5 w-24 animate-pulse rounded bg-black/[0.07] dark:bg-white/[0.08]"></div>
+							<div class="h-3.5 w-28 animate-pulse rounded bg-black/[0.05] dark:bg-white/[0.06]"></div>
+						</div>
+						<div class="flex gap-1.5">
+							<div class="h-3 w-16 animate-pulse rounded-full bg-black/[0.05] dark:bg-white/[0.06]"></div>
+							<div class="h-3 w-10 animate-pulse rounded bg-black/[0.04] dark:bg-white/[0.05]"></div>
+						</div>
+					</li>
+				{/each}
+			</ul>
 		{:else if rows.length === 0}
 			<p class="py-6 text-center text-sm opacity-50">
 				{query ? 'No matches.' : 'No terms yet — add or import some.'}
 			</p>
 		{:else}
-			<div
-				class="overflow-hidden rounded-xl border border-black/[0.06] transition-opacity dark:border-white/[0.045]"
+			<!-- READ-ONLY CARD LIST: FLUID CHIP LAYOUT THAT STACKS CLEANLY ON MOBILE AND BREATHES ON WIDE -->
+			<ul
+				class="divide-y divide-black/[0.06] overflow-hidden rounded-xl border border-black/[0.06] transition-opacity dark:divide-white/[0.045] dark:border-white/[0.045]"
 				class:opacity-50={loading}
 			>
-				<!-- COLUMN HEADERS — DESKTOP ONLY; ALIGN WITH THE ROW COLUMNS BELOW -->
-				<div
-					class="hidden items-center gap-3 border-b border-black/[0.06] bg-black/[0.02] px-2.5 py-2 text-[11px] font-semibold uppercase tracking-wide opacity-50 dark:border-white/[0.045] dark:bg-white/[0.02] sm:flex"
-				>
-					<span class="flex-1">Source</span>
-					<span class="flex-1">Target</span>
-					<span class="w-36 shrink-0">Gender</span>
-					<span class="w-9 shrink-0" aria-hidden="true"></span>
-				</div>
-				<div class="divide-y divide-black/[0.06] dark:divide-white/[0.045]">
-					{#each rows as e (e.id)}
-						<!-- TERM ROW: STACKED CARD ON MOBILE, ALIGNED COLUMNS ON DESKTOP; CHANGES SAVE ON BLUR -->
-						<div
-							class="flex flex-col gap-2 p-2.5 transition-colors hover:bg-black/[0.015] dark:hover:bg-white/[0.015] sm:p-2"
+				{#each rows as e (e.id)}
+					{@const firstLabel = firstAppearanceLabel(e)}
+					<li>
+						<!-- WHOLE CARD IS THE EDIT TRIGGER — NO INLINE FIELDS -->
+						<button
+							type="button"
+							use:ripple
+							on:click={() => openEdit(e)}
+							class="flex w-full items-start gap-3 px-3 py-2.5 text-left transition-colors hover:bg-black/[0.02] dark:hover:bg-white/[0.02]"
 						>
-							<!-- PRIMARY FIELDS: RAW · TRANSLATION · GENDER · DELETE (ALIGN WITH THE COLUMN HEADERS) -->
-							<div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
-								<input
-									bind:value={e.source}
-									on:change={() => saveRow(e)}
-									placeholder="Source term"
-									aria-label="Source term"
-									class="w-full min-w-0 rounded-md border border-black/10 bg-transparent px-2.5 py-1.5 text-sm outline-none transition-colors hover:border-black/20 focus:border-sky-500 dark:border-white/[0.06] dark:hover:border-white/20 sm:flex-1"
-								/>
-								<input
-									bind:value={e.target}
-									on:change={() => saveRow(e)}
-									placeholder="Target rendering"
-									aria-label="Target-language rendering"
-									class="w-full min-w-0 rounded-md border border-black/10 bg-transparent px-2.5 py-1.5 text-sm outline-none transition-colors hover:border-black/20 focus:border-sky-500 dark:border-white/[0.06] dark:hover:border-white/20 sm:flex-1"
-								/>
-								<!-- GENDER + KEBAB SHARE A ROW ON MOBILE, BECOME ALIGNED COLUMNS ON DESKTOP (sm:contents) -->
-								<div class="flex items-center gap-2 sm:contents">
-									<Select
-										items={GENDER_ITEMS}
-										value={e.gender}
-										on:change={(ev) => setRowGender(e, ev.detail)}
-										class="flex-1 sm:w-36 sm:flex-none"
-									/>
-									<!-- ROW ACTIONS: TRANSLATE FROM RAW / DELETE -->
-									<ActionMenu
-										class="shrink-0"
-										label="Term actions"
-										items={ROW_MENU}
-										on:select={(ev) => onRowAction(e, ev.detail)}
-									/>
+							<div class="min-w-0 flex-1">
+								<!-- SOURCE → TARGET (PINNED STAR INLINE, ONLY WHEN PINNED — NO RESERVED LEFT GUTTER; WRAPS ON NARROW WIDTHS) -->
+								<div class="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+									{#if e.pinned}
+										<Star size={13} class="shrink-0 self-center fill-amber-400 text-amber-500" />
+									{/if}
+									<span class="font-medium">{e.source}</span>
+									<span class="opacity-30">→</span>
+									<span class="break-words text-[#b23a2e] dark:text-[#e08a63]">{e.target}</span>
+								</div>
+								<!-- DESCRIPTION — CLAMPED SO LONG NOTES DON'T BLOAT THE ROW -->
+								{#if e.context}
+									<p class="mt-1 line-clamp-2 text-xs leading-relaxed opacity-55">{e.context}</p>
+								{/if}
+								<!-- META CHIPS: CATEGORY · GENDER · ALIASES · FIRST-SEEN · STATUS -->
+								<div class="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px]">
+									{#if e.category}
+										<!-- CATEGORY CHIP — RUNTIME PER-CATEGORY COLOUR (style EXCEPTION) -->
+										<span
+											class="rounded-full border px-1.5 py-0.5"
+											style="color: {CATEGORY_COLOR[e.category]}; border-color: {CATEGORY_COLOR[
+												e.category
+											]}66;">{CATEGORY_LABELS[e.category]}</span
+										>
+									{/if}
+									{#if e.gender === 'masculine'}
+										<span
+											class="bg-[#3b6fb0]/12 rounded px-1.5 py-0.5 text-[#3b6fb0] dark:text-[#7aa6e0]"
+											>Masculine</span
+										>
+									{:else if e.gender === 'feminine'}
+										<span
+											class="rounded bg-rose-500/10 px-1.5 py-0.5 text-rose-600 dark:text-rose-300"
+											>Feminine</span
+										>
+									{/if}
+									{#if e.aliases.length}<span class="truncate opacity-45"
+											>also: {e.aliases.join(', ')}</span
+										>{/if}
+									{#if firstLabel}
+										<span class="opacity-45" title="First appears in this chapter"
+											>{firstLabel}</span
+										>
+									{/if}
+									<span
+										class={cn(
+											'rounded px-1.5 py-0.5',
+											e.status === 'user'
+												? 'bg-[#5b8a72]/14 text-[#4f7a64] dark:text-[#83b39a]'
+												: 'opacity-45',
+										)}
+										title={e.status === 'user'
+											? 'Added or confirmed by you'
+											: 'Auto-extracted (unreviewed)'}>{e.status === 'user' ? 'You' : 'AI'}</span
+									>
 								</div>
 							</div>
-							<!-- CONTEXT: TRANSLATOR-FACING NOTE — FULL-WIDTH SECOND LINE, DIMMED TO READ AS SECONDARY -->
-							<input
-								bind:value={e.context}
-								on:change={() => saveRow(e)}
-								placeholder="Context — who/what this is, to guide translation (optional)"
-								aria-label="Translator context note"
-								class="w-full min-w-0 rounded-md border border-black/[0.06] bg-transparent px-2.5 py-1.5 text-xs opacity-75 outline-none transition-colors hover:border-black/20 focus:border-sky-500 focus:opacity-100 dark:border-white/[0.045] dark:hover:border-white/20"
-							/>
-						</div>
-					{/each}
-				</div>
-			</div>
+							<!-- EDIT AFFORDANCE -->
+							<ChevronRight size={16} class="shrink-0 self-center opacity-25" />
+						</button>
+					</li>
+				{/each}
+			</ul>
 		{/if}
 	</div>
 
@@ -461,7 +616,7 @@
 						bind:value={jumpValue}
 						on:change={jumpToPage}
 						aria-label="Jump to page"
-						class="w-14 rounded-md border border-black/10 bg-transparent px-2 py-1 text-center text-sm tabular-nums outline-none focus:border-sky-500 dark:border-white/[0.06]"
+						class="w-14 rounded-md border border-black/10 bg-transparent px-2 py-1 text-center text-sm tabular-nums outline-none focus:border-[#c0392b] dark:border-white/[0.06]"
 					/>
 					<span class="shrink-0 opacity-60">of {pageCount.toLocaleString()}</span>
 				</form>
@@ -481,44 +636,89 @@
 	{/if}
 </div>
 
-<!-- ADD TERM DIALOG -->
-<Modal open={showAdd} title="Add term" size="sm" on:close={() => (showAdd = false)}>
-	<form class="flex flex-col gap-4" on:submit|preventDefault={addRow}>
+<!-- ADD / EDIT TERM DIALOG (ONE FORM, MODE-SWITCHED) -->
+<Modal open={formOpen} title={formMode === 'add' ? 'Add term' : 'Edit term'} size="sm" on:close={closeForm}>
+	<form class="flex flex-col gap-4" on:submit|preventDefault={submitForm}>
+		<!-- EDIT META: PROVENANCE + FIRST APPEARANCE (READ-ONLY) -->
+		{#if formMode === 'edit'}
+			<p class="text-xs opacity-50">
+				{fStatus === 'user' ? 'Added or edited by you' : 'Auto-extracted'}{#if fFirstLabel}
+					· first appears in {fFirstLabel}{/if}
+			</p>
+		{/if}
 		<label class="block">
 			<span class="mb-1 block text-xs font-medium opacity-60">Source term</span>
 			<input
-				bind:value={newSource}
+				bind:value={fSource}
 				placeholder="source term"
-				class="w-full rounded-md border border-black/10 bg-transparent px-2.5 py-2 text-sm outline-none focus:border-sky-500 dark:border-white/[0.06]"
+				class="w-full rounded-md border border-black/10 bg-transparent px-2.5 py-2 text-sm outline-none focus:border-[#c0392b] dark:border-white/[0.06]"
 			/>
 		</label>
-		<label class="block">
-			<span class="mb-1 block text-xs font-medium opacity-60">Target rendering</span>
-			<input
-				bind:value={newTarget}
-				placeholder="target rendering"
-				class="w-full rounded-md border border-black/10 bg-transparent px-2.5 py-2 text-sm outline-none focus:border-sky-500 dark:border-white/[0.06]"
-			/>
-		</label>
-		<!-- NOT A <label>: Select IS A CUSTOM WIDGET, NOT A NATIVE CONTROL A LABEL CAN BIND TO -->
+		<!-- TARGET + AI-FILL: THE Languages BUTTON TRANSLATES THE SOURCE INTO THE TARGET FIELD -->
 		<div class="block">
-			<span class="mb-1 block text-xs font-medium opacity-60">Gender</span>
-			<Select items={GENDER_ITEMS} value={newGender} on:change={(e) => setNewGender(e.detail)} />
+			<span class="mb-1 block text-xs font-medium opacity-60">Target rendering</span>
+			<div class="flex items-center gap-2">
+				<input
+					bind:value={fTarget}
+					placeholder="target rendering"
+					class="min-w-0 flex-1 rounded-md border border-black/10 bg-transparent px-2.5 py-2 text-sm outline-none focus:border-[#c0392b] dark:border-white/[0.06]"
+				/>
+				<Button
+					class="shrink-0"
+					loading={translating}
+					disabled={translating || !fSource.trim()}
+					on:click={translateTarget}
+				>
+					<Languages size={14} /><span class="sr-only">Translate source with AI</span>
+				</Button>
+			</div>
 		</div>
+		<!-- NOT A <label>: Select IS A CUSTOM WIDGET, NOT A NATIVE CONTROL A LABEL CAN BIND TO -->
+		<div class="grid grid-cols-2 gap-3">
+			<div class="block">
+				<span class="mb-1 block text-xs font-medium opacity-60">Category</span>
+				<Select items={CATEGORY_ITEMS} value={fCategory ?? ''} on:change={(e) => setFCategory(e.detail)} />
+			</div>
+			<div class="block">
+				<span class="mb-1 block text-xs font-medium opacity-60">Gender</span>
+				<Select items={GENDER_ITEMS} value={fGender} on:change={(e) => setFGender(e.detail)} />
+			</div>
+		</div>
+		<!-- PIN TOGGLE — NATIVE CHECKBOX (NO ripple ON NATIVE FORM CONTROLS) -->
+		<label class="flex items-center gap-2">
+			<input type="checkbox" bind:checked={fPinned} class="h-4 w-4 accent-amber-500" />
+			<span class="text-sm">Pin — prioritise this term during translation</span>
+		</label>
 		<label class="block">
-			<span class="mb-1 block text-xs font-medium opacity-60">Context (optional)</span>
+			<span class="mb-1 block text-xs font-medium opacity-60">Description (optional)</span>
 			<textarea
-				bind:value={newContext}
+				bind:value={fContext}
 				rows="2"
-				placeholder="Who or what this is — guides how it's translated (e.g. protagonist's senior martial brother)"
-				class="w-full resize-y rounded-md border border-black/10 bg-transparent px-2.5 py-2 text-sm outline-none focus:border-sky-500 dark:border-white/[0.06]"
+				placeholder="What this is and its role in the story (e.g. The protagonist's senior martial brother and rival)"
+				class="w-full resize-y rounded-md border border-black/10 bg-transparent px-2.5 py-2 text-sm outline-none focus:border-[#c0392b] dark:border-white/[0.06]"
 			></textarea>
 		</label>
-		<!-- HIDDEN SUBMIT: LETS ENTER SUBMIT THE FORM WHILE THE VISIBLE ACTION LIVES IN THE FOOTER -->
+		<label class="block">
+			<span class="mb-1 block text-xs font-medium opacity-60">Aliases (optional)</span>
+			<input
+				bind:value={fAliases}
+				placeholder="Other source forms, comma-separated (e.g. 齊兄, 澈)"
+				class="w-full rounded-md border border-black/10 bg-transparent px-2.5 py-2 text-sm outline-none focus:border-[#c0392b] dark:border-white/[0.06]"
+			/>
+		</label>
+		<!-- HIDDEN SUBMIT: LETS ENTER SUBMIT THE FORM WHILE THE VISIBLE ACTIONS LIVE IN THE FOOTER -->
 		<button type="submit" class="hidden" disabled={busy} aria-hidden="true"></button>
 	</form>
 	<svelte:fragment slot="footer">
-		<Button on:click={() => (showAdd = false)}>Cancel</Button>
-		<Button variant="primary" loading={busy} disabled={busy} on:click={addRow}><Plus size={14} /> Add term</Button>
+		<!-- DELETE (EDIT ONLY) IS PUSHED LEFT, AWAY FROM THE SAFE Cancel / Save PAIR -->
+		{#if formMode === 'edit'}
+			<Button class="mr-auto text-rose-600 dark:text-rose-400" disabled={busy} on:click={deleteCurrent}>
+				<Trash2 size={14} /> Delete
+			</Button>
+		{/if}
+		<Button on:click={closeForm}>Cancel</Button>
+		<Button variant="primary" loading={busy} disabled={busy} on:click={submitForm}>
+			{#if formMode === 'add'}<Plus size={14} /> Add term{:else}Save{/if}
+		</Button>
 	</svelte:fragment>
 </Modal>

@@ -42,7 +42,9 @@
 	let pasteTitle = '';
 	let pasteContent = '';
 	let urlInput = '';
-	let busy = false;
+	// WHICH ADD ACTION IS RUNNING — DRIVES A PER-BUTTON SPINNER (ONLY THE CLICKED BUTTON LOADS) AND DISABLES
+	// THE OTHERS WHILE ONE RUNS. null = IDLE.
+	let busyAction: 'manual' | 'url' | 'import' | null = null;
 	let epubInput: HTMLInputElement;
 	let txtInput: HTMLInputElement;
 	// CHOSEN-BUT-NOT-YET-IMPORTED FILE — PICKING STAGES IT; AN EXPLICIT "Import" CLICK COMMITS (NO AUTO-SUBMIT).
@@ -58,8 +60,8 @@
 	}
 
 	async function addManual() {
-		if (!pasteTitle.trim() || !pasteContent.trim() || busy) return;
-		busy = true;
+		if (!pasteTitle.trim() || !pasteContent.trim() || busyAction) return;
+		busyAction = 'manual';
 		try {
 			const res = await apiFetch(`/api/books/${bookId}/chapters`, {
 				method: 'POST',
@@ -77,13 +79,13 @@
 		} catch (e) {
 			toast.error(e instanceof Error ? e.message : 'Failed to add chapter.');
 		} finally {
-			busy = false;
+			busyAction = null;
 		}
 	}
 
 	async function addFromUrl() {
-		if (!urlInput.trim() || busy) return;
-		busy = true;
+		if (!urlInput.trim() || busyAction) return;
+		busyAction = 'url';
 		const tid = toast.loading('Fetching chapter…');
 		try {
 			const res = await apiFetch(`/api/books/${bookId}/chapters`, {
@@ -98,17 +100,17 @@
 		} catch (e) {
 			toast.error(e instanceof Error ? e.message : 'Could not fetch that URL.', { id: tid });
 		} finally {
-			busy = false;
+			busyAction = null;
 		}
 	}
 
 	// COMMIT THE STAGED FILE (THE EXPLICIT "Import" CLICK) — NOTHING IMPORTS UNTIL THE USER CONFIRMS HERE.
 	function confirmImport() {
-		if (pendingImport && !busy) importFile(pendingImport.kind, pendingImport.file);
+		if (pendingImport && !busyAction) importFile(pendingImport.kind, pendingImport.file);
 	}
 
 	async function importFile(kind: 'epub' | 'txt', file: File) {
-		busy = true;
+		busyAction = 'import';
 		const tid = toast.loading(`Importing ${file.name}…`);
 		try {
 			const fd = new FormData();
@@ -122,7 +124,7 @@
 		} catch (e) {
 			toast.error(e instanceof Error ? e.message : 'Import failed.', { id: tid });
 		} finally {
-			busy = false;
+			busyAction = null;
 		}
 	}
 </script>
@@ -146,7 +148,7 @@
 				on:click={() => (mode = m.id)}
 				class={cn(
 					'px-3 py-1.5 transition-colors',
-					mode === m.id ? 'bg-sky-600 text-white' : 'opacity-70 hover:opacity-100',
+					mode === m.id ? 'bg-[#b23a2e] text-white' : 'opacity-70 hover:opacity-100',
 				)}>{m.label}</button
 			>
 		{/each}
@@ -158,16 +160,22 @@
 			<input
 				bind:value={pasteTitle}
 				placeholder="Chapter title…"
-				class="rounded-lg border border-black/10 bg-transparent px-3 py-2 text-sm outline-none focus:border-sky-500 dark:border-white/[0.06]"
+				class="rounded-lg border border-black/10 bg-transparent px-3 py-2 text-sm outline-none focus:border-[#c0392b] dark:border-white/[0.06]"
 			/>
 			<textarea
 				bind:value={pasteContent}
 				rows="7"
 				placeholder="Paste the chapter text here…"
-				class="resize-y rounded-lg border border-black/10 bg-transparent px-3 py-2 text-sm outline-none focus:border-sky-500 dark:border-white/[0.06]"
+				class="resize-y rounded-lg border border-black/10 bg-transparent px-3 py-2 text-sm outline-none focus:border-[#c0392b] dark:border-white/[0.06]"
 			></textarea>
 			<div>
-				<Button type="submit" variant="primary" size="sm" loading={busy} disabled={busy}>
+				<Button
+					type="submit"
+					variant="primary"
+					size="sm"
+					loading={busyAction === 'manual'}
+					disabled={busyAction !== null}
+				>
 					<Plus size={14} /> Add chapter
 				</Button>
 			</div>
@@ -179,9 +187,15 @@
 				bind:value={urlInput}
 				type="url"
 				placeholder="Paste any chapter URL…"
-				class="min-w-0 flex-1 rounded-lg border border-black/10 bg-transparent px-3 py-2 text-sm outline-none focus:border-sky-500 dark:border-white/[0.06]"
+				class="min-w-0 flex-1 rounded-lg border border-black/10 bg-transparent px-3 py-2 text-sm outline-none focus:border-[#c0392b] dark:border-white/[0.06]"
 			/>
-			<Button type="submit" variant="primary" size="sm" loading={busy} disabled={busy}>
+			<Button
+				type="submit"
+				variant="primary"
+				size="sm"
+				loading={busyAction === 'url'}
+				disabled={busyAction !== null}
+			>
 				<Globe size={14} /> Fetch into book
 			</Button>
 		</form>
@@ -196,18 +210,24 @@
 				>{pendingImport.kind.toUpperCase()}</span
 			>
 			<span class="min-w-0 flex-1 truncate text-sm">{pendingImport.file.name}</span>
-			<Button variant="primary" size="sm" loading={busy} disabled={busy} on:click={confirmImport}>
+			<Button
+				variant="primary"
+				size="sm"
+				loading={busyAction === 'import'}
+				disabled={busyAction !== null}
+				on:click={confirmImport}
+			>
 				<Plus size={14} /> Import
 			</Button>
-			<Button size="sm" disabled={busy} on:click={() => (pendingImport = null)}>Cancel</Button>
+			<Button size="sm" disabled={busyAction !== null} on:click={() => (pendingImport = null)}>Cancel</Button>
 		</div>
 	{:else}
 		<!-- IMPORT AN EPUB OR TXT — PICKING A FILE STAGES IT; "Import" APPENDS ITS CHAPTERS TO THIS BOOK -->
 		<div class="flex flex-wrap items-center gap-2 text-sm">
-			<Button size="sm" disabled={busy} on:click={() => epubInput.click()}
+			<Button size="sm" disabled={busyAction !== null} on:click={() => epubInput.click()}
 				><FileText size={14} /> Choose EPUB</Button
 			>
-			<Button size="sm" disabled={busy} on:click={() => txtInput.click()}
+			<Button size="sm" disabled={busyAction !== null} on:click={() => txtInput.click()}
 				><FileText size={14} /> Choose TXT</Button
 			>
 			<span class="text-xs opacity-50">Appended to this book in order.</span>

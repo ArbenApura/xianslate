@@ -115,11 +115,6 @@ export function runsToPlain(runs: Run[]): string {
 	return s;
 }
 
-/** CONVENIENCE: PARAGRAPH SOURCE → PLAIN SPOKEN TEXT. */
-export function paragraphToPlain(p: string): string {
-	return runsToPlain(parseRuns(renderMarkup(p)));
-}
-
 /** SPLIT RUNS INTO WORD/WHITESPACE/BREAK TOKENS CARRYING PLAIN-TEXT OFFSETS AND INLINE TAGS. */
 export function tokenize(runs: Run[]): Token[] {
 	const tokens: Token[] = [];

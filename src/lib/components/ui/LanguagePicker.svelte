@@ -129,7 +129,7 @@
 		class={cn(
 			'flex w-full items-center gap-2 rounded-lg border bg-transparent px-3 py-2 text-left text-sm transition-colors',
 			open
-				? 'border-sky-500'
+				? 'border-[#c0392b]'
 				: 'border-black/10 hover:border-black/20 dark:border-white/[0.08] dark:hover:border-white/20',
 		)}
 	>
@@ -167,7 +167,7 @@
 						bind:value={query}
 						type="text"
 						placeholder="Search 30+ languages…"
-						class="w-full rounded-lg border border-black/10 bg-transparent py-1.5 pl-8 pr-2.5 text-sm outline-none focus:border-sky-500 dark:border-white/[0.08]"
+						class="w-full rounded-lg border border-black/10 bg-transparent py-1.5 pl-8 pr-2.5 text-sm outline-none focus:border-[#c0392b] dark:border-white/[0.08]"
 					/>
 				</div>
 			</div>
@@ -183,7 +183,7 @@
 						class={cn(
 							'flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm transition-colors',
 							isNone
-								? 'bg-sky-500/10 text-sky-600 dark:text-sky-300'
+								? 'bg-[#c0392b]/10 text-[#b23a2e] dark:text-[#e08a63]'
 								: 'hover:bg-black/[0.04] dark:hover:bg-white/[0.04]',
 						)}
 					>
@@ -210,7 +210,7 @@
 							class={cn(
 								'flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-sm transition-colors',
 								value === lang.value
-									? 'bg-sky-500/10 text-sky-600 dark:text-sky-300'
+									? 'bg-[#c0392b]/10 text-[#b23a2e] dark:text-[#e08a63]'
 									: 'hover:bg-black/[0.04] dark:hover:bg-white/[0.04]',
 							)}
 						>

@@ -34,7 +34,11 @@ import {
 	coerceCover,
 	coerceMap,
 	COVER_SYSTEM,
+	extractProse,
+	fallbackNav,
+	findBestContentHtml,
 	MAP_SYSTEM,
+	MIN_BODY_CHARS,
 	sanitizeMap,
 } from './site-parser';
 import { recordMapUsage } from './site-stats';
@@ -49,6 +53,15 @@ const HEAL_COOLDOWN_MS = 10 * 60 * 1000;
 // HOST → SelectorMap. READ-THROUGH CACHE OVER THE DB; BUSTED ON A SUCCESSFUL HEAL.
 const cache = new Map<string, SelectorMap>();
 
+// HOST → ZYTE httpResponseBody COST OVERRIDE (site_adapters.fetch_cost_http), USD PER SUCCESSFUL REQUEST. IN-MEMORY
+// MIRROR OF THE PERSISTED PER-HOST COST SO hostFetchCost IS FREE AFTER THE FIRST LOOKUP. null MEANS "NO OVERRIDE"
+// → THE CALLER FALLS BACK TO THE GLOBAL ENV ESTIMATE (ZYTE_COST_PER_REQUEST).
+const fetchCost = new Map<string, number | null>();
+
+// HOSTS WHOSE fetch_cost_http WE'VE ALREADY RESOLVED FROM THE DB THIS PROCESS (OVERRIDE *OR* NONE), SO A HOST WITH
+// NO OVERRIDE ISN'T RE-QUERIED ON EVERY FETCH.
+const costChecked = new Set<string>();
+
 // HOST → IN-FLIGHT HEAL. SINGLE-FLIGHT: CONCURRENT FETCHES OF A BROKEN HOST SHARE ONE AI CALL.
 const inflight = new Map<string, Promise<SelectorMap>>();
 
@@ -60,6 +73,38 @@ function hostOf(url: string): string {
 	} catch {
 		throw new FetchError('invalid_url', 'That link doesn’t look right. Paste the full address of a chapter page.');
 	}
+}
+
+// THE PER-HOST ZYTE httpResponseBody COST OVERRIDE (USD), OR null TO FALL BACK TO THE GLOBAL ENV ESTIMATE. ZYTE
+// BILLS BY SITE-DIFFICULTY TIER AND DOESN'T REPORT THE TIER PER REQUEST, SO A HOST'S REAL RATE IS LEARNED FROM THE
+// ZYTE INVOICE AND STORED VIA setHostFetchCost — MAKING THE COST METER + FETCH CHARGE PER-HOST ACCURATE INSTEAD OF
+// ONE GLOBAL GUESS. IN-MEMORY FIRST (FREE), ELSE ONE DB READ PER HOST PER PROCESS (CACHED IN costChecked). NEVER
+// THROWS — A BAD URL / DB HICCUP RETURNS null SO BILLING FALLS BACK TO THE ENV ESTIMATE.
+export async function hostFetchCost(url: string): Promise<number | null> {
+	let host: string;
+	try {
+		host = hostOf(url);
+	} catch {
+		return null;
+	}
+	const cached = fetchCost.get(host);
+	if (cached != null) return cached;
+	if (costChecked.has(host)) return null;
+	try {
+		const [row] = await db
+			.select({ http: siteAdapters.fetchCostHttp })
+			.from(siteAdapters)
+			.where(eq(siteAdapters.host, host))
+			.limit(1);
+		costChecked.add(host);
+		if (row && row.http != null) {
+			fetchCost.set(host, row.http);
+			return row.http;
+		}
+	} catch (e) {
+		console.warn(`[fetch-cost] override lookup failed for ${host}:`, e);
+	}
+	return null;
 }
 
 // ASK DEEPSEEK FOR THE SELECTORS (TINY OUTPUT) FROM A PAGE DIGEST (BOUNDED INPUT). thinking IS DISABLED
@@ -140,9 +185,17 @@ async function getAdapter(host: string): Promise<SelectorMap | null> {
 	if (cached) return cached;
 	const [row] = await db.select().from(siteAdapters).where(eq(siteAdapters.host, host)).limit(1);
 	if (row) {
+		// A CORRUPTED / TRUNCATED mapping ROW MUST NOT 500 THE FETCH — TREAT AN UNPARSEABLE MAP AS AN UNKNOWN
+		// HOST (RETURN null) SO THE CALLER RE-LEARNS IT INSTEAD OF THROWING A RAW SyntaxError.
+		let raw: SelectorMap;
+		try {
+			raw = JSON.parse(row.mapping) as SelectorMap;
+		} catch {
+			return null;
+		}
 		// SANITIZE ON READ SO MAPS PERSISTED BEFORE SELECTOR VALIDATION (WITH OVERFIT [href] SELECTORS) STOP
 		// MIS-RESOLVING NAV — THEY FALL BACK TO THE RELIABLE text LABELS WITHOUT NEEDING A RE-LEARN.
-		const m = sanitizeMap(JSON.parse(row.mapping) as SelectorMap);
+		const m = sanitizeMap(raw);
 		cache.set(host, m);
 		return m;
 	}
@@ -187,7 +240,13 @@ function heal(host: string, url: string, html: string, root: HTMLElement): Promi
 		// RECENTLY HEALED AND STILL FAILING → DON'T SPEND ANOTHER CALL; REUSE WHAT'S STORED (THE CALLER
 		// WILL RE-APPLY AND, IF IT STILL CAN'T PARSE, REPORT A CLEAN unsupported_site).
 		if (row?.lastHealAt && Date.now() - row.lastHealAt < HEAL_COOLDOWN_MS) {
-			return JSON.parse(row.mapping) as SelectorMap;
+			// REUSE THE STORED MAP WITHOUT RE-BILLING — UNLESS IT'S CORRUPT, IN WHICH CASE IGNORE THE COOLDOWN
+			// AND FALL THROUGH TO RE-LEARN BELOW (NEVER LET A RAW SyntaxError ESCAPE THE SHARED inflight PROMISE).
+			try {
+				return JSON.parse(row.mapping) as SelectorMap;
+			} catch {
+				// CORRUPT ROW — RE-LEARN.
+			}
 		}
 		let hint: string | undefined;
 		for (let attempt = 0; attempt < 2; attempt++) {
@@ -230,17 +289,56 @@ export async function parseChapter(html: string, url: string): Promise<ParsedCha
 	if (known) {
 		const parsed = applyAdapter(root, html, known, url);
 		if (parsed) return parsed;
+		console.warn(`[parse] cached map failed for ${host} at ${url}`);
 	}
 
 	// UNKNOWN HOST OR STALE MAP → (RE)LEARN.
-	const learned = await heal(host, url, html, root);
-	const parsed = applyAdapter(root, html, learned, url);
-	if (!parsed) {
-		throw new FetchError(
-			'parse_failed',
-			'We couldn’t find the chapter text on that page. Make sure the link goes straight to a chapter.',
-			host,
-		);
+	try {
+		const learned = await heal(host, url, html, root);
+		const parsed = applyAdapter(root, html, learned, url);
+		if (parsed) return parsed;
+		console.warn(`[parse] healed map also failed for ${host} at ${url}`);
+	} catch (e) {
+		// HEAL EXHAUSTED ITS ATTEMPTS — THE MODEL CAN'T MAP THIS PAGE. BEFORE GIVING UP, TRY A LAST-RESORT
+		// LOOSE-BODY EXTRACTION: STRIP ALL CHROME FROM THE FULL PAGE AND USE <title> AS THE CHAPTER TITLE.
+		// THIS LETS A LEGITIMATE CHAPTER WHOSE PAGE TEMPLATE HAPPENS TO CONFUSE THE AI STILL BE IMPORTED,
+		// WITHOUT THE DELAY + COST OF ANOTHER AI CALL. FALL THROUGH TO THE FALLBACK BELOW.
+		if (!(e instanceof FetchError && e.kind === 'unsupported_site')) throw e;
 	}
-	return parsed;
+
+	// FALLBACK: FIND THE BEST CONTENT BLOCK BY TEXT DENSITY (SAME HEURISTIC buildSkeleton USES TO
+	// PRESENT CANDIDATES TO THE AI). THIS ZERO-COST GUESS TARGETS THE PAGE'S MAIN STORY DIV WITHOUT
+	// INCLUDING THE FULL-PAGE CHROME (MENUS, SETTINGS PANELS, COMMENTS) THAT extractProse CAN'T FULLY
+	// STRIP. ALSO RESOLVE NAV LINKS VIA fallbackNav (link rel + id/class heuristics) SO THE READER'S
+	// PREV/NEXT BUTTONS STILL WORK — THE SAME HEURISTIC applyAdapter USES WHEN NavRule sel RESOLVES NOTHING.
+	const candidateHtml = findBestContentHtml(root);
+	if (candidateHtml) {
+		const fallbackTitle = (root.querySelector('title')?.text?.trim() ?? 'Untitled').slice(0, 200);
+		const fallbackBody = extractProse(candidateHtml);
+		if (fallbackBody.length >= MIN_BODY_CHARS) {
+			console.warn(`[parse] content-candidate fallback succeeded (${fallbackBody.length} chars)`);
+			let prevUrl = fallbackNav(root, url, 'prev');
+			let nextUrl = fallbackNav(root, url, 'next');
+			const indexUrl = fallbackNav(root, url, 'index');
+			if (prevUrl === url) prevUrl = null;
+			if (nextUrl === url) nextUrl = null;
+			return {
+				titleSource: fallbackTitle,
+				contentSource: fallbackBody,
+				siteChapterId: null,
+				chapterUrl: url,
+				prevUrl,
+				nextUrl,
+				indexUrl,
+				bookId: null,
+				bookTitle: null,
+				author: null,
+			};
+		}
+	}
+	throw new FetchError(
+		'parse_failed',
+		'We couldn’t find the chapter text on that page. Make sure the link goes straight to a chapter.',
+		host,
+	);
 }

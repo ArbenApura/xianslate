@@ -14,6 +14,19 @@ import type { RequestHandler } from './$types';
 
 const scopeSchema = z.enum(['global', 'book']);
 
+const categorySchema = z.enum([
+	'character',
+	'location',
+	'organization',
+	'technique',
+	'item',
+	'realm',
+	'creature',
+	'title',
+	'concept',
+	'other',
+]);
+
 const PostBody = z.object({
 	scope: scopeSchema,
 	bookId: z.string().nullable().optional(),
@@ -25,6 +38,9 @@ const PostBody = z.object({
 	gender: z.enum(['neuter', 'masculine', 'feminine']).default('neuter'),
 	context: z.string().nullable().optional(),
 	tags: z.string().nullable().optional(),
+	category: categorySchema.nullable().optional(),
+	pinned: z.boolean().optional(),
+	aliases: z.array(z.string()).nullable().optional(),
 });
 
 // -- FUNCTIONS -- //
@@ -70,7 +86,8 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 	const user = requireUser(locals);
 	const parsed = PostBody.safeParse(await request.json().catch(() => null));
 	if (!parsed.success) throw error(400, 'Invalid term.');
-	const { scope, bookId, sourceLang, targetLang, source, target, gender, context, tags } = parsed.data;
+	const { scope, bookId, sourceLang, targetLang, source, target, gender, context, tags, category, pinned, aliases } =
+		parsed.data;
 	if (scope === 'book' && !bookId) throw error(400, 'bookId is required for book scope.');
 	// OWNERSHIP: ONLY THE BOOK OWNER MAY ADD A book-SCOPE TERM.
 	if (scope === 'book') await assertBookOwner(user.id, bookId!);
@@ -79,7 +96,16 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 	const row = await addTerm(
 		scope,
 		bookId ?? null,
-		{ source, target, gender, context: context ?? null, tags: tags ?? null },
+		{
+			source,
+			target,
+			gender,
+			context: context ?? null,
+			tags: tags ?? null,
+			category: category ?? null,
+			pinned: pinned ?? false,
+			aliases: aliases ?? null,
+		},
 		pair,
 		user.id,
 	);

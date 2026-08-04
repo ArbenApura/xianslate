@@ -15,5 +15,5 @@
 		<span>{label}</span>
 		<span class="tabular-nums">{display}</span>
 	</span>
-	<input type="range" {min} {max} {step} bind:value class="mt-1.5 w-full accent-sky-600" on:input on:change />
+	<input type="range" {min} {max} {step} bind:value class="mt-1.5 w-full accent-[#b23a2e]" on:input on:change />
 </label>

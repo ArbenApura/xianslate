@@ -14,8 +14,10 @@ import { parse, type HTMLElement } from 'node-html-parser';
 // -- TYPES -- //
 
 // A NAVIGATION LINK RULE: A CSS SELECTOR AND/OR THE VISIBLE ANCHOR LABEL(S) TO MATCH (THE TEXT FALLBACK
-// SURVIVES CLASS RENAMES, WHICH IS WHY WE KEEP BOTH).
-export type NavRule = { sel?: string; text?: string[] };
+// SURVIVES CLASS RENAMES, WHICH IS WHY WE KEEP BOTH). `attr` NAMES WHERE THE URL LIVES WHEN IT ISN'T AN
+// <a href> — A HIDDEN-INPUT `value`, A `data-*`, OR `onclick` (A URL IS PARSED OUT OF THE JS). DEFAULT href.
+// THIS IS WHAT LETS THE LEARNER MAP JS-DRIVEN SPA NAVIGATION (e.g. NOVELPIA), NOT JUST ANCHOR LINKS.
+export type NavRule = { sel?: string; text?: string[]; attr?: string };
 
 // THE PERSISTED, AI-LEARNED SHAPE OF ONE SITE. SELECTORS USE node-html-parser CSS (tag/.class/#id +
 // DESCENDANT COMBINATORS ONLY). title/body MAY BE COMMA-SEPARATED FALLBACK LISTS, TRIED IN ORDER.
@@ -76,24 +78,26 @@ const NAV_NAV =
 	/(上一[章页頁节節]|下一[章页頁节節]|前一[章页頁]|后一[章页頁]|上一篇|下一篇|返回?目[录錄]|章节?目[录錄]|返回书[页頁]|目[录錄]|前へ|次へ|目次|이전|다음|목차|prev|next|index|contents|table of contents|toc)/i;
 
 // A SHORT STANDALONE LINE THAT IS REALLY A NAV/CONTROL LABEL, NOT PROSE — DROPPED FROM THE BODY TEXT.
+// THE 소설…/커버…/로딩… ALTERNATIVES ARE KOREAN-READER CHROME (A "loading novel content" PLACEHOLDER, A
+// COVER COLLAPSE/EXPAND TOGGLE, EPISODE NAV) THAT LEAK INTO THE SCRAPED BODY OF JS-RENDERED KOREAN SITES.
 const NAV_LINE =
-	/^(字体|大|中|小|换手|關燈|关灯|开灯|上一[章页頁节節]|下一[章页頁节節]|前一[章页頁]|后一[章页頁]|返回目[录錄]|返回書?[页頁]|返回顶部|回到顶部|目[录錄]|章节目[录錄]|存书签|加入书[签籤架]|推荐本?[书書]|收藏本?[书書]|手机阅读|手機閱讀|章节错误.*|.*点此举报.*|第\(\d+\/\d+\)页|上一篇|下一篇|prev(ious)?|next|index|contents?|table of contents|toc|報錯|报错|分享|收藏|書架|书架|目錄|繁體|簡體|简体|繁体)$/i;
+	/^(字体|大|中|小|换手|關燈|关灯|开灯|上一[章页頁节節]|下一[章页頁节節]|前一[章页頁]|后一[章页頁]|返回目[录錄]|返回書?[页頁]|返回顶部|回到顶部|目[录錄]|章节目[录錄]|存书签|加入书[签籤架]|推荐本?[书書]|收藏本?[书書]|手机阅读|手機閱讀|章节错误.*|.*点此举报.*|第\(\d+\/\d+\)页|上一篇|下一篇|prev(ious)?|next|index|contents?|table of contents|toc|報錯|报错|分享|收藏|書架|书架|目錄|繁體|簡體|简体|繁体|소설\s*내용을\s*불러오고\s*있습니다\.?|커버\s*접기|커버\s*펼치기|이전\s*화(\s*보기)?|다음\s*화(\s*보기)?|목록(\s*보기)?|목차|로딩\s*중\.*|\d{1,4}\s*\/\s*\d{1,4})$/i;
 
 // A BODY WHOSE TEXT *STARTS* LIKE THIS IS CHROME (A NO-JS NOTICE, MENU, OR LOGIN WALL), NOT A CHAPTER.
 const CHROME_START =
 	/^(您的浏览器|您的瀏覽器|由于您的|請開啟|请开启|javascript|登录|登錄|注册|註冊|排行榜|首页|首頁|加入收藏|手机版|手機版)/i;
 
-export const MAP_SYSTEM = `You are mapping a web-novel CHAPTER page so a scraper can extract it. The page may be in any language (Chinese, Japanese, Korean, English, …) — rely on STRUCTURE and the previews, not on the language.
-You are given three lists derived from the page: TITLE CANDIDATES, CONTENT CANDIDATES (each with its text length and a short preview of its text), and NAV LINKS.
+export const MAP_SYSTEM = `You are mapping a web-novel CHAPTER page so a scraper can extract it. The page may be in any language (Chinese, Japanese, Korean, English, …) — rely on STRUCTURE and the previews, not on the language. The page may be a JS-rendered SPA (e.g. a Korean reader) whose navigation isn't ordinary links.
+You are given up to four lists derived from the page: TITLE CANDIDATES, CONTENT CANDIDATES (each with its text length and a short preview of its text), NAV LINKS, and — when present — NAV CONTROLS (JS/SPA navigation held in a hidden input, data-* attribute, or onclick).
 
 Return ONLY a JSON object, no markdown and no prose:
-{"title":"<css>","body":"<css>","prev":{"sel":"<css>","text":["..."]},"next":{"sel":"<css>","text":["..."]},"index":{"sel":"<css>","text":["..."]},"author":{"sel":"<css>"},"idUrlPattern":"<regex or empty>"}
+{"title":"<css>","body":"<css>","prev":{"sel":"<css>","text":["..."],"attr":"<attr>"},"next":{"sel":"<css>","text":["..."],"attr":"<attr>"},"index":{"sel":"<css>","text":["..."],"attr":"<attr>"},"author":{"sel":"<css>"},"idUrlPattern":"<regex or empty>"}
 
 Rules:
 - Choose selectors from the candidate lists. Selectors may use ONLY tag names, .class, #id and spaces (descendant combinator). NO :pseudo-classes and NO [attribute] selectors.
 - "body": choose the ONE CONTENT CANDIDATE whose preview reads as the actual chapter STORY TEXT — never a menu, sidebar, comment list, announcement, or the whole page. Prefer the TIGHTEST block that still holds the prose. A candidate marked "(loose-text fallback)" means the page puts the chapter loosely in the body with no wrapper — choose it (it will be "body") ONLY when no other candidate's preview is the story prose.
 - "title": the chapter's heading from TITLE CANDIDATES — the one naming THIS chapter (often contains a chapter number/word like 第…章/章/卷/话/회/chapter), NOT the book's overall title. NEVER answer "title".
-- "prev","next","index": from NAV LINKS — previous-chapter, next-chapter, and table-of-contents/book-index links. Match the label in ANY language: previous = 上一章/上一頁/上一页/前一章 · 前へ/前章 · 이전/이전화 · prev/previous/back; next = 下一章/下一頁/下一页/后一章 · 次へ/次章 · 다음/다음화 · next/forward; index = 目录/目錄/章节目录/返回目录 · 目次/一覧 · 목차/목록 · index/contents/toc. Put the matched label(s) in "text"; add "sel" only if an obvious stable selector exists. OMIT any link that is genuinely absent (e.g. no previous on chapter 1).
+- "prev","next","index": previous-chapter, next-chapter, and table-of-contents/book-index links. Match the label in ANY language: previous = 上一章/上一頁/上一页/前一章 · 前へ/前章 · 이전/이전화 · prev/previous/back; next = 下一章/下一頁/下一页/后一章 · 次へ/次章 · 다음/다음화 · next/forward; index = 目录/目錄/章节目录/返回目录 · 目次/一覧 · 목차/목록 · index/contents/toc. From NAV LINKS, put the matched label(s) in "text"; add "sel" ONLY when a SPECIFIC selector exists — one carrying a #id or .class (e.g. "a.next"). NEVER give a bare tag like "a"/"div"/"li" as a nav "sel": it matches the FIRST such element on the page (a header link or a href="#" toggle), not the neighbour — when unsure, omit "sel" and rely on "text". "index" must be the book's table-of-contents / detail page (often the breadcrumb book-title link), NOT an in-page "#" dropdown toggle. From NAV CONTROLS (a JS/SPA site with no link for that direction), copy its selector into "sel" AND set "attr" to the named attribute (e.g. "value", "onclick", a data-* name) so the scraper reads the URL from there. OMIT any direction that is genuinely absent (e.g. no previous on chapter 1).
 - "author": a TITLE CANDIDATE selector whose text is the author's name, if any; otherwise omit the field.
 - "idUrlPattern": a regex with EXACTLY TWO capture groups (book id, then chapter id) matching the chapter URL, or "" if the URL has no such ids. Backslashes MUST be JSON-escaped, e.g. "novelid=(\\\\d+)&chapterid=(\\\\d+)".`;
 
@@ -142,6 +146,27 @@ const ENTITIES: Record<string, string> = {
 // CONSTRUCTED FROM AN ESCAPE (NOT A LITERAL U+3000) TO AVOID A no-irregular-whitespace LINT ERROR.
 const IDEOGRAPHIC_SPACE_RE = new RegExp('\\u3000', 'g');
 
+// ZERO-WIDTH / INVISIBLE FORMATTING CHARS (ZWSP, ZWNJ, ZWJ, WORD-JOINER, BOM). SOME SITES PUT A ZERO-WIDTH-
+// SPACE <p> SPACER BETWEEN EVERY REAL PARAGRAPH (COMMON ON KOREAN READERS); BECAUSE THESE SURVIVE .trim() THE
+// SPACER BECOMES A BOGUS LENGTH-1 "PARAGRAPH" THAT DOUBLES THE PARAGRAPH COUNT AND FEEDS THE TRANSLATOR JUNK.
+// BUILT FROM ESCAPES (NOT LITERAL INVISIBLE CHARS) TO AVOID A no-irregular-whitespace LINT ERROR.
+const ZERO_WIDTH_RE = new RegExp('[\\u200B-\\u200D\\u2060\\uFEFF]', 'gu');
+
+// MOST A COALESCED PARAGRAPH MAY GROW TO BEFORE WE FORCE A BREAK EVEN MID-SENTENCE — STOPS A PUNCTUATION-LESS
+// PAGE FROM COLLAPSING INTO ONE GIANT BLOCK.
+const MAX_COALESCED_CHARS = 2000;
+
+// CHARACTERS THAT END A SENTENCE/PARAGRAPH ACROSS THE SCRIPTS WE SCRAPE (LATIN + CJK TERMINATORS + CLOSING
+// QUOTES/BRACKETS + KOREAN TRAILING ~). A FRAGMENT NOT ENDING IN ONE WAS ALMOST CERTAINLY SPLIT MID-SENTENCE
+// (A <br>-PER-LINE/PHRASE SITE) AND IS RE-JOINED TO THE NEXT BY coalesceFragments. THE CJK CURLY QUOTES
+// (U+201C/D “”, U+2018/9 ‘’) AND THE FULLWIDTH TILDE (U+FF5E ～) ARE SPELLED AS \u ESCAPES — A BARE LITERAL
+// HERE IS FRAGILE (AN EDITOR/FORMATTER ONCE NORMALISED THEM TO ASCII " ', WHICH SILENTLY DROPPED ” AS A
+// TERMINATOR AND FORCE-MERGED EVERY DIALOGUE PARAGRAPH ON CHINESE SITES).
+const SENTENCE_END = new RegExp(
+	'[.!?\\u2026\\u3002\\uFF01\\uFF1F\\u2025"\\u0027\\u201C\\u201D\\u2018\\u2019\\u300D\\u300F\\uFF09\\u300B\\u3009)~\\uFF5E\\]]$',
+	'u',
+);
+
 // TURN A CONTENT-ELEMENT'S innerHTML INTO CLEAN PARAGRAPH TEXT.
 function htmlToParagraphs(html: string): string {
 	const noScripts = html
@@ -153,9 +178,44 @@ function htmlToParagraphs(html: string): string {
 	const decoded = decodeEntities(noTags);
 	return decoded
 		.split('\n')
-		.map((l) => l.replace(IDEOGRAPHIC_SPACE_RE, ' ').trim())
+		.map((l) => l.replace(IDEOGRAPHIC_SPACE_RE, ' ').replace(ZERO_WIDTH_RE, '').trim())
 		.filter((l) => l.length > 0)
 		.join('\n\n');
+}
+
+// COLLAPSE A PATHOLOGICALLY OVER-FRAGMENTED BODY INTO SANE PARAGRAPHS. (1) STRIP ZERO-WIDTH SPACER CHARS SO
+// A ZERO-WIDTH-SPACE <p> SPACER STOPS COUNTING AS A PARAGRAPH; (2) RE-JOIN A FRAGMENT INTO THE PREVIOUS WHEN
+// THAT PARAGRAPH DIDN'T END A SENTENCE (A MID-SENTENCE <br> SPLIT), CAPPED SO A PUNCTUATION-LESS PAGE CAN'T
+// MERGE INTO ONE GIANT BLOCK. WITHOUT THIS, A SITE THAT EMITS HUNDREDS OF MICRO-PARAGRAPHS IN A SHORT
+// CHAPTER OVERWHELMS THE TRANSLATOR'S 1:1 NUMBERED-TAG SCHEME (THE MODEL ABANDONS PER-TAG DISCIPLINE AND
+// REPEATS WHOLE-CHAPTER PROSE UNDER MANY TAGS). EXPORTED + REUSED BY THE TRANSLATOR SO A CHAPTER STORED
+// FRAGMENTED BEFORE THIS FIX STILL TRANSLATES CLEANLY ON A RE-RUN, NOT ONLY ON A FRESH FETCH.
+// A SCENE-BREAK SYMBOL (▽, ◇, ◆, * * *, ---, ETC.) IS ONLY SYMBOLS — NO LETTERS — SO IT MUST NEVER BE
+// TREATED AS A MID-SENTENCE FRAGMENT AND MERGED WITH THE NEXT PARAGRAPH. REQUIRE prev TO CONTAIN AT LEAST
+// ONE LETTER / IDEOGRAPH (\p{L}) BEFORE COALESCING, KEEPING SYMBOL-ONLY PARAGRAPHS STANDALONE.
+const HAS_LETTER = /\p{L}/u;
+export function coalesceFragments(text: string): string {
+	const paras = text
+		.replace(ZERO_WIDTH_RE, '')
+		.split(/\n{2,}/)
+		.map((p) => p.trim())
+		.filter((p) => p.length > 0);
+	if (paras.length === 0) return '';
+	const out: string[] = [];
+	for (const p of paras) {
+		const prev = out.length ? out[out.length - 1] : null;
+		if (
+			prev !== null &&
+			HAS_LETTER.test(prev) &&
+			!SENTENCE_END.test(prev) &&
+			prev.length + 1 + p.length <= MAX_COALESCED_CHARS
+		) {
+			out[out.length - 1] = `${prev} ${p}`;
+		} else {
+			out.push(p);
+		}
+	}
+	return out.join('\n\n');
 }
 
 // DROP SHORT PARAGRAPHS THAT ARE REALLY NAV/CONTROL LABELS (字体/上一章/第(1/3)页/…) — THE LAST LINE OF
@@ -172,10 +232,17 @@ function filterChromeLines(text: string): string {
 		.join('\n\n');
 }
 
+// NORMALISE ALREADY-EXTRACTED BODY TEXT: DROP CONTROL-LABEL LINES, THEN COALESCE FRAGMENTS. SHARED BY THE
+// SCRAPER (ON FRESH HTML) *AND* THE TRANSLATOR (ON STORED contentSource) SO A CHAPTER SAVED FRAGMENTED OR
+// WITH LEAKED CHROME BEFORE THIS FIX SELF-HEALS ON A RE-TRANSLATE — NO RE-FETCH NEEDED.
+export function normalizeBodyText(text: string): string {
+	return coalesceFragments(filterChromeLines(text));
+}
+
 // READABILITY EXTRACTION: RE-PARSE AN HTML FRAGMENT (SO WE NEVER MUTATE THE SHARED TREE), STRIP CHROME
 // ELEMENTS AND LINK-DENSE CONTROL BLOCKS, THEN FLATTEN TO PARAGRAPHS. WORKS FOR BOTH A WRAPPED CONTENT
 // DIV *AND* A WHOLE-PAGE/<body> SCOPE WHERE THE PROSE SITS LOOSE BETWEEN NAV BARS.
-function extractProse(fragmentHtml: string): string {
+export function extractProse(fragmentHtml: string): string {
 	const scope = parse(fragmentHtml);
 	for (const tag of CHROME_TAGS) for (const el of scope.querySelectorAll(tag)) el.remove();
 	// REMOVE SMALL, LINK-DENSE BLOCKS (MENUS / NAV BARS / TOOLBARS).
@@ -186,7 +253,7 @@ function extractProse(fragmentHtml: string): string {
 		for (const a of el.querySelectorAll('a')) linkLen += clean(a.text).length;
 		if (t.length <= 240 && linkLen / t.length > 0.4) el.remove();
 	}
-	return filterChromeLines(htmlToParagraphs(scope.innerHTML));
+	return normalizeBodyText(htmlToParagraphs(scope.innerHTML));
 }
 
 export function abs(href: string | undefined | null, base: string): string | null {
@@ -239,30 +306,181 @@ function pickText(root: HTMLElement, sel: string): string {
 	return '';
 }
 
+// A QUOTED http(s) URL OR ABSOLUTE /path EMBEDDED IN A JS HANDLER (e.g. onclick="pageload('/viewer/123',1)").
+const ONCLICK_URL = /['"]((?:https?:\/\/|\/)[^'"]+)['"]/;
+
+// SAFE NAV-URL ATTRIBUTE NAMES THE MODEL MAY NAME ON A NavRule (BEYOND THE DEFAULT href): A HIDDEN-INPUT
+// value, A src, ANY data-*, OR onclick (A URL IS PARSED OUT OF THE JS). ANYTHING ELSE FALLS BACK TO href.
+const SAFE_ATTR = /^(?:href|value|src|onclick|data-[\w-]+)$/i;
+
+// READ A URL OFF AN ELEMENT VIA A NAMED ATTRIBUTE — onclick IS PARSED FOR AN EMBEDDED PATH/URL.
+function attrUrl(el: HTMLElement, attr: string): string | null {
+	if (attr.toLowerCase() === 'onclick') return el.getAttribute('onclick')?.match(ONCLICK_URL)?.[1] ?? null;
+	return el.getAttribute(attr) ?? null;
+}
+
+// A RESOLVED NAV CANDIDATE MUST POINT AT A REAL NEIGHBOUR PAGE. STRIP ANY #fragment (NAV TARGETS ARE PAGES,
+// NOT IN-PAGE ANCHORS) AND REJECT A NON-PAGE (javascript:/mailto:/tel:) OR A LINK BACK TO THIS PAGE ITSELF
+// (href="#", "?", OR THE SAME path+query) — e.g. jjwxc'S "目录" DROPDOWN IS A href="#oneboolt" TOGGLE, NOT A
+// CHAPTER. WITHOUT THIS, A NAV rule THAT RESOLVES TO SUCH A TOGGLE POISONS indexUrl (→ THE WRONG COVER/TITLE).
+function stripHash(u: string): string {
+	const i = u.indexOf('#');
+	return i >= 0 ? u.slice(0, i) : u;
+}
+
+function isNavTarget(u: string, base: string): boolean {
+	if (/^(?:javascript:|mailto:|tel:)/i.test(u)) return false;
+	try {
+		const a = new URL(u);
+		const b = new URL(base);
+		if (a.origin === b.origin && a.pathname === b.pathname && a.search === b.search) return false;
+	} catch {
+		return false;
+	}
+	return true;
+}
+
 function resolveNav(root: HTMLElement, rule: NavRule | undefined, base: string): string | null {
 	if (!rule) return null;
+	// FINALISE A RAW href/attr VALUE → AN ABSOLUTE, FRAGMENT-STRIPPED NEIGHBOUR URL, OR null IF IT'S JUNK.
+	const finalize = (raw: string | null | undefined): string | null => {
+		const u = raw ? abs(raw, base) : null;
+		if (!u) return null;
+		const clean = stripHash(u);
+		return isNavTarget(clean, base) ? clean : null;
+	};
 	if (rule.sel) {
+		// HONOUR rule.attr (value / data-* / onclick) FOR JS-SPA NAV THAT ISN'T AN <a href>; DEFAULT TO href.
+		const attr = rule.attr && SAFE_ATTR.test(rule.attr) ? rule.attr : 'href';
 		for (const part of splitSel(rule.sel)) {
 			try {
-				const href = root.querySelector(part)?.getAttribute('href');
-				if (href) return abs(href, base);
+				const el = root.querySelector(part);
+				const u = el ? finalize(attrUrl(el, attr)) : null;
+				if (u) return u;
 			} catch {
 				// IGNORE AN UNPARSEABLE SELECTOR PART.
 			}
 		}
 	}
 	if (rule.text?.length) {
-		// EXACT LABEL MATCH FIRST, THEN A CONTAINS MATCH (LABELS OFTEN SIT INSIDE "« 上一章" ETC).
+		// EXACT LABEL MATCH FIRST, THEN A CONTAINS MATCH (LABELS OFTEN SIT INSIDE "« 上一章" ETC). SKIP A MATCH
+		// THAT RESOLVES TO JUNK (A href="#" TOGGLE) AND KEEP SCANNING FOR A REAL NEIGHBOUR LINK.
 		for (const a of root.querySelectorAll('a')) {
-			if (rule.text.includes(a.text.trim())) return abs(a.getAttribute('href'), base);
+			if (rule.text.includes(a.text.trim())) {
+				const u = finalize(a.getAttribute('href'));
+				if (u) return u;
+			}
 		}
 		for (const a of root.querySelectorAll('a')) {
 			const t = a.text.trim();
-			if (t.length <= 20 && rule.text.some((label) => t.includes(label)))
-				return abs(a.getAttribute('href'), base);
+			if (t.length <= 20 && rule.text.some((label) => t.includes(label))) {
+				const u = finalize(a.getAttribute('href'));
+				if (u) return u;
+			}
 		}
 	}
 	return null;
+}
+
+// URL-BEARING ATTRIBUTES TO CHECK ON A FALLBACK NAV CANDIDATE (BEYOND href). JS-DRIVEN SPA SITES STASH THE
+// NEIGHBOUR EPISODE URL IN A HIDDEN-INPUT value, A data-* ATTRIBUTE, OR AN onclick CALL — e.g. NOVELPIA'S
+// <input id="next_epi_auto_url" value="/viewer/123"> AND <div onclick="pageload('/viewer/123',1)">.
+const NAV_ATTRS = ['href', 'value', 'data-url', 'data-href', 'data-link', 'content'];
+
+// DIRECTION KEYWORDS FOR id/name/class/rel HINTS. LATIN TOKENS ARE BOUNDED BY START/END OR A SEPARATOR
+// (so "feedback" ISN'T A PREV AND "context" ISN'T A NEXT); CJK/KOREAN LABELS STAND ALONE.
+const FALLBACK_PREV = /(?:^|[\s_\-/])(?:prev|previous|back|before)(?:[\s_\-/]|$)|上一|前一|이전/i;
+const FALLBACK_NEXT = /(?:^|[\s_\-/])(?:next|forward|after)(?:[\s_\-/]|$)|下一|后一|다음/i;
+const FALLBACK_INDEX = /(?:^|[\s_\-/])(?:index|contents|catalog|toc|booklist)(?:[\s_\-/]|$)|目[录錄]|목록|목차/i;
+
+// A PATH THAT IS UNMISTAKABLY A BOOK / SERIES INDEX PAGE (NOT A CHAPTER) — RECOVERS THE INDEX LINK ON SPA
+// SITES WHOSE "BACK TO BOOK" CONTROL IS A JS onclick TO THE BOOK PAGE, NOT AN <a href> (e.g. /novel/{id}).
+const BOOK_PATH = /\/(?:novel|book|series|fiction|work|comic|webtoon|story|title)\/\d+/i;
+
+// PULL THE FIRST PATH/URL OUT OF AN ELEMENT'S URL-BEARING ATTRS (INCLUDING A /path INSIDE onclick). A BARE
+// NUMERIC ID (e.g. Novelpia's content_no_next="5515272") IS REJECTED — ONLY A REAL URL OR ABSOLUTE PATH WINS.
+function navUrlOf(el: HTMLElement): string | null {
+	for (const a of NAV_ATTRS) {
+		const v = el.getAttribute(a);
+		if (v && (/^https?:\/\//i.test(v) || v.startsWith('/'))) return v;
+	}
+	return el.getAttribute('onclick')?.match(ONCLICK_URL)?.[1] ?? null;
+}
+
+// NORMALISE A RESOLVED NEIGHBOUR URL'S TRAILING SLASH TO base's CONVENTION — A SITE WHOSE OWN LINKS OMIT THE
+// SLASH (NOVELPIA: /viewer/123) MUST STILL MATCH A CHAPTER THE USER PASTED WITH ONE (/viewer/123/), OR
+// Prev/Next WOULD RE-FETCH A DUPLICATE INSTEAD OF RESOLVING THE EXISTING CHAPTER.
+function matchBaseSlash(u: string, base: string): string {
+	try {
+		const nu = new URL(u);
+		const baseSlash = new URL(base).pathname.endsWith('/');
+		if (baseSlash && !nu.pathname.endsWith('/')) nu.pathname += '/';
+		else if (!baseSlash && nu.pathname.length > 1 && nu.pathname.endsWith('/'))
+			nu.pathname = nu.pathname.slice(0, -1);
+		return nu.href;
+	} catch {
+		return u;
+	}
+}
+
+// FIND A PREV / NEXT / INDEX LINK WHEN THE LEARNED NavRule RESOLVED NOTHING — FOR JS-DRIVEN SPA SITES WHOSE
+// NAVIGATION ISN'T AN <a href>. CHECKS <link rel> FIRST, THEN ANY ELEMENT WHOSE id/name/class/rel MARKS THE
+// DIRECTION AND CARRIES A NEIGHBOUR URL (HIDDEN-INPUT value / data-* / onclick), THEN ANCHOR TEXT AS A
+// LABEL-MATCH FALLBACK FOR TRADITIONAL SITES WHOSE LINKS CARRY NO HINT ATTRIBUTE. RETURNS null IF NONE FOUND.
+export function fallbackNav(root: HTMLElement, base: string, dir: 'prev' | 'next' | 'index'): string | null {
+	const want = dir === 'prev' ? FALLBACK_PREV : dir === 'next' ? FALLBACK_NEXT : FALLBACK_INDEX;
+	const avoid = dir === 'prev' ? FALLBACK_NEXT : dir === 'next' ? FALLBACK_PREV : null;
+	const rel = dir === 'prev' ? /^(?:prev|previous)$/i : dir === 'next' ? /^next$/i : /^(?:up|index|contents)$/i;
+	// DIRECTION-SPECIFIC ANCHOR-TEXT MATCHERS (SAME MULTI-LANGUAGE SCOPE AS NAV_NAV).
+	const textPrev = /^(?:前[へ章]|上一[章页頁]|前一[章页頁]|이전화?(?:\s*보기)?|prev(?:ious)?|back)$/i;
+	const textNext = /^(?:次[へ章]|下一[章页頁]|后一[章页頁]|다음화?(?:\s*보기)?|next|forward)$/i;
+	const textIndex = /^(?:目[次录錄]|章节目[录錄]|목[록차](?:\s*보기)?|index|contents?|toc|一覧|table of contents)$/i;
+	const textWant = dir === 'prev' ? textPrev : dir === 'next' ? textNext : textIndex;
+	// 1. STANDARD <link rel="next/prev/up"> IN THE HEAD.
+	for (const link of root.querySelectorAll('link')) {
+		if (rel.test((link.getAttribute('rel') ?? '').trim())) {
+			const u = abs(link.getAttribute('href'), base);
+			if (u && u !== base) return matchBaseSlash(u, base);
+		}
+	}
+	// 2. A DIRECTION-TAGGED ELEMENT CARRYING A NEIGHBOUR URL.
+	for (const el of root.querySelectorAll('a,input,div,span,button,li')) {
+		const hint = `${el.getAttribute('id') ?? ''} ${el.getAttribute('name') ?? ''} ${el.getAttribute('class') ?? ''} ${el.getAttribute('rel') ?? ''}`;
+		if (!want.test(hint) || (avoid && avoid.test(hint))) continue;
+		const u = abs(navUrlOf(el), base);
+		if (u && u !== base) return matchBaseSlash(u, base);
+	}
+	// 3. ANCHOR TEXT LABEL MATCH — A TRADITIONAL <a href> WHOSE VISIBLE LABEL IS A NAVIGATION WORD EVEN
+	// THOUGH ITS id/class/rel CARRY NO HINT (COMMON ON SIMPLE JAPANESE NOVEL SITES LIKE syosetu).
+	for (const a of root.querySelectorAll('a')) {
+		const t = a.text.trim();
+		if (t && t.length <= 20 && textWant.test(t)) {
+			const u = abs(a.getAttribute('href'), base);
+			if (u && u !== base) return matchBaseSlash(u, base);
+		}
+	}
+	// 4. INDEX ONLY: A LINK WHOSE TARGET PATH IS UNMISTAKABLY THE BOOK'S OWN PAGE (e.g. NOVELPIA'S TITLE CLICK
+	// <div onclick="pageload('/novel/419368')">), WHICH CARRIES NO index KEYWORD BUT A BOOK-PAGE URL.
+	if (dir === 'index') {
+		for (const el of root.querySelectorAll('a,div,span,button,li')) {
+			const raw = navUrlOf(el);
+			if (raw && BOOK_PATH.test(raw) && !BOOK_PATH.test(base)) {
+				const u = abs(raw, base);
+				if (u && u !== base) return matchBaseSlash(u, base);
+			}
+		}
+	}
+	return null;
+}
+
+// TRUE WHEN url's HOST IS (A SUBDOMAIN OF) `host` — FOR THE FEW JS-SPA HOSTS THAT NEED A TARGETED FIX-UP.
+function isHost(url: string, host: string): boolean {
+	try {
+		const h = new URL(url).hostname.toLowerCase().replace(/^www\./, '');
+		return h === host || h.endsWith(`.${host}`);
+	} catch {
+		return false;
+	}
 }
 
 // APPLY A SelectorMap TO ALREADY-PARSED HTML. RETURNS null (NOT THROWS) WHEN THE SELECTORS DON'T RESOLVE
@@ -273,10 +491,12 @@ export function applyAdapter(root: HTMLElement, html: string, m: SelectorMap, ur
 	const title = pickText(root, m.title);
 	if (!title || title.length > 200) return null;
 
-	// RESOLVE NAV / META *BEFORE* EXTRACTION (extractProse RE-PARSES A FRAGMENT, SO root IS UNTOUCHED).
-	let prevUrl = resolveNav(root, m.prev, url);
-	let nextUrl = resolveNav(root, m.next, url);
-	const indexUrl = resolveNav(root, m.index, url);
+	// RESOLVE NAV / META *BEFORE* EXTRACTION (extractProse RE-PARSES A FRAGMENT, SO root IS UNTOUCHED). FALL
+	// BACK TO THE SPA HEURISTIC (HIDDEN-INPUT / data-* / onclick / <link rel>) WHEN THE LEARNED <a href> RULE
+	// RESOLVES NOTHING — JS-DRIVEN SITES LIKE NOVELPIA HAVE NO ANCHOR-BASED PREV/NEXT FOR THE MODEL TO MAP.
+	let prevUrl = resolveNav(root, m.prev, url) ?? fallbackNav(root, url, 'prev');
+	let nextUrl = resolveNav(root, m.next, url) ?? fallbackNav(root, url, 'next');
+	let indexUrl = resolveNav(root, m.index, url) ?? fallbackNav(root, url, 'index');
 	if (prevUrl && indexUrl && prevUrl === indexUrl) prevUrl = null;
 	if (nextUrl && indexUrl && nextUrl === indexUrl) nextUrl = null;
 	if (prevUrl === url) prevUrl = null;
@@ -333,6 +553,15 @@ export function applyAdapter(root: HTMLElement, html: string, m: SelectorMap, ur
 				break;
 			}
 		}
+	}
+	// NOVELPIA (JS SPA) STASHES THE INDEX + BOOK NAME WHERE NO SELECTOR/BREADCRUMB REACHES: A HIDDEN #novel_no
+	// INPUT (→ /novel/{id}) AND A SITE-PREFIXED og:title. THESE TWO SIGNALS GENUINELY NEED SITE KNOWLEDGE.
+	if (isHost(url, 'novelpia.com')) {
+		const novelNo = root.querySelector('#novel_no')?.getAttribute('value');
+		if (novelNo && /^\d+$/.test(novelNo)) indexUrl = `https://novelpia.com/novel/${novelNo}`;
+		const og = (metaMap(html)['og:title'] ?? '').trim();
+		const t = og.replace(/^노벨피아\s*-\s*[^-]+-\s*/, '').trim();
+		if (t && t.length <= 120 && t !== og) bookTitle = t;
 	}
 
 	return {
@@ -510,6 +739,52 @@ export function buildSkeleton(root: HTMLElement): string {
 		pushNav(a);
 	}
 
+	// NAV CONTROLS: NON-ANCHOR / JS-DRIVEN NAVIGATION THE <a href> LIST ABOVE CAN'T EXPRESS — A HIDDEN-INPUT
+	// value, A data-*/onclick BUTTON. EACH LINE GIVES THE DIRECTION, A SELECTOR, THE ATTRIBUTE HOLDING THE URL,
+	// AND THE URL, SO THE MODEL CAN MAP e.g. {"sel":"input#next_epi_auto_url","attr":"value"} ON A SPA SITE.
+	const ctrlLines: string[] = [];
+	const ctrlSeen = new Set<string>();
+	const dirOf = (hint: string): 'prev' | 'next' | 'index' | null =>
+		FALLBACK_PREV.test(hint) && !FALLBACK_NEXT.test(hint)
+			? 'prev'
+			: FALLBACK_NEXT.test(hint) && !FALLBACK_PREV.test(hint)
+				? 'next'
+				: FALLBACK_INDEX.test(hint)
+					? 'index'
+					: null;
+	for (const el of root.querySelectorAll('a,input,div,span,button,li')) {
+		if (ctrlLines.length >= 24) break;
+		const hint = `${el.getAttribute('id') ?? ''} ${el.getAttribute('name') ?? ''} ${el.getAttribute('class') ?? ''} ${el.getAttribute('rel') ?? ''}`;
+		let attr = '';
+		let raw = '';
+		for (const a of ['href', 'value', 'data-url', 'data-href', 'data-link']) {
+			const v = el.getAttribute(a);
+			if (v && (/^https?:\/\//i.test(v) || v.startsWith('/'))) {
+				attr = a;
+				raw = v;
+				break;
+			}
+		}
+		if (!raw) {
+			const oc = el.getAttribute('onclick')?.match(ONCLICK_URL)?.[1];
+			if (oc) {
+				attr = 'onclick';
+				raw = oc;
+			}
+		}
+		if (!raw) continue;
+		// PLAIN ANCHOR href IS ALREADY IN "NAV LINKS" — ONLY SURFACE WHAT THAT LIST CAN'T (NON-href / NON-<a>).
+		if (attr === 'href' && el.rawTagName?.toLowerCase() === 'a') continue;
+		const dir = dirOf(hint) ?? (BOOK_PATH.test(raw) ? 'index' : null);
+		if (!dir) continue;
+		const sel = ownSelector(el); // ONLY A CLEAN tag#id / tag.class SELECTOR THE MODEL IS ALLOWED TO USE
+		if (!sel) continue;
+		const key = `${dir}|${sel}|${attr}`;
+		if (ctrlSeen.has(key)) continue;
+		ctrlSeen.add(key);
+		ctrlLines.push(`  ${dir}: ${sel} @${attr} -> ${raw.slice(0, 80)}`);
+	}
+
 	const out = [
 		'TITLE CANDIDATES (selector  "text"):',
 		...titleLines,
@@ -519,8 +794,49 @@ export function buildSkeleton(root: HTMLElement): string {
 		'',
 		'NAV LINKS (text -> href):',
 		...navLines,
+		...(ctrlLines.length
+			? [
+					'',
+					'NAV CONTROLS (JS/SPA navigation — direction: selector @attribute -> url). Use these for prev/next/index when no NAV LINK fits; copy the selector AND set "attr" to the named attribute:',
+					...ctrlLines,
+				]
+			: []),
 	].join('\n');
 	return out.length > DIGEST_BUDGET ? out.slice(0, DIGEST_BUDGET) : out;
+}
+
+// FIND THE BEST CONTENT CANDIDATE ON A PAGE (THE ELEMENT WHOSE TEXT HAS THE HIGHEST DENSITY — HIGH TEXT,
+// LOW LINK-TEXT — FROM THE SAME CANDIDATE-PICKING LOGIC AS buildSkeleton). RETURN ITS innerHTML, OR null
+// IF NO CANDIDATE MEETS THE THRESHOLD. USED AS A ZERO-COST FALLBACK WHEN AI SELECTOR-LEARNING FAILS: THE
+// SYSTEM CAN STILL EXTRACT THE CHAPTER FROM THE MOST LIKELY CONTENT BLOCK WITHOUT ANOTHER MODEL CALL.
+export function findBestContentHtml(root: HTMLElement): string | null {
+	const all = root.querySelectorAll('*');
+	const cands: { el: HTMLElement; density: number }[] = [];
+	for (const el of all) {
+		const tag = el.rawTagName?.toLowerCase() ?? '';
+		if (SKIP_TAGS.has(tag)) continue;
+		const txt = clean(el.text);
+		if (txt.length < 400) continue;
+		let linkLen = 0;
+		for (const a of el.querySelectorAll('a')) linkLen += clean(a.text).length;
+		const density = txt.length - linkLen;
+		if (density < 300) continue;
+		cands.push({ el, density });
+	}
+	cands.sort((a, b) => b.density - a.density);
+	// PREFER THE TIGHTEST CONTAINER (SAME ANCESTOR-DEDUP AS buildSkeleton).
+	const kept: { el: HTMLElement; density: number }[] = [];
+	for (const c of cands) {
+		if (kept.some((k) => isDescendant(k.el, c.el) && k.density >= c.density * 0.7)) continue;
+		for (let i = kept.length - 1; i >= 0; i--) {
+			if (isDescendant(c.el, kept[i].el) && c.density >= kept[i].density * 0.7) {
+				kept.splice(i, 1);
+			}
+		}
+		kept.push(c);
+	}
+	kept.sort((a, b) => b.density - a.density);
+	return kept[0]?.el?.innerHTML ?? null;
 }
 
 // PARSE ALL <meta> TAGS INTO A property/name → content MAP (FOR og:image / twitter:image COVER LOOKUP).
@@ -583,6 +899,32 @@ export function extractCover(html: string, baseUrl: string): string | null {
 	return scoreCoverImage(parse(html), baseUrl);
 }
 
+// STRIP A SITE-NAME BOILERPLATE SEGMENT FROM A META TITLE — A LEADING "Site - " / "Site | " / "Site: " OR A
+// TRAILING " - Site" / " | Site" (THE SITE NAME COMES FROM og:site_name). KEEPS THE TITLE IF STRIPPING EMPTIES IT.
+function stripSiteName(title: string, site: string): string {
+	const s = site.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+	if (!s) return title;
+	const sep = '\\s*[-|:·–—]\\s*';
+	const out = title
+		.replace(new RegExp(`^${s}${sep}`, 'i'), '')
+		.replace(new RegExp(`${sep}${s}$`, 'i'), '')
+		.trim();
+	return out || title;
+}
+
+// EXTRACT THE BOOK'S OWN TITLE FROM ITS INDEX/BOOK PAGE — og:title (THE CLEAN BOOK NAME, WITHOUT THE
+// CHAPTER OR SITE SUFFIX), twitter:title AS A FALLBACK, BOILERPLATE-STRIPPED VIA og:site_name WHEN PRESENT.
+// THE AUTHORITATIVE SOURCE WHEN A CHAPTER PAGE'S HEADING MASHES BOOK + CHAPTER TOGETHER (e.g. faloo) AND THE
+// BREADCRUMB BOOK-LINK DOESN'T RESOLVE TO THE INDEX. WE DELIBERATELY DON'T FALL BACK TO <title> — IT'S USUALLY
+// POLLUTED WITH "…最新章节,…txt下载_站名" BOILERPLATE. RETURNS null SO THE CALLER KEEPS WHAT IT HAD.
+export function extractBookTitle(html: string): string | null {
+	const meta = metaMap(html);
+	let t = (meta['og:title'] || meta['twitter:title'] || '').trim();
+	const site = (meta['og:site_name'] || meta['application-name'] || '').trim();
+	if (t && site) t = stripSiteName(t, site);
+	return t && t.length <= 120 ? t : null;
+}
+
 // BUILD AN IMAGE-CANDIDATE DIGEST FOR THE AI COVER FALLBACK — EACH <img>'s ABSOLUTE URL + ITS HINTS,
 // SO THE MODEL CAN PICK THE COVER ON A SITE WHERE THE HEURISTICS ABOVE FOUND NOTHING.
 export function buildImageDigest(html: string, baseUrl: string): string {
@@ -627,13 +969,18 @@ export function coerceCover(text: string): string | null {
 
 function coerceNav(v: unknown): NavRule | undefined {
 	if (!v || typeof v !== 'object') return undefined;
-	const o = v as { sel?: unknown; text?: unknown };
+	const o = v as { sel?: unknown; text?: unknown; attr?: unknown };
 	const sel = typeof o.sel === 'string' && o.sel.trim() ? o.sel.trim() : undefined;
 	const text = Array.isArray(o.text)
 		? o.text.filter((t): t is string => typeof t === 'string' && t.trim().length > 0).map((t) => t.trim())
 		: undefined;
+	// attr IS ONLY MEANINGFUL ALONGSIDE A sel, AND ONLY IF IT NAMES A SAFE URL-BEARING ATTRIBUTE.
+	const attr =
+		typeof o.attr === 'string' && o.attr.trim() && SAFE_ATTR.test(o.attr.trim())
+			? o.attr.trim().toLowerCase()
+			: undefined;
 	if (!sel && !(text && text.length)) return undefined;
-	return { sel, text: text && text.length ? text : undefined };
+	return { sel, text: text && text.length ? text : undefined, attr: sel ? attr : undefined };
 }
 
 // SAFE SELECTOR GRAMMAR (MATCHES THE MAP_SYSTEM CONTRACT): tag / .class / #id TOKENS JOINED BY DESCENDANT
@@ -656,12 +1003,26 @@ function safeSelector(sel: string | undefined): string | undefined {
 	return parts.length ? parts.join(', ') : undefined;
 }
 
+// A NAV sel MUST BE *SPECIFIC* — EVERY PART HAS TO CARRY A #id OR .class. A BARE-TAG NAV SELECTOR (e.g. "a",
+// "div", "li") MATCHES THE FIRST SUCH ELEMENT IN THE DOCUMENT — ALMOST ALWAYS A HEADER LINK OR A href="#"
+// TOGGLE, NEVER THE REAL prev/next/index NEIGHBOUR — SO resolveNav WOULD LOCK ONTO IT AND SKIP THE RELIABLE
+// LANGUAGE-STANDARD text LABEL (下一章 / 目录 / next / …). DROP IT (KEEPING text) SO THE LABEL MATCH WINS.
+// SPA NAV CONTROLS STILL WORK: THEIR SELECTOR IS A REAL #id (e.g. input#next_epi_auto_url), WHICH SURVIVES.
+function navSelector(sel: string | undefined): string | undefined {
+	const safe = safeSelector(sel);
+	if (!safe) return undefined;
+	const parts = splitSel(safe).filter((p) => /[.#]/.test(p));
+	return parts.length ? parts.join(', ') : undefined;
+}
+
 function safeNav(rule: NavRule | undefined): NavRule | undefined {
 	if (!rule) return undefined;
-	const sel = safeSelector(rule.sel);
+	const sel = navSelector(rule.sel);
 	const text = rule.text?.filter((t) => t && t.trim());
 	if (!sel && !(text && text.length)) return undefined;
-	return { sel, text: text && text.length ? text : undefined };
+	// KEEP attr ONLY WHEN A SAFE sel SURVIVED AND attr IS A RECOGNISED URL-BEARING ATTRIBUTE.
+	const attr = sel && rule.attr && SAFE_ATTR.test(rule.attr) ? rule.attr : undefined;
+	return { sel, text: text && text.length ? text : undefined, attr };
 }
 
 // DROP UNSAFE / OVERFIT SELECTORS FROM A MAP (KEEPING NAV text LABELS). APPLIED BOTH WHEN LEARNING A NEW

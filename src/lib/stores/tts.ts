@@ -90,7 +90,7 @@ function create() {
 			try {
 				localStorage.setItem(KEY, JSON.stringify(s));
 			} catch {
-				// IGNORE QUOTA ERRORS
+				// IGNORE STORAGE ERRORS (PRIVATE MODE / QUOTA)
 			}
 		});
 	}

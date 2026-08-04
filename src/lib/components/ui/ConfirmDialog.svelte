@@ -26,7 +26,11 @@
 	const dispatch = createEventDispatcher<{ confirm: void; cancel: void }>();
 	const STYLES = {
 		danger: { icon: 'text-red-500', iconBg: 'bg-red-500/10', confirm: 'bg-red-600 text-white hover:bg-red-500' },
-		default: { icon: 'text-sky-500', iconBg: 'bg-sky-500/10', confirm: 'bg-sky-600 text-white hover:bg-sky-500' },
+		default: {
+			icon: 'text-[#c0392b]',
+			iconBg: 'bg-[#c0392b]/10',
+			confirm: 'bg-[#b23a2e] text-white hover:bg-[#c0392b]',
+		},
 	} as const;
 
 	// -- REACTIVE STATES -- //

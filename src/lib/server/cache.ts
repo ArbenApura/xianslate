@@ -12,11 +12,17 @@ import { chapters, translations } from './db/schema';
 
 /** STABLE FINGERPRINT OF THE MATCHED GLOSSARY (ORDER-INDEPENDENT) */
 export function glossaryFingerprint(terms: TermDraft[]): string {
-	// CONTEXT IS APPENDED ONLY WHEN PRESENT, SO TERMS WITHOUT A NOTE KEEP THEIR ORIGINAL FINGERPRINT
-	// (NO MASS CACHE BUST) — A TERM THAT GAINS CONTEXT DOES BUST ITS CHAPTERS, SINCE CONTEXT NOW FEEDS
-	// THE TRANSLATION PROMPT AND CAN CHANGE THE OUTPUT.
+	// EACH PROMPT-AFFECTING PIECE IS APPENDED ONLY WHEN PRESENT, SO A PLAIN TERM KEEPS ITS ORIGINAL
+	// FINGERPRINT (NO MASS CACHE BUST) — A TERM THAT GAINS context / a pin / aliases BUSTS ONLY ITS OWN
+	// CHAPTERS ON THE NEXT FORCED/NEW RUN, SINCE ALL THREE NOW FEED THE TRANSLATION PROMPT AND CAN CHANGE
+	// THE OUTPUT. category / status / first_chapter ARE METADATA (NOT IN THE PROMPT) AND ARE EXCLUDED.
 	const norm = terms
-		.map((t) => `${t.source}=${t.target}#${t.gender}${t.context?.trim() ? `@${t.context.trim()}` : ''}`)
+		.map((t) => {
+			const ctx = t.context?.trim() ? `@${t.context.trim()}` : '';
+			const pin = t.pinned ? '!' : '';
+			const alias = t.aliases?.length ? `~${[...t.aliases].sort().join(',')}` : '';
+			return `${t.source}=${t.target}#${t.gender}${ctx}${pin}${alias}`;
+		})
 		.sort()
 		.join('\n');
 	return createHash('sha256').update(norm).digest('hex').slice(0, 16);

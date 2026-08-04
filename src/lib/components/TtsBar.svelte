@@ -68,7 +68,7 @@
 		<button
 			use:ripple
 			on:click={() => ($state.status === 'playing' ? tts.pause() : tts.resume())}
-			class="rounded-full bg-sky-600 p-2.5 text-white transition-colors hover:bg-sky-500"
+			class="rounded-full bg-[#b23a2e] p-2.5 text-white transition-colors hover:bg-[#c0392b]"
 			title={$state.status === 'playing' ? 'Pause' : 'Resume'}
 			aria-label={$state.status === 'playing' ? 'Pause' : 'Resume'}
 		>

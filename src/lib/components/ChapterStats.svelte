@@ -43,6 +43,12 @@
 		repair: 'Leak repair',
 		term: 'Glossary term',
 	};
+	// HUMAN LABEL PER fetch_usage PROVIDER (ZYTE TIER). 'zyte-render' IS LEGACY (THE BROWSER TIER WAS REMOVED) —
+	// KEPT SO HISTORICAL fetch_usage ROWS STILL LABEL CLEANLY.
+	const FETCH_LABEL: Record<string, string> = {
+		zyte: 'Page fetch (HTTP)',
+		'zyte-render': 'Page fetch (render, legacy)',
+	};
 
 	// -- STATES -- //
 
@@ -65,14 +71,14 @@
 					value: stats.monolingual ? '—' : fmtCost(stats.totalCostUsd),
 					sub: stats.monolingual
 						? 'Read in original'
-						: `${stats.cost.runs} ${stats.cost.runs === 1 ? 'run' : 'runs'}${stats.pipeline.costUsd > 0 ? ' + extras' : ''}`,
+						: `${stats.cost.runs} ${stats.cost.runs === 1 ? 'run' : 'runs'}`,
 					tone: 'text-emerald-600 dark:text-emerald-400',
 				},
 				{
 					label: 'Tokens',
 					value: stats.monolingual ? '—' : fmtTokens(totalTokens),
 					sub: stats.monolingual ? '' : `${fmtTokens(totalIn)} in · ${fmtTokens(totalOut)} out`,
-					tone: 'text-sky-600 dark:text-sky-400',
+					tone: 'text-[#b23a2e] dark:text-[#e08a63]',
 				},
 				{
 					label: stats.sourceWordDelimited ? 'Source words' : 'Source chars',
@@ -121,17 +127,24 @@
 	$: totalIn = stats ? stats.cost.promptTokens + stats.pipeline.promptTokens : 0;
 	$: totalOut = stats ? stats.cost.completionTokens + stats.pipeline.completionTokens : 0;
 	$: totalTokens = totalIn + totalOut;
-	// PER-CHAPTER SPEND BREAKDOWN (BODY + EACH PIPELINE KIND) — ONLY MEANINGFUL WHEN EXTRAS WERE LEDGERED.
-	$: spendRows =
-		stats && !stats.monolingual && stats.pipeline.items.length > 0
-			? [
-					...(stats.cost.runs > 0 ? [{ label: 'Body translation', value: fmtCost(stats.cost.costUsd) }] : []),
-					...stats.pipeline.items.map((it) => ({
-						label: PIPELINE_LABEL[it.kind] ?? it.kind,
-						value: fmtCost(it.costUsd),
-					})),
-				]
-			: [];
+	// ALL-IN CACHED PROMPT TOKENS + CACHE-HIT RATE (BODY + PIPELINE) — KEEPS THE BREAKDOWN CONSISTENT WITH THE
+	// ALL-IN "Tokens" KPI ABOVE (body-only FIGURES CONTRADICTED IT).
+	$: totalCached = stats ? stats.cost.cachedTokens + stats.pipeline.cachedTokens : 0;
+	$: allInCacheRate = totalIn > 0 ? totalCached / totalIn : 0;
+	// PER-CHAPTER SPEND BREAKDOWN (BODY + EACH PIPELINE KIND + EACH FETCH TIER) — SHOWN WHENEVER ANY LINE EXISTS.
+	$: spendRows = stats
+		? [
+				...(stats.cost.runs > 0 ? [{ label: 'Body translation', value: fmtCost(stats.cost.costUsd) }] : []),
+				...stats.pipeline.items.map((it) => ({
+					label: PIPELINE_LABEL[it.kind] ?? it.kind,
+					value: fmtCost(it.costUsd),
+				})),
+				...stats.fetch.items.map((it) => ({
+					label: FETCH_LABEL[it.provider] ?? `Page fetch (${it.provider})`,
+					value: fmtCost(it.costUsd),
+				})),
+			]
+		: [];
 	// PER-1k-SOURCE-CHAR EFFICIENCY (NORMALISES COST ACROSS CHAPTERS OF DIFFERENT LENGTH) — USES ALL-IN COST.
 	$: costPerKChars = stats && stats.source.chars > 0 ? (stats.totalCostUsd / stats.source.chars) * 1000 : 0;
 	$: costRows =
@@ -139,10 +152,10 @@
 			? [
 					{
 						label: 'Prompt tokens',
-						value: `${fmtNum(stats.cost.promptTokens)}${stats.cost.cachedTokens ? ` · ${fmtNum(stats.cost.cachedTokens)} cached` : ''}`,
+						value: `${fmtNum(totalIn)}${totalCached ? ` · ${fmtNum(totalCached)} cached` : ''}`,
 					},
-					{ label: 'Completion tokens', value: fmtNum(stats.cost.completionTokens) },
-					{ label: 'Total tokens', value: fmtNum(stats.cost.totalTokens) },
+					{ label: 'Completion tokens', value: fmtNum(totalOut) },
+					{ label: 'Total tokens', value: fmtNum(totalTokens) },
 					{ label: 'Cost per 1k source chars', value: fmtCost(costPerKChars) },
 				]
 			: [];
@@ -308,12 +321,15 @@
 			{#if !stats.monolingual}
 				<section class={CARD}>
 					<h3 class={SECTION_TITLE}><Coins size={14} /> Translation &amp; cost</h3>
-					{#if stats.cost.runs === 0 && stats.pipeline.costUsd === 0}
-						<p class="text-sm opacity-60">No translation cost recorded for this chapter yet.</p>
+					{#if stats.cost.runs === 0 && stats.pipeline.costUsd === 0 && stats.fetch.costUsd === 0}
+						<p class="text-sm opacity-60">No cost recorded for this chapter yet.</p>
 					{:else}
 						<!-- SPEND BREAKDOWN: BODY TRANSLATION + PIPELINE EXTRAS, WITH THE ALL-IN TOTAL -->
 						{#if spendRows.length > 0}
 							<div class="mb-3 border-b border-black/[0.06] pb-3 dark:border-white/[0.06]">
+								<p class="mb-1.5 text-[11px] font-semibold uppercase tracking-wider opacity-50">
+									Cost to serve (USD)
+								</p>
 								{#each spendRows as r (r.label)}
 									<div class={ROW}>
 										<span class="opacity-60">{r.label}</span>
@@ -346,15 +362,12 @@
 								<div class="flex items-center justify-between gap-3 text-sm">
 									<span class="opacity-60">Cache hit rate</span>
 									<span class="font-medium tabular-nums text-emerald-600 dark:text-emerald-400"
-										>{fmtPct(stats.cost.cacheHitRate)}</span
+										>{fmtPct(allInCacheRate)}</span
 									>
 								</div>
 								<div class="bg-current/10 mt-1.5 h-1.5 overflow-hidden rounded-full">
 									<!-- RUNTIME-DYNAMIC WIDTH FROM THE CACHE-HIT RATE -->
-									<div
-										class="h-full bg-emerald-500"
-										style="width:{stats.cost.cacheHitRate * 100}%"
-									></div>
+									<div class="h-full bg-emerald-500" style="width:{allInCacheRate * 100}%"></div>
 								</div>
 							</div>
 							<!-- RUN HISTORY (WHEN A CHAPTER HAS BEEN TRANSLATED UNDER MORE THAN ONE FINGERPRINT) -->
@@ -413,7 +426,7 @@
 					</div>
 					<div class="bg-current/10 mt-1.5 h-1.5 overflow-hidden rounded-full">
 						<!-- RUNTIME-DYNAMIC WIDTH FROM THE STORED READ FRACTION -->
-						<div class="h-full bg-sky-500" style="width:{(stats.readProgress ?? 0) * 100}%"></div>
+						<div class="h-full bg-[#c0392b]" style="width:{(stats.readProgress ?? 0) * 100}%"></div>
 					</div>
 				</div>
 				{#if stats.chapterUrl}
@@ -423,7 +436,7 @@
 						target="_blank"
 						rel="noopener noreferrer"
 						use:ripple
-						class="mt-3 inline-flex min-w-0 max-w-full items-center gap-1 border-t border-black/[0.06] pt-3 text-xs text-sky-600 hover:underline dark:border-white/[0.06] dark:text-sky-300"
+						class="mt-3 inline-flex min-w-0 max-w-full items-center gap-1 border-t border-black/[0.06] pt-3 text-xs text-[#b23a2e] hover:underline dark:border-white/[0.06] dark:text-[#e08a63]"
 						title={stats.chapterUrl}
 					>
 						<ExternalLink size={12} class="shrink-0" />

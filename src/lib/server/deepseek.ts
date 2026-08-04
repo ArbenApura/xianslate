@@ -102,6 +102,10 @@ export function queued<T>(fn: () => Promise<T>): Promise<T> {
 // TRANSIENT FAILURES (RATE LIMITS, 5xx, CONNECTION RESETS, TIMEOUTS) SHOULD NOT KILL A WHOLE CHAPTER
 // TRANSLATION — RETRY THEM WITH EXPONENTIAL BACKOFF. NON-RETRYABLE ERRORS (e.g. 400/401) THROW AT ONCE.
 function isRetryable(e: unknown): boolean {
+	// A DELIBERATE ABORT (A force RE-RUN SUPERSEDING A JOB, OR THE CALLER CANCELLING) IS NEVER RETRYABLE —
+	// THE SIGNAL IS STILL ABORTED, SO A RETRY WOULD ONLY THROW AGAIN AFTER A POINTLESS BACKOFF SLEEP (~9s).
+	const name = (e as { name?: string })?.name;
+	if (name === 'APIUserAbortError' || name === 'AbortError') return false;
 	const status = (e as { status?: number })?.status;
 	if (typeof status === 'number') return status === 408 || status === 409 || status === 429 || status >= 500;
 	// NO HTTP STATUS → NETWORK/CONNECTION ERROR → RETRY

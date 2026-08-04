@@ -1,5 +1,15 @@
 <script lang="ts" context="module">
-	export type Phase = 'idle' | 'preparing' | 'extracting' | 'translating' | 'streaming' | 'cached' | 'done' | 'error';
+	export type Phase =
+		| 'idle'
+		| 'preparing'
+		| 'waiting'
+		| 'extracting'
+		| 'translating'
+		| 'streaming'
+		| 'finalizing'
+		| 'cached'
+		| 'done'
+		| 'error';
 </script>
 
 <script lang="ts">
@@ -47,9 +57,13 @@
 	const RANK: Record<Phase, number> = {
 		idle: 0,
 		preparing: 1,
+		// QUEUED BEHIND ANOTHER CHAPTER'S EXTRACTION — SAME RANK AS extracting (IT'S THE EXTRACT STEP, NOT YET RUNNING)
+		waiting: 2,
 		extracting: 2,
 		translating: 3,
 		streaming: 4,
+		// POST-STREAM ALIGNMENT/REPAIR — STILL THE TRANSLATE STEP, AFTER THE STREAM BUT BEFORE done.
+		finalizing: 4,
 		cached: 4,
 		done: 5,
 		error: 5,
@@ -57,7 +71,7 @@
 
 	const DOT = {
 		pending: 'border-black/15 text-black/30 dark:border-white/15 dark:text-white/30',
-		active: 'border-sky-500 text-sky-500',
+		active: 'border-[#c0392b] text-[#c0392b]',
 		done: 'border-emerald-500 text-emerald-500',
 	} as const;
 
@@ -86,26 +100,35 @@
 		key: 'extract',
 		icon: Sparkles,
 		label:
-			phase === 'extracting'
-				? // ONLY SHOW A PART COUNTER WHEN THE CHAPTER ACTUALLY SPLIT INTO MULTIPLE CHUNKS — "part 1/1"
-					// (THE COMMON SHORT-CHAPTER CASE) IS NOISE; THE "N terms found" SUB-LINE CARRIES THE PROGRESS.
-					extractTotal > 1
-					? `Scanning for glossary terms · part ${Math.min(extractDone + 1, extractTotal)}/${extractTotal}`
-					: 'Scanning for glossary terms…'
-				: extracted != null && extracted > 0
-					? `Saved ${extracted} new term${extracted === 1 ? '' : 's'}`
-					: r > RANK.extracting
-						? 'Glossary up to date'
-						: 'Extract glossary terms',
+			// WAITING ON AN EARLIER CHAPTER'S EXTRACTION — TERMS ARE BUILT ONE CHAPTER AT A TIME FOR CONSISTENCY.
+			phase === 'waiting'
+				? 'Waiting for the previous chapter to finish its glossary…'
+				: phase === 'extracting'
+					? // ONLY SHOW A PART COUNTER WHEN THE CHAPTER ACTUALLY SPLIT INTO MULTIPLE CHUNKS — "part 1/1"
+						// (THE COMMON SHORT-CHAPTER CASE) IS NOISE; THE "N terms found" SUB-LINE CARRIES THE PROGRESS.
+						extractTotal > 1
+						? `Scanning for glossary terms · part ${Math.min(extractDone + 1, extractTotal)}/${extractTotal}`
+						: 'Scanning for glossary terms…'
+					: extracted != null && extracted > 0
+						? `Saved ${extracted} new term${extracted === 1 ? '' : 's'}`
+						: r > RANK.extracting
+							? 'Glossary up to date'
+							: 'Extract glossary terms',
 		// ALWAYS SHOW A LIVE SUB-LINE WHILE SCANNING SO IT NEVER LOOKS FROZEN — THE COUNT TICKS UP AS THE
 		// MODEL STREAMS TERMS IN.
 		sub:
-			phase === 'extracting'
-				? extractFound > 0
-					? `${extractFound} term${extractFound === 1 ? '' : 's'} found so far`
-					: 'Reading the chapter for names & terms…'
-				: undefined,
-		state: (phase === 'extracting' ? 'active' : r > RANK.extracting ? 'done' : 'pending') as StepState,
+			phase === 'waiting'
+				? 'Keeping names consistent across chapters'
+				: phase === 'extracting'
+					? extractFound > 0
+						? `${extractFound} term${extractFound === 1 ? '' : 's'} found so far`
+						: 'Reading the chapter for names & terms…'
+					: undefined,
+		state: (phase === 'waiting' || phase === 'extracting'
+			? 'active'
+			: r > RANK.extracting
+				? 'done'
+				: 'pending') as StepState,
 	} as Step;
 
 	$: matchStep = {
@@ -128,14 +151,16 @@
 		key: 'translate',
 		icon: Languages,
 		label:
-			phase === 'streaming' && paragraphs > 0
-				? `Translating · ${Math.min(translatedParas, paragraphs)}/${paragraphs} paragraphs`
-				: phase === 'streaming'
-					? 'Translating — streaming…'
-					: 'Translating with DeepSeek',
+			phase === 'finalizing'
+				? 'Aligning paragraphs…'
+				: phase === 'streaming' && paragraphs > 0
+					? `Translating · ${Math.min(translatedParas, paragraphs)}/${paragraphs} paragraphs`
+					: phase === 'streaming'
+						? 'Translating — streaming…'
+						: 'Translating with DeepSeek',
 		sub: phase === 'streaming' && paragraphs > 0 ? `${pct}% complete` : undefined,
 		progress: phase === 'streaming' && paragraphs > 0 ? pct : undefined,
-		state: (phase === 'streaming' || phase === 'translating'
+		state: (phase === 'streaming' || phase === 'translating' || phase === 'finalizing'
 			? 'active'
 			: phase === 'done'
 				? 'done'
@@ -154,15 +179,19 @@
 			'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium',
 			phase === 'cached'
 				? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-300'
-				: 'border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-300',
+				: 'border-[#c0392b]/30 bg-[#c0392b]/10 text-[#b23a2e] dark:text-[#e08a63]',
 		)}
 	>
 		<!-- CACHE HIT STATE -->
 		{#if phase === 'cached'}
 			<Zap size={13} /> From cache · free
+			<!-- POST-STREAM ALIGNMENT: THE LIVE COUNT IS FROZEN WHILE A NON-STREAMED RE-TRANSLATE RUNS — SAY WHY -->
+		{:else if phase === 'finalizing'}
+			<span class="inline-block h-1.5 w-1.5 animate-ping rounded-full bg-[#c0392b]"></span>
+			Aligning paragraphs…
 			<!-- ACTIVE TRANSLATION STATE -->
 		{:else}
-			<span class="inline-block h-1.5 w-1.5 animate-ping rounded-full bg-sky-500"></span>
+			<span class="inline-block h-1.5 w-1.5 animate-ping rounded-full bg-[#c0392b]"></span>
 			{#if paragraphs > 0}Translating · {Math.min(
 					translatedParas,
 					paragraphs,
@@ -218,7 +247,7 @@
 							<div class="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-black/10 dark:bg-white/10">
 								<!-- RUNTIME-DYNAMIC WIDTH FROM LIVE PROGRESS — CANNOT BE A STATIC TAILWIND CLASS -->
 								<div
-									class="h-full rounded-full bg-sky-500 transition-all duration-300"
+									class="h-full rounded-full bg-[#c0392b] transition-all duration-300"
 									style="width: {step.progress}%"
 								></div>
 							</div>

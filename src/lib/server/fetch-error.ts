@@ -15,7 +15,8 @@ export type FetchErrorKind =
 	| 'network' // CONNECTION RESET / TIMEOUT / DNS FLAKE AT FETCH TIME
 	| 'no_api_key' // A NEW HOST NEEDS AI MAPPING BUT DEEPSEEK_API_KEY IS NOT CONFIGURED
 	| 'unsupported_site' // AI COULD NOT MAP THIS PAGE (e.g. JS-RENDERED — NO CONTENT IN THE HTML)
-	| 'parse_failed'; // STORED SELECTORS WENT STALE AND A RE-LEARN STILL COULD NOT EXTRACT A CHAPTER
+	| 'parse_failed' // STORED SELECTORS WENT STALE AND A RE-LEARN STILL COULD NOT EXTRACT A CHAPTER
+	| 'too_large'; // THE UPSTREAM RESPONSE BODY EXCEEDED OUR SIZE CEILING (OOM GUARD)
 
 // -- CONSTANTS -- //
 
@@ -30,6 +31,7 @@ const STATUS: Record<FetchErrorKind, number> = {
 	no_api_key: 503,
 	unsupported_site: 422,
 	parse_failed: 422,
+	too_large: 502,
 };
 
 // -- FUNCTIONS -- //

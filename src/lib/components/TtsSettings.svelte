@@ -162,13 +162,13 @@
 		<div class="flex flex-col gap-2.5 border-t border-black/[0.06] pt-4 text-sm dark:border-white/[0.045]">
 			<span class="text-xs font-medium opacity-60">While reading</span>
 			<label class="flex items-center gap-2">
-				<input type="checkbox" class="accent-sky-600" bind:checked={$ttsSettings.highlight} />
+				<input type="checkbox" class="accent-[#b23a2e]" bind:checked={$ttsSettings.highlight} />
 				Highlight the current sentence
 			</label>
 			<label class={cn('flex items-center gap-2', (!$ttsSettings.highlight || !wordTimingOk) && 'opacity-40')}>
 				<input
 					type="checkbox"
-					class="accent-sky-600"
+					class="accent-[#b23a2e]"
 					disabled={!$ttsSettings.highlight || !wordTimingOk}
 					checked={$ttsSettings.highlightWord && wordTimingOk}
 					on:change={(e) => ($ttsSettings.highlightWord = e.currentTarget.checked)}
@@ -186,7 +186,7 @@
 				</p>
 			{/if}
 			<label class="flex items-center gap-2">
-				<input type="checkbox" class="accent-sky-600" bind:checked={$ttsSettings.autoScroll} />
+				<input type="checkbox" class="accent-[#b23a2e]" bind:checked={$ttsSettings.autoScroll} />
 				Auto-scroll to keep the spoken line in view
 			</label>
 		</div>

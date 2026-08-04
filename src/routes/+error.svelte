@@ -41,7 +41,7 @@
 	<!-- BIG STATUS WITH A FLOATING BOOK/COMPASS BADGE -->
 	<div class="relative mb-6 sm:mb-8">
 		<span
-			class="select-none bg-gradient-to-br from-sky-500 to-indigo-600 bg-clip-text text-[5.5rem] font-black leading-none tracking-tight text-transparent sm:text-[8rem]"
+			class="select-none bg-gradient-to-br from-[#c0392b] to-indigo-600 bg-clip-text text-[5.5rem] font-black leading-none tracking-tight text-transparent sm:text-[8rem]"
 		>
 			{status}
 		</span>

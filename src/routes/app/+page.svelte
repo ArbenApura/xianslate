@@ -14,28 +14,43 @@
 	import { get } from 'svelte/store';
 	import { AUTO_SOURCE, isMonolingual } from '$lib/languages';
 	import { currentUser } from '$lib/stores/auth';
-	import { settings } from '$lib/stores/settings';
+	import { settings, type Theme } from '$lib/stores/settings';
 	import { ripple } from '$lib/actions/ripple';
 	import { cn } from '$lib/utils/cn';
 	// IMPORTED DEP-COMPONENTS
+	import Archive from 'lucide-svelte/icons/archive';
+	import ArchiveRestore from 'lucide-svelte/icons/archive-restore';
 	import BookOpen from 'lucide-svelte/icons/book-open';
 	import Check from 'lucide-svelte/icons/check';
+	import CheckSquare from 'lucide-svelte/icons/check-square';
+	import Coffee from 'lucide-svelte/icons/coffee';
+	import Contrast from 'lucide-svelte/icons/contrast';
+	import Download from 'lucide-svelte/icons/download';
 	import Image from 'lucide-svelte/icons/image';
 	import Library from 'lucide-svelte/icons/library';
+	import Link2 from 'lucide-svelte/icons/link-2';
 	import ListOrdered from 'lucide-svelte/icons/list-ordered';
+	import Moon from 'lucide-svelte/icons/moon';
+	import MoonStar from 'lucide-svelte/icons/moon-star';
+	import Pin from 'lucide-svelte/icons/pin';
+	import PinOff from 'lucide-svelte/icons/pin-off';
 	import Plus from 'lucide-svelte/icons/plus';
 	import Search from 'lucide-svelte/icons/search';
-	import Shield from 'lucide-svelte/icons/shield';
+	import Sun from 'lucide-svelte/icons/sun';
 	import Trash2 from 'lucide-svelte/icons/trash-2';
+	import Upload from 'lucide-svelte/icons/upload';
+	import X from 'lucide-svelte/icons/x';
 	// IMPORTED COMPONENTS
 	import AccountMenu from '$lib/components/AccountMenu.svelte';
 	import ActionMenu from '$lib/components/ui/ActionMenu.svelte';
 	import ConfirmDialog from '$lib/components/ui/ConfirmDialog.svelte';
+	import EmptyState from '$lib/components/ui/EmptyState.svelte';
 	import LanguagePicker from '$lib/components/ui/LanguagePicker.svelte';
 	import Modal from '$lib/components/ui/Modal.svelte';
 	import Select from '$lib/components/ui/Select.svelte';
 	import TextField from '$lib/components/ui/TextField.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
+	import Seal from '$lib/components/ui/Seal.svelte';
 
 	// -- TYPES -- //
 
@@ -50,6 +65,8 @@
 		targetLang: string;
 		sourceUrl: string | null;
 		coverUrl: string | null;
+		pinned: boolean;
+		archived: boolean;
 		chapterCount: number;
 		readChapters: number;
 		translatedChapters: number;
@@ -61,24 +78,27 @@
 
 	type SortKey = 'recent' | 'added' | 'title' | 'progress' | 'chapters';
 	type SourceFilter = 'all' | SourceType;
-	type StatusFilter = 'all' | 'reading' | 'unread' | 'finished';
+	type StatusFilter = 'all' | 'reading' | 'unread' | 'finished' | 'archived';
 
 	// -- CONSTANTS -- //
 
-	// COMPLETE LITERAL GRADIENT CLASSES (PICKED DETERMINISTICALLY PER TITLE) — KEEPS cn() HAPPY
+	// CURATED DEEP, IN-WORLD COVER GRADIENTS (INK / CINNABAR / JADE / INDIGO / BRONZE / PLUM / SLATE / TEAL).
+	// ALL DARK + MUTED — A CREAM SERIF TITLE AND A CINNABAR SEAL READ LIKE A BOUND BOOK ON TOP (NOT RAINBOW SAAS).
+	// COMPLETE LITERAL CLASSES (PICKED DETERMINISTICALLY PER TITLE) — KEEPS cn()/TAILWIND HAPPY.
 	const COVERS = [
-		'from-rose-500 to-orange-400',
-		'from-sky-500 to-indigo-600',
-		'from-emerald-500 to-teal-600',
-		'from-violet-500 to-fuchsia-600',
-		'from-amber-500 to-red-500',
-		'from-cyan-500 to-blue-600',
-		'from-lime-500 to-emerald-600',
-		'from-pink-500 to-rose-600',
-		'from-indigo-500 to-purple-600',
-		'from-teal-500 to-cyan-600',
+		'from-[#3a2a24] to-[#1b1310]',
+		'from-[#7a241b] to-[#3a120d]',
+		'from-[#243f33] to-[#0f1d16]',
+		'from-[#1f2a44] to-[#0d1320]',
+		'from-[#4a3a1e] to-[#211810]',
+		'from-[#3d2436] to-[#190f18]',
+		'from-[#2a2f36] to-[#111418]',
+		'from-[#1e3a3a] to-[#0c1817]',
 	];
 	const SOURCE_BADGE: Record<string, string> = { web: 'WEB', epub: 'EPUB', txt: 'TXT', manual: 'BOOK' };
+	// THEME CYCLE FOR THE TOP-BAR TOGGLE — EACH OF THE 5 THEMES GETS ITS OWN ICON
+	const THEME_ICON = { light: Sun, sepia: Coffee, dark: Moon, oled: MoonStar, contrast: Contrast } as const;
+	const THEME_CYCLE: Theme[] = ['light', 'sepia', 'dark', 'oled', 'contrast'];
 
 	const SORT_ITEMS = [
 		{ value: 'recent', label: 'Recently read' },
@@ -99,13 +119,20 @@
 		{ value: 'reading', label: 'Reading' },
 		{ value: 'unread', label: 'Unread' },
 		{ value: 'finished', label: 'Finished' },
+		{ value: 'archived', label: 'Archived' },
+	];
+	const EXPORT_FORMATS: { format: 'txt' | 'md' | 'json'; label: string }[] = [
+		{ format: 'txt', label: 'Plain text (.txt)' },
+		{ format: 'md', label: 'Markdown (.md)' },
+		{ format: 'json', label: 'JSON (.json)' },
 	];
 	const PREFS_KEY = 'xianslate:library';
 	// CACHE OF THE LAST-SEEN LIBRARY (PER USER) SO REVISITS PAINT INSTANTLY INSTEAD OF FLASHING THE SKELETON.
 	// SMALL DATA → localStorage (SYNCHRONOUS, SO THERE'S NO SKELETON FRAME ON CLIENT-SIDE NAVIGATION). BUMP THE
 	// VERSION IF BookSummary CHANGES SHAPE.
 	const BOOKS_CACHE_PREFIX = 'xianslate:books:';
-	const BOOKS_CACHE_VERSION = 1;
+	// BUMPED TO 2 WHEN pinned/archived JOINED BookSummary — DISCARDS OLD-SHAPE CACHED SHELVES AFTER DEPLOY.
+	const BOOKS_CACHE_VERSION = 2;
 	// PER-CARD KEBAB MENU IS BUILT PER BOOK (SEE bookActions) SO THE COVER ACTION ONLY APPEARS FOR WEB
 	// BOOKS WITH A SOURCE PAGE. ALWAYS TAPPABLE (THE OLD HOVER-ONLY DELETE COULDN'T BE TRIGGERED ON TOUCH).
 
@@ -114,7 +141,9 @@
 	let booksList: BookSummary[] = [];
 	let loading = true;
 	let urlInput = '';
-	let busy = false;
+	// WHICH ADD-A-BOOK ACTION IS RUNNING — DRIVES A PER-BUTTON SPINNER (ONLY THE CLICKED BUTTON SHOWS LOADING),
+	// AND DISABLES THE OTHERS WHILE ONE RUNS SO TWO CREATES CAN'T RACE. null = IDLE.
+	let busyAction: 'url' | 'import' | 'empty' | null = null;
 	let epubInput: HTMLInputElement;
 	let txtInput: HTMLInputElement;
 	let showAddBook = false;
@@ -124,6 +153,17 @@
 	// IMMEDIATELY, SO THE USER CONFIRMS THE TARGET LANGUAGE + AN EXPLICIT "Import" CLICK FIRST (NO AUTO-SUBMIT).
 	let pendingImport: { kind: 'epub' | 'txt'; file: File } | null = null;
 	let pendingDelete: BookSummary | null = null;
+	// EXPORT + SET-COVER DIALOGS (null = CLOSED). coverFileInput IS THE HIDDEN <input type=file> FOR UPLOADS.
+	let exportTarget: BookSummary | null = null;
+	let coverTarget: BookSummary | null = null;
+	let coverUrlInput = '';
+	let coverBusy = false;
+	let coverFileInput: HTMLInputElement;
+	// BULK-SELECT MODE: A CARD TAP TOGGLES SELECTION (INSTEAD OF OPENING); THE BULK BAR ACTS ON `selected`.
+	let selecting = false;
+	let selected = new Set<string>();
+	let bulkBusy = false;
+	let pendingBulkDelete = false;
 	// PER-BOOK DIRECTION FOR THE NEXT FETCH/IMPORT/CREATE — SOURCE DEFAULTS TO AUTO-DETECT; TARGET IS
 	// SEEDED FROM THE GLOBAL DEFAULT. BOTH ARE EDITABLE IN THE ADD-BOOK DIALOG.
 	let newSourceLang = AUTO_SOURCE;
@@ -138,7 +178,7 @@
 	// -- REACTIVE STATES -- //
 
 	// CURRENT USER — THE CLIENT STORE IS AUTHORITATIVE; $page.data.user IS THE SSR SEED (WEB FIRST PAINT,
-	// BEFORE THE STORE HYDRATES). $isAdmin DRIVES THE ADMIN BUTTON; AccountMenu RENDERS THE AVATAR/IDENTITY.
+	// BEFORE THE STORE HYDRATES). AccountMenu RENDERS THE AVATAR/IDENTITY.
 	$: user = ($currentUser ?? $page.data.user ?? null) as SessionUser | null;
 
 	// MOST RECENTLY *READ* BOOK (NOT THE FIRST-CREATED). FALLS BACK TO ANY BOOK WITH A RESUME POINT.
@@ -150,6 +190,10 @@
 	$: q = search.trim().toLowerCase();
 	$: shelf = sortBooks(
 		booksList.filter((b) => {
+			// ARCHIVED BOOKS ARE HIDDEN EXCEPT IN THE DEDICATED "Archived" VIEW.
+			if (statusFilter === 'archived') {
+				if (!b.archived) return false;
+			} else if (b.archived) return false;
 			if (sourceFilter !== 'all' && b.sourceType !== sourceFilter) return false;
 			if (statusFilter === 'reading' && !(b.readChapters > 0 && !isFinished(b))) return false;
 			if (statusFilter === 'unread' && b.readChapters > 0) return false;
@@ -188,18 +232,25 @@
 		const name = (b: BookSummary) => (b.titleTarget || b.title || '').toLowerCase();
 		switch (key) {
 			case 'title':
-				return arr.sort((a, b) => name(a).localeCompare(name(b)));
+				arr.sort((a, b) => name(a).localeCompare(name(b)));
+				break;
 			case 'added':
-				return arr.sort((a, b) => b.createdAt - a.createdAt);
+				arr.sort((a, b) => b.createdAt - a.createdAt);
+				break;
 			case 'chapters':
-				return arr.sort((a, b) => b.chapterCount - a.chapterCount);
+				arr.sort((a, b) => b.chapterCount - a.chapterCount);
+				break;
 			case 'progress':
-				return arr.sort((a, b) => progressFrac(b) - progressFrac(a));
+				arr.sort((a, b) => progressFrac(b) - progressFrac(a));
+				break;
 			case 'recent':
 			default:
 				// READ BOOKS FIRST (NEWEST READ ON TOP), THEN UNREAD BY MOST-RECENTLY-ADDED
-				return arr.sort((a, b) => (b.lastReadAt ?? 0) - (a.lastReadAt ?? 0) || b.createdAt - a.createdAt);
+				arr.sort((a, b) => (b.lastReadAt ?? 0) - (a.lastReadAt ?? 0) || b.createdAt - a.createdAt);
 		}
+		// PINNED BOOKS FLOAT TO THE TOP — A STABLE FINAL PASS KEEPS THE CHOSEN ORDER WITHIN EACH GROUP.
+		arr.sort((a, b) => Number(b.pinned) - Number(a.pinned));
+		return arr;
 	}
 
 	function loadPrefs() {
@@ -218,7 +269,7 @@
 		try {
 			localStorage.setItem(PREFS_KEY, JSON.stringify({ sortKey: s, sourceFilter: src, statusFilter: st }));
 		} catch {
-			// IGNORE QUOTA ERRORS
+			// IGNORE STORAGE ERRORS (PRIVATE MODE / QUOTA)
 		}
 	}
 
@@ -233,6 +284,12 @@
 
 	function setStatus(v: string) {
 		statusFilter = v as StatusFilter;
+	}
+
+	// CYCLE THROUGH THE 5 THEMES FROM THE TOP-BAR BUTTON (PERSISTED VIA THE settings STORE)
+	function cycleTheme() {
+		const i = THEME_CYCLE.indexOf($settings.theme);
+		$settings.theme = THEME_CYCLE[(i + 1) % THEME_CYCLE.length];
 	}
 
 	function coverClass(title: string): string {
@@ -276,7 +333,7 @@
 		try {
 			localStorage.setItem(key, JSON.stringify({ v: BOOKS_CACHE_VERSION, books: list }));
 		} catch {
-			// IGNORE QUOTA ERRORS
+			// IGNORE STORAGE ERRORS (PRIVATE MODE / QUOTA)
 		}
 	}
 
@@ -344,8 +401,8 @@
 
 	async function addEmptyBook() {
 		const title = emptyTitle.trim();
-		if (!title || busy) return;
-		busy = true;
+		if (!title || busyAction) return;
+		busyAction = 'empty';
 		try {
 			const res = await apiFetch('/api/books', {
 				method: 'POST',
@@ -364,13 +421,13 @@
 		} catch (e) {
 			toast.error(e instanceof Error ? e.message : 'Could not create the book.');
 		} finally {
-			busy = false;
+			busyAction = null;
 		}
 	}
 
 	async function addByUrl() {
-		if (!urlInput.trim()) return;
-		busy = true;
+		if (!urlInput.trim() || busyAction) return;
+		busyAction = 'url';
 		try {
 			const res = await apiFetch('/api/fetch', {
 				method: 'POST',
@@ -385,17 +442,17 @@
 		} catch (e) {
 			toast.error(e instanceof Error ? e.message : 'Could not fetch that URL.');
 		} finally {
-			busy = false;
+			busyAction = null;
 		}
 	}
 
 	// COMMIT THE STAGED FILE (THE EXPLICIT "Import" CLICK) — NOTHING IMPORTS UNTIL THE USER CONFIRMS HERE.
 	function confirmImport() {
-		if (pendingImport && !busy) importFile(pendingImport.kind, pendingImport.file);
+		if (pendingImport && !busyAction) importFile(pendingImport.kind, pendingImport.file);
 	}
 
 	async function importFile(kind: 'epub' | 'txt', file: File) {
-		busy = true;
+		busyAction = 'import';
 		const tid = toast.loading(`Importing ${file.name}…`);
 		try {
 			const fd = new FormData();
@@ -411,7 +468,7 @@
 		} catch (e) {
 			toast.error(e instanceof Error ? e.message : 'Import failed.', { id: tid });
 		} finally {
-			busy = false;
+			busyAction = null;
 		}
 	}
 
@@ -422,20 +479,34 @@
 	}
 
 	function bookActions(b: BookSummary): MenuAction[] {
-		const acts: MenuAction[] = [
+		return [
 			{ value: 'open', label: 'Open', icon: BookOpen },
 			{ value: 'manage', label: 'Manage chapters', icon: ListOrdered },
+			{
+				value: b.pinned ? 'unpin' : 'pin',
+				label: b.pinned ? 'Unpin' : 'Pin to top',
+				icon: b.pinned ? PinOff : Pin,
+			},
+			{ value: 'setcover', label: 'Set cover…', icon: Image },
+			{ value: 'export', label: 'Export…', icon: Download },
+			{
+				value: b.archived ? 'unarchive' : 'archive',
+				label: b.archived ? 'Unarchive' : 'Archive',
+				icon: b.archived ? ArchiveRestore : Archive,
+			},
+			{ value: 'delete', label: 'Delete', icon: Trash2, danger: true },
 		];
-		if (canFetchCover(b))
-			acts.push({ value: 'cover', label: b.coverUrl ? 'Refetch cover' : 'Fetch cover', icon: Image });
-		acts.push({ value: 'delete', label: 'Delete', icon: Trash2, danger: true });
-		return acts;
 	}
 
 	function onBookAction(b: BookSummary, action: string) {
 		if (action === 'open') openBook(b);
 		else if (action === 'manage') goto(`/app/book/${b.id}/manage/`);
-		else if (action === 'cover') fetchCover(b);
+		else if (action === 'pin') setPinned(b, true);
+		else if (action === 'unpin') setPinned(b, false);
+		else if (action === 'archive') setArchived(b, true);
+		else if (action === 'unarchive') setArchived(b, false);
+		else if (action === 'setcover') openCover(b);
+		else if (action === 'export') exportTarget = b;
 		else if (action === 'delete') pendingDelete = b;
 	}
 
@@ -472,6 +543,187 @@
 		}
 	}
 
+	// PATCH A BOOK'S FIELDS AND UPDATE THE CARD IN PLACE (NO RELOAD). RETURNS true ON SUCCESS.
+	async function patchBook(b: BookSummary, body: Record<string, unknown>, okMsg?: string): Promise<boolean> {
+		try {
+			const res = await apiFetch(`/api/books/${b.id}`, {
+				method: 'PATCH',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify(body),
+			});
+			const d = await res.json().catch(() => ({}));
+			if (!res.ok) throw new Error(d.message ?? 'Update failed');
+			booksList = booksList.map((x) => (x.id === b.id ? { ...x, ...d.book } : x));
+			if (okMsg) toast.success(okMsg);
+			return true;
+		} catch (e) {
+			toast.error(e instanceof Error ? e.message : 'Could not update the book.');
+			return false;
+		}
+	}
+
+	function setPinned(b: BookSummary, pinned: boolean) {
+		patchBook(b, { pinned }, pinned ? 'Pinned to top.' : 'Unpinned.');
+	}
+
+	function setArchived(b: BookSummary, archived: boolean) {
+		patchBook(b, { archived }, archived ? 'Book archived.' : 'Book restored.');
+	}
+
+	// SHORT, SAFE FILENAME STEM FROM A TITLE (MIRRORS THE EXPORT ENDPOINT).
+	function slugify(s: string): string {
+		return (
+			s
+				.toLowerCase()
+				.replace(/[^a-z0-9]+/g, '-')
+				.replace(/^-+|-+$/g, '')
+				.slice(0, 60) || 'book'
+		);
+	}
+
+	// DOWNLOAD THE WHOLE BOOK IN THE CHOSEN FORMAT THROUGH /api (SO THE SESSION COOKIE RIDES ALONG — NOT A
+	// BARE <a href>); THE BLOB IS THEN SAVED VIA A TRANSIENT OBJECT URL.
+	async function exportBook(b: BookSummary, format: 'txt' | 'md' | 'json') {
+		const tid = toast.loading('Preparing export…');
+		try {
+			const res = await apiFetch(`/api/books/${b.id}/export?format=${format}`);
+			if (!res.ok) throw new Error('Export failed');
+			const blob = await res.blob();
+			const url = URL.createObjectURL(blob);
+			const a = document.createElement('a');
+			a.href = url;
+			a.download = `${slugify(b.titleTarget || b.title)}.${format}`;
+			a.click();
+			URL.revokeObjectURL(url);
+			toast.success('Export ready.', { id: tid });
+			exportTarget = null;
+		} catch {
+			toast.error('Could not export this book.', { id: tid });
+		}
+	}
+
+	function openCover(b: BookSummary) {
+		coverTarget = b;
+		// SEED THE URL FIELD ONLY WITH A REAL http(s) URL — NEVER A HUGE data: URI FROM A PRIOR UPLOAD.
+		coverUrlInput = b.coverUrl && !b.coverUrl.startsWith('data:') ? b.coverUrl : '';
+	}
+
+	// PERSIST A COVER (http URL OR data: URI), UPDATE THE CARD, AND CLOSE THE DIALOG.
+	async function saveCover(coverUrl: string) {
+		const b = coverTarget;
+		if (!b) return;
+		coverBusy = true;
+		const ok = await patchBook(b, { coverUrl }, 'Cover updated.');
+		coverBusy = false;
+		if (ok) coverTarget = null;
+	}
+
+	function applyCoverUrl() {
+		const url = coverUrlInput.trim();
+		if (!url) {
+			toast.error('Paste an image URL first.');
+			return;
+		}
+		saveCover(url);
+	}
+
+	// CLIENT-SIDE: DOWNSCALE THE PICKED IMAGE TO A THUMBNAIL AND ENCODE IT AS A data: URI — SO CUSTOM COVERS
+	// WORK WITH NO OBJECT STORAGE (THE data: URI IS STORED IN books.cover_url). `Image` IS SHADOWED BY THE
+	// lucide ICON IMPORT, SO BUILD THE LOADER WITH document.createElement('img').
+	function resizeToDataUrl(file: File, max: number, quality: number): Promise<string> {
+		return new Promise((resolve, reject) => {
+			const reader = new FileReader();
+			const img = document.createElement('img');
+			reader.onload = () => (img.src = reader.result as string);
+			reader.onerror = () => reject(new Error('read failed'));
+			img.onload = () => {
+				const scale = Math.min(1, max / Math.max(img.width, img.height));
+				const w = Math.round(img.width * scale);
+				const h = Math.round(img.height * scale);
+				const canvas = document.createElement('canvas');
+				canvas.width = w;
+				canvas.height = h;
+				const ctx = canvas.getContext('2d');
+				if (!ctx) return reject(new Error('no canvas'));
+				ctx.drawImage(img, 0, 0, w, h);
+				resolve(canvas.toDataURL('image/jpeg', quality));
+			};
+			img.onerror = () => reject(new Error('bad image'));
+			reader.readAsDataURL(file);
+		});
+	}
+
+	async function onCoverFile(file: File) {
+		coverBusy = true;
+		try {
+			const dataUrl = await resizeToDataUrl(file, 480, 0.72);
+			await saveCover(dataUrl);
+		} catch {
+			toast.error('Couldn’t read that image. Try a JPG or PNG.');
+		} finally {
+			coverBusy = false;
+		}
+	}
+
+	// TOGGLE ONE BOOK IN/OUT OF THE SELECTION (REASSIGN SO SVELTE RE-RENDERS THE Set).
+	function toggleSelect(id: string) {
+		const next = new Set(selected);
+		if (next.has(id)) next.delete(id);
+		else next.add(id);
+		selected = next;
+	}
+
+	function exitSelect() {
+		selecting = false;
+		selected = new Set();
+	}
+
+	// APPLY A FIELD-SET TO EVERY SELECTED BOOK (BULK PIN / ARCHIVE / RESTORE) — OPTIMISTIC, ONE PATCH PER BOOK.
+	async function bulkPatch(body: Record<string, unknown>, okMsg: string) {
+		const ids = [...selected];
+		if (!ids.length || bulkBusy) return;
+		bulkBusy = true;
+		try {
+			const results = await Promise.all(
+				ids.map((id) =>
+					apiFetch(`/api/books/${id}`, {
+						method: 'PATCH',
+						headers: { 'content-type': 'application/json' },
+						body: JSON.stringify(body),
+					}),
+				),
+			);
+			if (results.some((r) => !r.ok)) throw new Error();
+			booksList = booksList.map((b) => (selected.has(b.id) ? { ...b, ...body } : b));
+			toast.success(okMsg);
+			exitSelect();
+		} catch {
+			toast.error('Could not update some books.');
+			await loadBooks();
+		} finally {
+			bulkBusy = false;
+		}
+	}
+
+	async function confirmBulkDelete() {
+		pendingBulkDelete = false;
+		const ids = [...selected];
+		if (!ids.length || bulkBusy) return;
+		bulkBusy = true;
+		try {
+			const results = await Promise.all(ids.map((id) => apiFetch(`/api/books/${id}`, { method: 'DELETE' })));
+			if (results.some((r) => !r.ok)) throw new Error();
+			booksList = booksList.filter((b) => !selected.has(b.id));
+			toast.success(`Deleted ${ids.length} book${ids.length === 1 ? '' : 's'}.`);
+			exitSelect();
+		} catch {
+			toast.error('Could not delete some books.');
+			await loadBooks();
+		} finally {
+			bulkBusy = false;
+		}
+	}
+
 	// -- LIFECYCLES -- //
 
 	onMount(async () => {
@@ -496,25 +748,26 @@
 		class="sticky top-0 z-20 border-b border-black/[0.06] bg-black/5 backdrop-blur dark:border-white/[0.045] dark:bg-white/5"
 	>
 		<div class="mx-auto flex max-w-6xl items-center justify-between px-4 py-3 sm:px-6">
-			<div class="flex items-center gap-2">
-				<span class="flex items-center gap-2 text-xl font-bold tracking-tight"
-					><img src="/logo.svg" alt="" class="h-7 w-7 rounded-[7px]" /> Xianslate</span
+			<!-- BRAND — WORDMARK YIELDS (TRUNCATES) BEFORE THE ACTIONS, SO IT STAYS VISIBLE WHENEVER THERE IS ROOM -->
+			<div class="flex min-w-0 items-center gap-2">
+				<span class="flex min-w-0 items-center gap-2 text-xl font-bold tracking-tight"
+					><Seal size={28} class="shrink-0" />
+					<span class="truncate">Xianslate</span></span
 				>
-				<span class="hidden text-xs opacity-50 sm:inline">· multilingual novel reader</span>
+				<span class="hidden text-xs opacity-50 sm:inline">· any story, in your language</span>
 			</div>
-			<!-- NAVIGATION LINKS + PRIMARY "ADD BOOK" CTA + ACCOUNT MENU -->
-			<div class="flex items-center gap-2">
-				<!-- ADMIN DASHBOARD — ADMINS ONLY; ICON-ONLY ON MOBILE TO LEAVE ROOM FOR THE PRIMARY CTA -->
-				{#if user?.role === 'admin'}
-					<a
-						use:ripple
-						href="/admin/"
-						class="hover:bg-current/5 inline-flex items-center gap-1.5 rounded-lg border border-black/[0.06] px-2.5 py-1.5 text-sm dark:border-white/[0.045] sm:px-3"
-						aria-label="Admin"
-					>
-						<Shield size={15} /> <span class="hidden sm:inline">Admin</span>
-					</a>
-				{/if}
+			<!-- NAVIGATION LINKS + PRIMARY "ADD BOOK" CTA + ACCOUNT MENU — shrink-0 SO THE CTA NEVER COMPRESSES; THE BRAND YIELDS FIRST -->
+			<div class="flex shrink-0 items-center gap-2">
+				<!-- THEME TOGGLE — CYCLES THE 5 READING THEMES; THE ICON REFLECTS THE CURRENT ONE -->
+				<button
+					use:ripple
+					on:click={cycleTheme}
+					aria-label="Switch theme"
+					title="Switch theme"
+					class="hover:bg-current/5 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-black/[0.06] dark:border-white/[0.045]"
+				>
+					<svelte:component this={THEME_ICON[$settings.theme]} size={16} />
+				</button>
 				<!-- GLOSSARY NAVIGATION LINK -->
 				<a
 					use:ripple
@@ -524,11 +777,11 @@
 				>
 					<Library size={15} /> <span class="hidden sm:inline">Glossary</span>
 				</a>
-				<!-- PRIMARY CALL TO ACTION -->
+				<!-- PRIMARY CALL TO ACTION — LABEL ALWAYS VISIBLE; THE BRAND WORDMARK COLLAPSES ON MOBILE TO LEAVE ROOM -->
 				<button
 					use:ripple
 					on:click={() => (showAddBook = true)}
-					class="inline-flex items-center gap-1.5 rounded-lg bg-sky-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-sky-500"
+					class="inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg bg-[#b23a2e] px-3 py-1.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-[#c0392b]"
 				>
 					<Plus size={15} /> Add book
 				</button>
@@ -562,6 +815,31 @@
 				e.currentTarget.value = '';
 			}}
 		/>
+		<!-- HIDDEN COVER PICKER — TRIGGERED FROM THE "Set cover" DIALOG; RESIZED CLIENT-SIDE BEFORE SAVING -->
+		<input
+			bind:this={coverFileInput}
+			type="file"
+			accept="image/*"
+			class="hidden"
+			on:change={(e) => {
+				const f = e.currentTarget.files?.[0];
+				if (f) onCoverFile(f);
+				e.currentTarget.value = '';
+			}}
+		/>
+
+		<!-- PAGE HEADING — EDITORIAL TITLE, A SENSE OF PLACE -->
+		<div class="mb-7 sm:mb-9">
+			<h1 class="font-['Literata'] text-[1.75rem] font-bold leading-tight tracking-tight sm:text-4xl">
+				Your Library
+			</h1>
+			{#if !loading}
+				<p class="mt-1.5 text-sm opacity-55">
+					{#if booksList.length === 0}A quiet shelf, awaiting its first tale.{:else}{booksList.length}
+						{booksList.length === 1 ? 'tale' : 'tales'} in your collection{/if}
+				</p>
+			{/if}
+		</div>
 
 		<!-- CONTINUE READING HERO -->
 		{#if continueBook}
@@ -570,19 +848,16 @@
 				<button
 					use:ripple
 					on:click={() => openBook(continueBook)}
-					class="bg-current/[0.03] flex w-full items-stretch gap-4 overflow-hidden rounded-2xl border border-black/[0.06] p-4 text-left shadow-sm transition hover:shadow-md dark:border-white/[0.045] sm:gap-5"
+					class="bg-current/[0.03] group flex w-full items-stretch gap-4 overflow-hidden rounded-2xl border border-black/[0.07] p-4 text-left shadow-sm transition hover:shadow-lg dark:border-white/[0.06] sm:gap-6 sm:p-5"
 				>
 					<!-- MINI COVER -->
 					<div
 						class={cn(
-							'relative flex h-28 w-20 shrink-0 items-end overflow-hidden rounded-lg bg-gradient-to-br p-2 sm:h-32 sm:w-24',
+							'relative flex h-32 w-[5.5rem] shrink-0 items-center justify-center overflow-hidden rounded-lg bg-gradient-to-br p-2 text-center shadow-md sm:h-44 sm:w-28',
 							coverClass(continueBook.title),
 						)}
 					>
-						<span class="absolute left-0 top-0 h-full w-1.5 bg-black/20"></span>
-						<span class="line-clamp-3 text-[11px] font-semibold leading-tight text-white drop-shadow"
-							>{continueBook.titleTarget || continueBook.title}</span
-						>
+						<span class="absolute left-0 top-0 h-full w-1.5 bg-black/25"></span>
 						<!-- FETCHED BOOK COVER — OVERLAYS THE GRADIENT FALLBACK; HIDES ITSELF IF IT FAILS TO LOAD -->
 						{#if continueBook.coverUrl}
 							<img
@@ -591,10 +866,18 @@
 								class="absolute inset-0 h-full w-full object-cover"
 								on:error={hideImg}
 							/>
+						{:else}
+							<!-- BOUND-BOOK FALLBACK — MATCHES THE SHELF CARDS (GOLD FRAME + CREAM SERIF TITLE) -->
+							<span class="pointer-events-none absolute inset-[5px] rounded border border-[#c9a24b]/25"
+							></span>
+							<span
+								class="line-clamp-4 font-['Literata'] text-[11px] font-bold leading-tight text-[#f4ecd8] drop-shadow"
+								>{continueBook.titleTarget || continueBook.title}</span
+							>
 						{/if}
 					</div>
 					<div class="flex min-w-0 flex-1 flex-col justify-center">
-						<span class="line-clamp-2 text-lg font-bold"
+						<span class="line-clamp-2 font-['Literata'] text-xl font-bold leading-snug sm:text-2xl"
 							>{continueBook.titleTarget || continueBook.title}</span
 						>
 						{#if continueBook.author}<span class="mt-0.5 text-sm opacity-60"
@@ -610,15 +893,15 @@
 								<div class="h-1.5 overflow-hidden rounded-full bg-black/10 dark:bg-white/10">
 									<!-- RUNTIME-DYNAMIC WIDTH: PERCENTAGE DERIVED FROM PER-BOOK READ PROGRESS -->
 									<div
-										class="h-full rounded-full bg-sky-500"
+										class="h-full rounded-full bg-[#c0392b]"
 										style="width:{progressFrac(continueBook) * 100}%"
 									></div>
 								</div>
 							</div>
 						{/if}
 						<span
-							class="mt-3 inline-flex w-fit items-center rounded-full bg-sky-600 px-4 py-1.5 text-sm font-medium text-white"
-							>Resume →</span
+							class="mt-4 inline-flex w-fit items-center gap-1.5 rounded-full bg-[#b23a2e] px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors group-hover:bg-[#c0392b]"
+							><BookOpen size={15} /> Resume reading</span
 						>
 					</div>
 				</button>
@@ -627,69 +910,146 @@
 
 		<!-- BOOKSHELF -->
 		<section>
-			<div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-				<h2 class="text-xs font-semibold uppercase tracking-widest opacity-50">
-					Library {#if !loading}({shelf.length}{#if shelf.length !== booksList.length}
-							of {booksList.length}{/if}){/if}
-				</h2>
-				<!-- TOOLBAR: SEARCH (FULL-WIDTH ON MOBILE) + SORT/FILTER SELECTS (3-UP GRID ON MOBILE) -->
-				{#if !loading && booksList.length > 0}
+			<!-- TOOLBAR — SEARCH + SORT/SOURCE + SELECT (ROW 1), STATUS FILTER CHIPS (ROW 2) -->
+			{#if !loading && booksList.length > 0}
+				<div class="mb-5 flex flex-col gap-3">
 					<div class="flex flex-col gap-2 sm:flex-row sm:items-center">
-						<div class="relative w-full sm:w-44">
+						<!-- SEARCH -->
+						<div class="relative w-full sm:max-w-xs sm:flex-1">
 							<Search
 								size={15}
-								class="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 opacity-40"
+								class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 opacity-40"
 							/>
 							<input
 								bind:value={search}
 								type="search"
-								placeholder="Search title or author…"
-								class="w-full rounded-lg border border-black/10 bg-transparent py-2 pl-8 pr-2.5 text-sm outline-none transition-colors placeholder:opacity-40 focus:border-sky-500 focus:ring-2 focus:ring-sky-500/30 dark:border-white/[0.08] sm:py-1.5"
+								placeholder="Search your library…"
+								class="w-full rounded-lg border border-black/10 bg-transparent py-2 pl-9 pr-3 text-sm outline-none transition-colors placeholder:opacity-40 focus:border-[#c0392b] focus:ring-2 focus:ring-[#c0392b]/30 dark:border-white/[0.08]"
 							/>
 						</div>
-						<div class="grid grid-cols-3 gap-2 sm:flex sm:items-center">
+						<!-- SORT + SOURCE + SELECT-MODE -->
+						<div class="flex items-center gap-2 sm:ml-auto">
 							<Select
 								items={SORT_ITEMS}
 								value={sortKey}
 								on:change={(e) => setSort(e.detail)}
-								class="w-full sm:w-40"
+								class="flex-1 sm:w-40 sm:flex-none"
 							/>
 							<Select
 								items={SOURCE_ITEMS}
 								value={sourceFilter}
 								on:change={(e) => setSource(e.detail)}
-								class="w-full sm:w-32"
+								class="w-32 shrink-0"
 							/>
-							<Select
-								items={STATUS_ITEMS}
-								value={statusFilter}
-								on:change={(e) => setStatus(e.detail)}
-								class="w-full sm:w-28"
-							/>
+							<button
+								use:ripple
+								on:click={() => (selecting ? exitSelect() : (selecting = true))}
+								aria-label={selecting ? 'Cancel selection' : 'Select books'}
+								class={cn(
+									'inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-sm',
+									selecting
+										? 'border-[#c0392b]/40 bg-[#c0392b]/10 text-[#b23a2e] dark:text-[#e08a63]'
+										: 'hover:bg-current/5 border-black/[0.06] dark:border-white/[0.045]',
+								)}
+							>
+								{#if selecting}<X size={15} /> Cancel{:else}<CheckSquare size={15} />
+									<span class="hidden sm:inline">Select</span>{/if}
+							</button>
 						</div>
 					</div>
-				{/if}
-			</div>
+					<!-- STATUS FILTER CHIPS — HORIZONTAL, SCROLLABLE ON MOBILE -->
+					<div class="no-scrollbar -mx-1 flex items-center gap-1.5 overflow-x-auto px-1 pb-0.5">
+						{#each STATUS_ITEMS as s (s.value)}
+							<button
+								use:ripple
+								on:click={() => setStatus(s.value)}
+								class={cn(
+									'shrink-0 rounded-full border px-3.5 py-1.5 text-xs font-medium transition-colors',
+									statusFilter === s.value
+										? 'border-[#b23a2e]/40 bg-[#b23a2e]/10 text-[#b23a2e] dark:text-[#e08a63]'
+										: 'hover:bg-current/5 border-black/10 opacity-65 hover:opacity-100 dark:border-white/[0.08]',
+								)}>{s.label}</button
+							>
+						{/each}
+						{#if shelf.length !== booksList.length}
+							<span class="ml-1 shrink-0 text-xs tabular-nums opacity-45"
+								>{shelf.length} of {booksList.length}</span
+							>
+						{/if}
+					</div>
+				</div>
+			{/if}
 			{#if loading}
-				<div class="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+				<div class="grid grid-cols-2 gap-4 sm:grid-cols-3 sm:gap-5 lg:grid-cols-4 xl:grid-cols-5">
 					{#each [0, 1, 2, 3, 4] as i (i)}<div
 							class="aspect-[2/3] animate-pulse rounded-xl bg-black/10 dark:bg-white/10"
 						></div>{/each}
 				</div>
 			{:else if booksList.length === 0}
-				<p
-					class="rounded-xl border border-dashed border-black/10 p-10 text-center text-sm opacity-60 dark:border-white/[0.06]"
-				>
-					Your shelf is empty. Add a book above to start reading.
-				</p>
+				<EmptyState
+					icon={BookOpen}
+					title="Your shelf is empty"
+					description="Add a book above to start reading."
+				/>
 			{:else if shelf.length === 0}
-				<p
-					class="rounded-xl border border-dashed border-black/10 p-10 text-center text-sm opacity-60 dark:border-white/[0.06]"
-				>
-					No books match your filters.
-				</p>
+				<EmptyState icon={Search} title="No matches" description="No books match your filters." />
 			{:else}
-				<div class="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+				<!-- BULK ACTION BAR — SHOWN WHILE IN SELECT MODE -->
+				{#if selecting}
+					<div
+						class="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-black/[0.08] px-3 py-2 dark:border-white/[0.06]"
+					>
+						<span class="text-sm opacity-70">{selected.size} selected</span>
+						<div class="ml-auto flex flex-wrap items-center gap-2">
+							<Button
+								size="sm"
+								disabled={!selected.size || bulkBusy}
+								on:click={() =>
+									bulkPatch(
+										{ pinned: true },
+										`Pinned ${selected.size} book${selected.size === 1 ? '' : 's'}.`,
+									)}
+							>
+								<Pin size={14} /> Pin
+							</Button>
+							{#if statusFilter === 'archived'}
+								<Button
+									size="sm"
+									disabled={!selected.size || bulkBusy}
+									on:click={() =>
+										bulkPatch(
+											{ archived: false },
+											`Restored ${selected.size} book${selected.size === 1 ? '' : 's'}.`,
+										)}
+								>
+									<ArchiveRestore size={14} /> Restore
+								</Button>
+							{:else}
+								<Button
+									size="sm"
+									disabled={!selected.size || bulkBusy}
+									on:click={() =>
+										bulkPatch(
+											{ archived: true },
+											`Archived ${selected.size} book${selected.size === 1 ? '' : 's'}.`,
+										)}
+								>
+									<Archive size={14} /> Archive
+								</Button>
+							{/if}
+							<Button
+								variant="danger"
+								size="sm"
+								loading={bulkBusy}
+								disabled={!selected.size || bulkBusy}
+								on:click={() => (pendingBulkDelete = true)}
+							>
+								<Trash2 size={14} /> Delete
+							</Button>
+						</div>
+					</div>
+				{/if}
+				<div class="grid grid-cols-2 gap-4 sm:grid-cols-3 sm:gap-5 lg:grid-cols-4 xl:grid-cols-5">
 					{#each shelf as b (b.id)}
 						{@const frac = progressFrac(b)}
 						{@const done = isFinished(b)}
@@ -699,17 +1059,33 @@
 								use:ripple
 								role="button"
 								tabindex="0"
-								on:click={() => openBook(b)}
-								on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && openBook(b)}
+								on:click={() => (selecting ? toggleSelect(b.id) : openBook(b))}
+								on:keydown={(e) =>
+									(e.key === 'Enter' || e.key === ' ') &&
+									(selecting ? toggleSelect(b.id) : openBook(b))}
 								class={cn(
 									'relative flex aspect-[2/3] cursor-pointer flex-col justify-between overflow-hidden rounded-xl bg-gradient-to-br p-3 shadow-md transition duration-200 group-hover:-translate-y-1 group-hover:shadow-xl',
 									coverClass(b.title),
+									selecting && selected.has(b.id) && 'ring-2 ring-[#e08a63]',
 								)}
 							>
+								<!-- SELECTION CHECKBOX (BULK MODE) -->
+								{#if selecting}
+									<div
+										class={cn(
+											'absolute right-2 top-2 z-10 flex h-6 w-6 items-center justify-center rounded-md border-2',
+											selected.has(b.id)
+												? 'border-[#c0392b] bg-[#c0392b] text-white'
+												: 'border-white/80 bg-black/30',
+										)}
+									>
+										{#if selected.has(b.id)}<Check size={14} />{/if}
+									</div>
+								{/if}
 								<!-- SPINE -->
-								<span class="absolute left-0 top-0 h-full w-2 bg-black/20"></span>
-								<!-- FETCHED COVER — FULL-BLEED OVER THE GRADIENT; HIDES ITSELF IF IT FAILS TO LOAD -->
+								<span class="absolute left-0 top-0 h-full w-2 bg-black/25"></span>
 								{#if b.coverUrl}
+									<!-- FETCHED COVER — FULL-BLEED OVER THE GRADIENT; HIDES ITSELF IF IT FAILS TO LOAD -->
 									<img
 										src={b.coverUrl}
 										alt=""
@@ -723,25 +1099,55 @@
 										class="pointer-events-none absolute inset-x-0 bottom-0 h-1/2"
 										style="background: linear-gradient(to top, rgba(0,0,0,0.85), transparent);"
 									></span>
+								{:else}
+									<!-- DESIGNED FALLBACK COVER — BOUND-BOOK LOOK: GOLD HAIRLINE FRAME, CREAM SERIF TITLE, CINNABAR SEAL -->
+									<span
+										class="pointer-events-none absolute inset-[7px] rounded-md border border-[#c9a24b]/25"
+									></span>
+									<div
+										class="absolute inset-0 flex flex-col items-center justify-center gap-3 px-3 pb-5 pt-8 text-center"
+									>
+										<span
+											class="line-clamp-5 font-['Literata'] text-[15px] font-bold leading-snug text-[#f4ecd8] drop-shadow"
+											>{b.titleTarget || b.title}</span
+										>
+										<Seal size={22} />
+									</div>
 								{/if}
 								<!-- TOP ROW: SOURCE + DONE BADGES (THE KEBAB LIVES IN THE FOOTER BELOW, OFF THE COVER). -->
-								<div class="flex flex-wrap items-center gap-1">
+								<div class="relative z-10 flex flex-wrap items-center gap-1">
 									<span
-										class="inline-flex w-fit rounded bg-black/25 px-1.5 py-0.5 text-[9px] font-bold tracking-wider text-white"
+										class="inline-flex w-fit rounded bg-black/30 px-1.5 py-0.5 text-[9px] font-bold tracking-wider text-white/90"
 										>{SOURCE_BADGE[b.sourceType]}</span
 									>
 									{#if done}
 										<span
-											class="inline-flex items-center gap-0.5 rounded bg-emerald-500/90 px-1.5 py-0.5 text-[9px] font-bold tracking-wider text-white"
+											class="inline-flex items-center gap-0.5 rounded bg-[#4f7a64] px-1.5 py-0.5 text-[9px] font-bold tracking-wider text-white"
 											><Check size={10} /> DONE</span
 										>
 									{/if}
+									{#if b.pinned}
+										<!-- PINNED INDICATOR -->
+										<span
+											class="inline-flex items-center rounded bg-black/30 px-1 py-0.5 text-white"
+											><Pin size={10} /></span
+										>
+									{/if}
+									{#if b.archived}
+										<span
+											class="inline-flex w-fit rounded bg-black/45 px-1.5 py-0.5 text-[9px] font-bold tracking-wider text-white"
+											>ARCHIVED</span
+										>
+									{/if}
 								</div>
-								<!-- TITLE PINNED TO THE COVER BOTTOM (OVER ART OR GRADIENT). THE FOOTER BELOW SHOWS ONLY
-								     AUTHOR/CHAPTER META, SO THE TITLE ISN'T DUPLICATED. -->
-								<span class="ml-1 line-clamp-4 text-sm font-bold leading-tight text-white drop-shadow"
-									>{b.titleTarget || b.title}</span
-								>
+								<!-- TITLE OVER REAL COVER ART (PINNED BOTTOM, OVER THE SCRIM). THE FALLBACK SHOWS ITS TITLE
+								     CENTRED ABOVE, SO ONLY RENDER THIS WHEN THERE'S ARTWORK. -->
+								{#if b.coverUrl}
+									<span
+										class="relative z-10 ml-1 line-clamp-4 text-sm font-bold leading-tight text-white drop-shadow"
+										>{b.titleTarget || b.title}</span
+									>
+								{/if}
 								<!-- READING-PROGRESS BAR PINNED TO THE COVER FOOT -->
 								{#if b.readChapters > 0 && !done}
 									<div class="absolute inset-x-0 bottom-0 h-1 bg-black/25">
@@ -813,7 +1219,13 @@
 			on:submit|preventDefault={addByUrl}
 		>
 			<TextField bind:value={urlInput} type="url" label="From a URL" placeholder="Paste a chapter URL…" />
-			<Button type="submit" variant="primary" loading={busy} disabled={busy || !urlInput.trim()} class="w-fit">
+			<Button
+				type="submit"
+				variant="primary"
+				loading={busyAction === 'url'}
+				disabled={busyAction !== null || !urlInput.trim()}
+				class="w-fit"
+			>
 				Add from URL
 			</Button>
 		</form>
@@ -831,15 +1243,23 @@
 						>{pendingImport.kind.toUpperCase()}</span
 					>
 					<span class="min-w-0 flex-1 truncate text-sm">{pendingImport.file.name}</span>
-					<Button variant="primary" size="sm" loading={busy} disabled={busy} on:click={confirmImport}>
+					<Button
+						variant="primary"
+						size="sm"
+						loading={busyAction === 'import'}
+						disabled={busyAction !== null}
+						on:click={confirmImport}
+					>
 						<Plus size={14} /> Import
 					</Button>
-					<Button size="sm" disabled={busy} on:click={() => (pendingImport = null)}>Cancel</Button>
+					<Button size="sm" disabled={busyAction !== null} on:click={() => (pendingImport = null)}
+						>Cancel</Button
+					>
 				</div>
 			{:else}
 				<div class="flex flex-wrap gap-2">
-					<Button on:click={() => epubInput.click()} disabled={busy}>EPUB</Button>
-					<Button on:click={() => txtInput.click()} disabled={busy}>TXT</Button>
+					<Button on:click={() => epubInput.click()} disabled={busyAction !== null}>EPUB</Button>
+					<Button on:click={() => txtInput.click()} disabled={busyAction !== null}>TXT</Button>
 				</div>
 			{/if}
 		</div>
@@ -852,7 +1272,12 @@
 			<span class="text-xs font-medium opacity-60">Create an empty book</span>
 			<TextField bind:value={emptyTitle} label="Title" placeholder="Book title…" />
 			<TextField bind:value={emptyAuthor} label="Author" placeholder="Author (optional)" />
-			<Button type="submit" loading={busy} disabled={busy || !emptyTitle.trim()} class="w-fit">
+			<Button
+				type="submit"
+				loading={busyAction === 'empty'}
+				disabled={busyAction !== null || !emptyTitle.trim()}
+				class="w-fit"
+			>
 				Create empty book
 			</Button>
 		</form>
@@ -870,3 +1295,83 @@
 	on:confirm={confirmDelete}
 	on:cancel={() => (pendingDelete = null)}
 />
+
+<!-- BULK DELETE CONFIRMATION -->
+<ConfirmDialog
+	open={pendingBulkDelete}
+	title="Delete selected books?"
+	message={`${selected.size} book${selected.size === 1 ? '' : 's'} and their glossaries will be permanently removed.`}
+	confirmLabel="Delete"
+	on:confirm={confirmBulkDelete}
+	on:cancel={() => (pendingBulkDelete = false)}
+/>
+
+<!-- EXPORT A BOOK (TXT / MARKDOWN / JSON) — EVERY CHAPTER, TRANSLATION WHERE AVAILABLE ELSE THE ORIGINAL -->
+<Modal open={!!exportTarget} title="Export book" size="sm" on:close={() => (exportTarget = null)}>
+	<p class="mb-3 text-sm opacity-60">
+		Download “{exportTarget?.titleTarget || exportTarget?.title}” with every chapter included.
+	</p>
+	<div class="flex flex-col gap-2">
+		{#each EXPORT_FORMATS as f (f.format)}
+			<Button class="justify-start" on:click={() => exportTarget && exportBook(exportTarget, f.format)}>
+				<Download size={15} />
+				{f.label}
+			</Button>
+		{/each}
+	</div>
+</Modal>
+
+<!-- SET A CUSTOM COVER: PASTE AN IMAGE URL, UPLOAD A FILE (RESIZED ON-DEVICE), OR SCRAPE THE SOURCE PAGE -->
+<Modal open={!!coverTarget} title="Set cover" size="sm" on:close={() => (coverTarget = null)}>
+	{#if coverTarget}
+		<div class="flex flex-col gap-4">
+			<!-- CURRENT COVER PREVIEW -->
+			{#if coverTarget.coverUrl}
+				<img
+					src={coverTarget.coverUrl}
+					alt=""
+					class="mx-auto h-40 w-auto rounded-lg border border-black/10 object-cover dark:border-white/10"
+					on:error={hideImg}
+				/>
+			{/if}
+			<!-- BY URL -->
+			<form class="flex flex-col gap-2" on:submit|preventDefault={applyCoverUrl}>
+				<TextField bind:value={coverUrlInput} type="url" label="Image URL" placeholder="https://…/cover.jpg" />
+				<Button
+					type="submit"
+					variant="primary"
+					loading={coverBusy}
+					disabled={coverBusy || !coverUrlInput.trim()}
+					class="w-fit"
+				>
+					<Link2 size={14} /> Use this URL
+				</Button>
+			</form>
+			<!-- UPLOAD (CLIENT-RESIZED → data: URI; NO STORAGE SERVER) -->
+			<div class="border-t border-black/[0.06] pt-4 dark:border-white/[0.045]">
+				<span class="mb-2 block text-xs font-medium opacity-60">Upload an image</span>
+				<Button on:click={() => coverFileInput.click()} disabled={coverBusy}
+					><Upload size={14} /> Choose image…</Button
+				>
+				<p class="mt-1.5 text-xs opacity-50">
+					Resized to a thumbnail on your device — no upload server needed.
+				</p>
+			</div>
+			<!-- FETCH FROM THE SOURCE PAGE (WEB BOOKS ONLY) -->
+			{#if canFetchCover(coverTarget)}
+				<div class="border-t border-black/[0.06] pt-4 dark:border-white/[0.045]">
+					<Button
+						disabled={coverBusy}
+						on:click={() => {
+							const t = coverTarget;
+							coverTarget = null;
+							if (t) fetchCover(t);
+						}}
+					>
+						<Image size={14} /> Fetch from source page
+					</Button>
+				</div>
+			{/if}
+		</div>
+	{/if}
+</Modal>

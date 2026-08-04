@@ -15,6 +15,7 @@
 	import LanguagePicker from '$lib/components/ui/LanguagePicker.svelte';
 	import Modal from '$lib/components/ui/Modal.svelte';
 	import RangeField from '$lib/components/ui/RangeField.svelte';
+	import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
 	import Select from '$lib/components/ui/Select.svelte';
 
 	// -- OPTIONAL PROPS -- //
@@ -44,6 +45,13 @@
 
 	// HIDE BILINGUAL ON MOBILE — TWO COLUMNS DON'T FIT A PHONE; STACKED IS THE EQUIVALENT THERE
 	$: visibleLayouts = $isMobile ? LAYOUTS.filter((l) => l.key !== 'sidebyside') : LAYOUTS;
+
+	// -- FUNCTIONS -- //
+
+	// SegmentedControl DISPATCHES A STRING — NARROW IT BACK TO THE LayoutMode UNION (NO `as` IN MARKUP).
+	function setLayout(value: string) {
+		$settings.layout = value as LayoutMode;
+	}
 </script>
 
 <Modal {open} title="Reading settings" size="md" on:close={() => dispatch('close')}>
@@ -51,20 +59,11 @@
 		<!-- LAYOUT -->
 		<div>
 			<span class="mb-1.5 block text-xs font-medium opacity-60">Layout</span>
-			<div class={cn('grid gap-1.5', $isMobile ? 'grid-cols-3' : 'grid-cols-4')}>
-				{#each visibleLayouts as l (l.key)}
-					<button
-						use:ripple
-						on:click={() => ($settings.layout = l.key)}
-						class={cn(
-							'rounded-lg border px-2 py-1.5 text-sm transition-colors',
-							$settings.layout === l.key
-								? 'border-sky-500 bg-sky-500/10 text-sky-600 dark:text-sky-300'
-								: 'hover:bg-current/5 border-black/10 dark:border-white/[0.06]',
-						)}>{l.label}</button
-					>
-				{/each}
-			</div>
+			<SegmentedControl
+				options={visibleLayouts.map((l) => ({ value: l.key, label: l.label }))}
+				value={$settings.layout}
+				on:change={(e) => setLayout(e.detail)}
+			/>
 		</div>
 
 		<!-- THEME SWATCHES -->
@@ -81,7 +80,7 @@
 							'flex h-9 w-9 items-center justify-center rounded-full border-2 transition-transform hover:scale-105',
 							t.swatch,
 							$settings.theme === t.key
-								? 'ring-2 ring-sky-500 ring-offset-2 ring-offset-white dark:ring-offset-slate-900'
+								? 'ring-2 ring-[#c0392b] ring-offset-2 ring-offset-white dark:ring-offset-slate-900'
 								: '',
 						)}
 					>
@@ -176,17 +175,28 @@
 			<label class="flex items-center gap-2">
 				<input
 					type="checkbox"
-					class="accent-sky-600"
+					class="accent-[#b23a2e]"
 					checked={$settings.align === 'justify'}
 					on:change={(e) => ($settings.align = e.currentTarget.checked ? 'justify' : 'left')}
 				/>
 				Justify
 			</label>
 			<label class="flex items-center gap-2">
-				<input type="checkbox" class="accent-sky-600" bind:checked={$settings.indent} />
+				<input type="checkbox" class="accent-[#b23a2e]" bind:checked={$settings.indent} />
 				Indent paragraphs
 			</label>
 		</div>
+
+		<!-- GLOSSARY TERM HIGHLIGHTING -->
+		<label class="flex items-start gap-2 text-sm">
+			<input type="checkbox" class="mt-0.5 accent-[#b23a2e]" bind:checked={$settings.boldTerms} />
+			<span>
+				Bold glossary terms
+				<span class="mt-0.5 block text-xs opacity-50">
+					Highlights matched glossary terms in the text. Tap one to see its translation and notes.
+				</span>
+			</span>
+		</label>
 
 		<!-- TRANSLATION PIPELINE -->
 		<div class="border-t border-black/[0.06] pt-4 dark:border-white/[0.045]">
@@ -203,13 +213,13 @@
 						class={cn(
 							'flex flex-col items-start gap-0.5 rounded-lg border px-3 py-2 text-left transition-colors',
 							$settings.model === m.id
-								? 'border-sky-500 bg-sky-500/10'
+								? 'border-[#c0392b] bg-[#c0392b]/10'
 								: 'hover:bg-current/5 border-black/10 dark:border-white/[0.06]',
 						)}
 					>
 						<span class="flex items-center gap-1.5 text-sm font-medium">
 							{m.label}
-							{#if $settings.model === m.id}<Check size={13} class="text-sky-500" />{/if}
+							{#if $settings.model === m.id}<Check size={13} class="text-[#c0392b]" />{/if}
 						</span>
 						<span class="text-[11px] leading-tight opacity-50">{m.blurb}</span>
 					</button>
@@ -217,7 +227,7 @@
 			</div>
 
 			<label class="mt-4 flex items-start gap-2 text-sm">
-				<input type="checkbox" class="mt-0.5 accent-sky-600" bind:checked={$settings.autoExtract} />
+				<input type="checkbox" class="mt-0.5 accent-[#b23a2e]" bind:checked={$settings.autoExtract} />
 				<span>
 					Auto-extract glossary terms before translating
 					<span class="mt-0.5 block text-xs opacity-50">
@@ -230,20 +240,16 @@
 			<!-- PREFETCH CONTROLS -->
 			<div class="mt-4">
 				<span class="mb-1.5 block text-xs opacity-60">Prefetch upcoming chapters</span>
-				<div
-					class="inline-flex overflow-hidden rounded-lg border border-black/[0.12] text-xs dark:border-white/[0.08]"
-				>
-					{#each [0, 1, 2, 3] as n (n)}
-						<button
-							use:ripple
-							on:click={() => ($settings.prefetch = n)}
-							class={cn(
-								'px-3 py-1.5 transition-colors',
-								$settings.prefetch === n ? 'bg-sky-600 text-white' : 'opacity-70 hover:opacity-100',
-							)}>{n === 0 ? 'Off' : n}</button
-						>
-					{/each}
-				</div>
+				<SegmentedControl
+					options={[
+						{ value: '0', label: 'Off' },
+						{ value: '1', label: '1' },
+						{ value: '2', label: '2' },
+						{ value: '3', label: '3' },
+					]}
+					value={String($settings.prefetch)}
+					on:change={(e) => ($settings.prefetch = Number(e.detail))}
+				/>
 				<p class="mt-1 text-xs opacity-50">
 					Downloads the next chapter(s) while you read, so "Next" is instant.
 				</p>
@@ -251,7 +257,7 @@
 			<label class="mt-2 flex items-start gap-2 text-sm" class:opacity-40={$settings.prefetch === 0}>
 				<input
 					type="checkbox"
-					class="mt-0.5 accent-sky-600"
+					class="mt-0.5 accent-[#b23a2e]"
 					disabled={$settings.prefetch === 0}
 					bind:checked={$settings.prefetchTranslate}
 				/>

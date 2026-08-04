@@ -1,5 +1,6 @@
 <script lang="ts">
 	// IMPORTED DEP-TYPES
+	import type { ComponentType } from 'svelte';
 	import type { User } from 'firebase/auth';
 	// IMPORTED TYPES
 	import type { SessionUser } from '$lib/stores/auth';
@@ -31,14 +32,46 @@
 	import Sparkles from 'lucide-svelte/icons/sparkles';
 	import Trash2 from 'lucide-svelte/icons/trash-2';
 	import TriangleAlert from 'lucide-svelte/icons/triangle-alert';
+	import UserRound from 'lucide-svelte/icons/user-round';
 	// IMPORTED COMPONENTS
+	import Avatar from '$lib/components/ui/Avatar.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
 	import LanguagePicker from '$lib/components/ui/LanguagePicker.svelte';
 	import Modal from '$lib/components/ui/Modal.svelte';
 	import TextField from '$lib/components/ui/TextField.svelte';
 
+	// -- TYPES -- //
+
+	// THE ACCOUNT SECTIONS — SWITCHED CLIENT-SIDE FROM THE SIDEBAR (NO ROUTE CHANGE), SO THE SHARED FIREBASE
+	// USER + MUTATIONS STAY IN ONE COMPONENT.
+	type Section = 'profile' | 'appearance' | 'security';
+
 	// -- CONSTANTS -- //
 
+	// THE SIDEBAR NAV. icon IS A lucide COMPONENT RENDERED VIA <svelte:component>.
+	const NAV: { id: Section; label: string; desc: string; icon: ComponentType; tint: string }[] = [
+		{
+			id: 'profile',
+			label: 'Profile',
+			desc: 'Your identity and how you appear.',
+			icon: UserRound,
+			tint: 'bg-[#c0392b]/10 text-[#b23a2e] dark:text-[#e08a63]',
+		},
+		{
+			id: 'appearance',
+			label: 'Appearance',
+			desc: 'Theme, language, and translation model.',
+			icon: Palette,
+			tint: 'bg-violet-500/10 text-violet-600 dark:text-violet-300',
+		},
+		{
+			id: 'security',
+			label: 'Security',
+			desc: 'Sign-in, verification, and your account.',
+			icon: Shield,
+			tint: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-300',
+		},
+	];
 	// THE FIVE APP THEMES + A REPRESENTATIVE SWATCH (COMPLETE LITERAL bg-[#HEX]/bg-black CLASSES — MIRRORS
 	// THE THEME_BG MAP IN $lib/stores/settings; KEPT LITERAL SO cn()/TAILWIND CAN SEE THEM).
 	const THEMES: { id: Theme; label: string; swatch: string }[] = [
@@ -48,18 +81,14 @@
 		{ id: 'oled', label: 'OLED', swatch: 'bg-black' },
 		{ id: 'contrast', label: 'Contrast', swatch: 'bg-black' },
 	];
-	const CARD = 'rounded-2xl border border-black/[0.06] bg-black/[0.02] p-5 dark:border-white/10 dark:bg-white/[0.03]';
-	const AVATARS = [
-		'from-rose-500 to-orange-400',
-		'from-sky-500 to-indigo-600',
-		'from-emerald-500 to-teal-600',
-		'from-violet-500 to-fuchsia-600',
-		'from-amber-500 to-red-500',
-		'from-cyan-500 to-blue-600',
-	];
+	const CARD = 'rounded-2xl border border-black/10 bg-black/[0.02] p-5 dark:border-white/10 dark:bg-white/[0.03]';
+	// SLATE MUTED-TEXT TOKEN — MATCHES THE ADMIN CONSOLE SO THE TWO SURFACES READ AS ONE APP.
+	const MUTED = 'text-slate-500 dark:text-slate-400';
 
 	// -- STATES -- //
 
+	// THE ACTIVE SIDEBAR SECTION.
+	let section: Section = 'profile';
 	// THE LIVE FIREBASE CLIENT USER (RESTORED ASYNC AFTER HYDRATION) — REQUIRED FOR PROFILE / EMAIL MUTATIONS.
 	let fbUser: User | null = null;
 	let newName = '';
@@ -76,13 +105,13 @@
 	// CLIENT STORE IS AUTHORITATIVE; $page.data.user IS THE SSR SEED FOR FIRST PAINT.
 	$: user = ($currentUser ?? $page.data.user ?? null) as SessionUser | null;
 	$: label = user?.name?.trim() || user?.email || 'Account';
-	$: initials = initialsOf(label);
-	$: avatarClass = AVATARS[hash(label) % AVATARS.length];
 	$: providerLabel = providerLabelOf(fbUser);
 	$: joined = user
 		? new Date(user.createdAt).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })
 		: '';
 	$: nameDirty = !!user && newName.trim() !== (user.name ?? '').trim() && newName.trim().length > 0;
+	// THE ACTIVE SIDEBAR SECTION'S METADATA — DRIVES THE CONTENT HEADER (ICON / TITLE / DESCRIPTION).
+	$: active = NAV.find((n) => n.id === section) ?? NAV[0];
 
 	// -- REACTIVE STATEMENTS -- //
 
@@ -93,22 +122,6 @@
 	}
 
 	// -- FUNCTIONS -- //
-
-	function hash(s: string): number {
-		let h = 0;
-		for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
-		return h;
-	}
-
-	function initialsOf(s: string): string {
-		const parts = s
-			.replace(/@.*/, '')
-			.split(/[\s._-]+/)
-			.filter(Boolean);
-		const a = parts[0]?.[0] ?? s[0] ?? '?';
-		const b = parts.length > 1 ? parts[parts.length - 1][0] : '';
-		return (a + b).toUpperCase();
-	}
 
 	// HUMAN LABEL FOR THE SIGN-IN METHOD (FROM FIREBASE providerData) — SHOWN SO THE USER KNOWS WHETHER A
 	// PASSWORD RESET EVEN APPLIES TO THEM.
@@ -219,220 +232,301 @@
 <svelte:head><title>Account · Xianslate</title></svelte:head>
 
 <!-- ACCOUNT MANAGEMENT — INHERITS THE PAGE SURFACE FROM THE LAYOUT ROOT (THEME_CLASS) -->
-<div class="mx-auto max-w-2xl px-4 py-6 sm:py-8">
-	<!-- HEADER -->
-	<header class="mb-6 flex items-center gap-3">
-		<a
-			href="/app/"
-			class="rounded-lg p-2 hover:bg-black/5 dark:hover:bg-white/10"
-			aria-label="Back to library"
-			use:ripple
-		>
-			<ArrowLeft size={20} />
-		</a>
-		<div>
-			<h1 class="text-xl font-semibold">Account</h1>
-			<p class="text-[13px] opacity-60">Manage your profile, preferences, and sign-in.</p>
-		</div>
-	</header>
-
+<div class="mx-auto max-w-5xl px-4 py-6 sm:py-8">
 	{#if !user}
 		<!-- NO SESSION (SHOULDN'T HAPPEN BEHIND THE GUARD, BUT KEEPS THE PAGE ROBUST) -->
+		<header class="mb-6 flex items-center gap-3">
+			<a
+				href="/app/"
+				class="rounded-lg p-2 hover:bg-black/5 dark:hover:bg-white/10"
+				aria-label="Back to library"
+				use:ripple
+			>
+				<ArrowLeft size={20} />
+			</a>
+			<h1 class="text-xl font-semibold">Account</h1>
+		</header>
 		<div class={cn(CARD, 'text-center text-sm opacity-60')}>
-			You’re signed out. <a href="/login/" class="text-sky-600 hover:underline dark:text-sky-400" use:ripple
+			You’re signed out. <a href="/login/" class="text-[#b23a2e] hover:underline dark:text-[#e08a63]" use:ripple
 				>Sign in</a
 			> to manage your account.
 		</div>
 	{:else}
-		<div class="flex flex-col gap-5">
-			<!-- PROFILE -->
-			<section class={CARD}>
-				<div class="flex items-center gap-4">
-					<!-- AVATAR (PHOTO OR GRADIENT INITIALS) -->
-					<div
-						class={cn(
-							'flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-full text-xl font-semibold text-white',
-							!user.avatarUrl && 'bg-gradient-to-br',
-							!user.avatarUrl && avatarClass,
-						)}
+		<!-- SIDEBAR SHELL: VERTICAL NAV ON DESKTOP, HORIZONTAL SEGMENTED TABS ON MOBILE -->
+		<div class="lg:flex lg:gap-7">
+			<!-- DESKTOP SIDEBAR -->
+			<aside class="hidden lg:sticky lg:top-8 lg:block lg:h-fit lg:w-56 lg:shrink-0">
+				<!-- BACK + TITLE -->
+				<div class="mb-4 flex items-center gap-2">
+					<a
+						href="/app/"
+						use:ripple
+						aria-label="Back to library"
+						class="-ml-1 rounded-lg p-2 hover:bg-black/5 dark:hover:bg-white/10"
 					>
-						{#if user.avatarUrl}<img
-								src={user.avatarUrl}
-								alt=""
-								class="h-full w-full object-cover"
-							/>{:else}{initials}{/if}
-					</div>
-					<div class="min-w-0 flex-1">
-						<div class="flex flex-wrap items-center gap-2">
-							<h2 class="truncate text-lg font-semibold">{label}</h2>
-							{#if user.role === 'admin'}
-								<span
-									class="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
-									><Shield size={11} /> Admin</span
-								>
-							{/if}
-						</div>
-						<p class="mt-0.5 truncate text-sm opacity-60">{user.email}</p>
-						<p class="mt-0.5 text-xs opacity-50">Member since {joined}</p>
-					</div>
+						<ArrowLeft size={20} />
+					</a>
+					<h1 class="text-xl font-semibold">Account</h1>
 				</div>
-
-				<!-- EDIT DISPLAY NAME -->
-				<form class="mt-5 flex flex-col gap-2 sm:flex-row sm:items-end" on:submit|preventDefault={saveName}>
-					<div class="min-w-0 flex-1">
-						<TextField bind:value={newName} label="Display name" placeholder="Your name" />
-					</div>
-					<Button
-						type="submit"
-						variant="primary"
-						loading={savingName}
-						disabled={savingName || !nameDirty || !fbUser}
-					>
-						Save
-					</Button>
-				</form>
-			</section>
-
-			<!-- SIGN-IN & SECURITY -->
-			<section class={CARD}>
-				<h2 class="mb-1 flex items-center gap-2 text-[15px] font-semibold">
-					<Mail size={16} /> Sign-in & security
-				</h2>
-				<p class="mb-4 text-[13px] opacity-60">
-					Signed in with <span class="font-medium">{providerLabel}</span>.
-				</p>
-
-				<!-- EMAIL VERIFICATION STATUS -->
-				<div
-					class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-black/[0.06] p-3 dark:border-white/10"
-				>
-					<div class="flex items-center gap-2 text-sm">
-						{#if user.emailVerified}
-							<BadgeCheck size={18} class="text-emerald-500" />
-							<span>Email verified</span>
-						{:else}
-							<TriangleAlert size={18} class="text-amber-500" />
-							<span>Email not verified</span>
-						{/if}
-					</div>
-					{#if !user.emailVerified}
-						<Button
-							size="sm"
-							loading={sendingVerify}
-							disabled={sendingVerify || !fbUser}
-							on:click={resendVerification}
-						>
-							Resend verification
-						</Button>
-					{/if}
-				</div>
-
-				<!-- PASSWORD RESET -->
-				<div
-					class="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-black/[0.06] p-3 dark:border-white/10"
-				>
-					<div class="flex items-center gap-2 text-sm">
-						<KeyRound size={18} class="opacity-60" />
-						<span>Password</span>
-					</div>
-					<Button size="sm" loading={sendingReset} disabled={sendingReset} on:click={resetPassword}>
-						Send reset email
-					</Button>
-				</div>
-			</section>
-
-			<!-- APPEARANCE & READING PREFERENCES -->
-			<section class={CARD}>
-				<h2 class="mb-4 flex items-center gap-2 text-[15px] font-semibold"><Palette size={16} /> Appearance</h2>
-
-				<!-- THEME -->
-				<span class="mb-2 block text-xs font-medium opacity-60">Theme</span>
-				<div class="flex flex-wrap gap-2">
-					{#each THEMES as t (t.id)}
+				<!-- VERTICAL NAV -->
+				<nav class="flex flex-col gap-1">
+					{#each NAV as item (item.id)}
 						<button
 							use:ripple
-							on:click={() => setTheme(t.id)}
+							on:click={() => (section = item.id)}
+							aria-current={section === item.id ? 'page' : undefined}
 							class={cn(
-								'flex items-center gap-2 rounded-lg border px-3 py-2 text-sm transition-colors',
-								$settings.theme === t.id
-									? 'border-sky-500 ring-1 ring-sky-500'
-									: 'border-black/10 hover:border-black/20 dark:border-white/10 dark:hover:border-white/20',
+								'flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition-colors',
+								section === item.id
+									? 'bg-[#c0392b]/10 font-medium text-[#b23a2e] dark:text-[#e08a63]'
+									: cn('hover:bg-black/[0.04] dark:hover:bg-white/[0.06]', MUTED),
 							)}
 						>
-							<span
-								class={cn('h-4 w-4 rounded-full border border-black/10 dark:border-white/20', t.swatch)}
-							></span>
-							{t.label}
+							<svelte:component this={item.icon} size={18} />
+							{item.label}
 						</button>
 					{/each}
-				</div>
+				</nav>
+			</aside>
 
-				<!-- DEFAULT TRANSLATION LANGUAGE -->
-				<div class="mt-5">
-					<span class="mb-2 flex items-center gap-1.5 text-xs font-medium opacity-60"
-						><Languages size={13} /> Default translation language</span
+			<!-- CONTENT: ONE SECTION AT A TIME -->
+			<div class="min-w-0 flex-1">
+				<!-- MOBILE TOP BAR (BACK + TITLE) -->
+				<div class="mb-3 flex items-center gap-2 lg:hidden">
+					<a
+						href="/app/"
+						use:ripple
+						aria-label="Back to library"
+						class="-ml-1 rounded-lg p-2 hover:bg-black/5 dark:hover:bg-white/10"
 					>
-					<LanguagePicker
-						value={$settings.newBookTargetLang}
-						allowNone={false}
-						on:change={(e) => setDefaultLang(e.detail)}
-					/>
-					<p class="mt-1.5 text-xs opacity-50">
-						New books translate into {languageName($settings.newBookTargetLang)} unless you pick otherwise.
-					</p>
+						<ArrowLeft size={20} />
+					</a>
+					<h1 class="text-xl font-semibold">Account</h1>
 				</div>
+				<!-- MOBILE SEGMENTED TAB BAR — 3 EQUAL COLUMNS, ICON OVER LABEL (NO HORIZONTAL SCROLL) -->
+				<nav
+					class="mb-5 grid grid-cols-3 gap-1 rounded-xl border border-black/10 bg-black/[0.03] p-1 dark:border-white/10 dark:bg-white/[0.04] lg:hidden"
+				>
+					{#each NAV as item (item.id)}
+						<button
+							use:ripple
+							on:click={() => (section = item.id)}
+							aria-current={section === item.id ? 'page' : undefined}
+							class={cn(
+								'flex flex-col items-center gap-1 rounded-lg px-1 py-2 text-center text-[11px] font-medium leading-tight transition-colors',
+								section === item.id
+									? 'bg-white text-[#b23a2e] shadow-sm dark:bg-white/10 dark:text-[#e08a63]'
+									: cn('hover:bg-black/[0.03] dark:hover:bg-white/[0.05]', MUTED),
+							)}
+						>
+							<svelte:component this={item.icon} size={18} />
+							{item.label}
+						</button>
+					{/each}
+				</nav>
+				<!-- SECTION HEADER — ICON CHIP, TITLE + DESCRIPTION -->
+				<header class="mb-5 flex items-center gap-3">
+					<span class={cn('flex h-11 w-11 shrink-0 items-center justify-center rounded-xl', active.tint)}>
+						<svelte:component this={active.icon} size={22} />
+					</span>
+					<div class="min-w-0 flex-1">
+						<h2 class="text-xl font-semibold">{active.label}</h2>
+						<p class={cn('truncate text-[13px]', MUTED)}>{active.desc}</p>
+					</div>
+				</header>
 
-				<!-- TRANSLATION MODEL -->
-				<div class="mt-5">
-					<span class="mb-2 flex items-center gap-1.5 text-xs font-medium opacity-60"
-						><Sparkles size={13} /> Translation model</span
-					>
-					<div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
-						{#each TRANSLATION_MODELS as m (m.id)}
-							<button
-								use:ripple
-								on:click={() => setModel(m.id)}
-								class={cn(
-									'flex flex-col gap-0.5 rounded-lg border p-3 text-left transition-colors',
-									$settings.model === m.id
-										? 'border-sky-500 ring-1 ring-sky-500'
-										: 'border-black/10 hover:border-black/20 dark:border-white/10 dark:hover:border-white/20',
-								)}
+				{#if section === 'profile'}
+					<!-- PROFILE -->
+					<section class={CARD}>
+						<div class="flex items-center gap-4">
+							<!-- AVATAR (PHOTO OR GRADIENT INITIALS) -->
+							<Avatar name={label} src={user.avatarUrl ?? null} size={64} class="shrink-0" />
+							<div class="min-w-0 flex-1">
+								<div class="flex flex-wrap items-center gap-2">
+									<h2 class="truncate text-lg font-semibold">{label}</h2>
+									{#if user.role === 'admin'}
+										<span
+											class="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
+											><Shield size={11} /> Admin</span
+										>
+									{/if}
+								</div>
+								<p class={cn('mt-0.5 truncate text-sm', MUTED)}>{user.email}</p>
+								<p class="mt-0.5 text-xs opacity-50">Member since {joined}</p>
+							</div>
+						</div>
+
+						<!-- EDIT DISPLAY NAME -->
+						<form
+							class="mt-5 flex flex-col gap-2 sm:flex-row sm:items-end"
+							on:submit|preventDefault={saveName}
+						>
+							<div class="min-w-0 flex-1">
+								<TextField bind:value={newName} label="Display name" placeholder="Your name" />
+							</div>
+							<Button
+								type="submit"
+								variant="primary"
+								loading={savingName}
+								disabled={savingName || !nameDirty || !fbUser}
 							>
-								<span class="text-sm font-medium">{m.label}</span>
-								<span class="text-xs opacity-60">{m.blurb}</span>
-							</button>
-						{/each}
-					</div>
-				</div>
-			</section>
+								Save
+							</Button>
+						</form>
+					</section>
+				{:else if section === 'appearance'}
+					<!-- APPEARANCE & READING PREFERENCES -->
+					<section class={CARD}>
+						<!-- THEME -->
+						<span class={cn('mb-2 block text-xs font-medium', MUTED)}>Theme</span>
+						<div class="flex flex-wrap gap-2">
+							{#each THEMES as t (t.id)}
+								<button
+									use:ripple
+									on:click={() => setTheme(t.id)}
+									class={cn(
+										'flex items-center gap-2 rounded-lg border px-3 py-2 text-sm transition-colors',
+										$settings.theme === t.id
+											? 'border-[#c0392b] ring-1 ring-[#c0392b]'
+											: 'border-black/10 hover:border-black/20 dark:border-white/10 dark:hover:border-white/20',
+									)}
+								>
+									<span
+										class={cn(
+											'h-4 w-4 rounded-full border border-black/10 dark:border-white/20',
+											t.swatch,
+										)}
+									></span>
+									{t.label}
+								</button>
+							{/each}
+						</div>
 
-			<!-- SESSION -->
-			<section class={CARD}>
-				<div class="flex flex-wrap items-center justify-between gap-3">
-					<div>
-						<h2 class="text-[15px] font-semibold">Session</h2>
-						<p class="text-[13px] opacity-60">Sign out of Xianslate on this device.</p>
-					</div>
-					<Button on:click={() => signOutEverywhere()}><LogOut size={15} /> Sign out</Button>
-				</div>
-			</section>
+						<!-- DEFAULT TRANSLATION LANGUAGE -->
+						<div class="mt-5">
+							<span class={cn('mb-2 flex items-center gap-1.5 text-xs font-medium', MUTED)}
+								><Languages size={13} /> Default translation language</span
+							>
+							<LanguagePicker
+								value={$settings.newBookTargetLang}
+								allowNone={false}
+								on:change={(e) => setDefaultLang(e.detail)}
+							/>
+							<p class="mt-1.5 text-xs opacity-50">
+								New books translate into {languageName($settings.newBookTargetLang)} unless you pick otherwise.
+							</p>
+						</div>
 
-			<!-- DANGER ZONE -->
-			<section class="rounded-2xl border border-red-500/30 bg-red-500/[0.03] p-5">
-				<h2 class="flex items-center gap-2 text-[15px] font-semibold text-red-600 dark:text-red-400">
-					<TriangleAlert size={16} /> Danger zone
-				</h2>
-				<p class="mt-1 text-[13px] opacity-70">
-					Deleting your account permanently removes your library — every book, chapter, translation, and
-					glossary term. This can’t be undone.
-				</p>
-				<div class="mt-4">
-					<Button variant="danger" on:click={() => ((showDelete = true), (deleteConfirm = ''))}>
-						<Trash2 size={15} /> Delete account
-					</Button>
-				</div>
-			</section>
+						<!-- TRANSLATION MODEL -->
+						<div class="mt-5">
+							<span class={cn('mb-2 flex items-center gap-1.5 text-xs font-medium', MUTED)}
+								><Sparkles size={13} /> Translation model</span
+							>
+							<div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+								{#each TRANSLATION_MODELS as m (m.id)}
+									<button
+										use:ripple
+										on:click={() => setModel(m.id)}
+										class={cn(
+											'flex flex-col gap-0.5 rounded-lg border p-3 text-left transition-colors',
+											$settings.model === m.id
+												? 'border-[#c0392b] ring-1 ring-[#c0392b]'
+												: 'border-black/10 hover:border-black/20 dark:border-white/10 dark:hover:border-white/20',
+										)}
+									>
+										<span class="text-sm font-medium">{m.label}</span>
+										<span class={cn('text-xs', MUTED)}>{m.blurb}</span>
+									</button>
+								{/each}
+							</div>
+						</div>
+					</section>
+				{:else if section === 'security'}
+					<div class="flex flex-col gap-5">
+						<!-- SIGN-IN & SECURITY -->
+						<section class={CARD}>
+							<h2 class="mb-1 flex items-center gap-2 text-[15px] font-semibold">
+								<Mail size={16} /> Sign-in
+							</h2>
+							<p class={cn('mb-4 text-[13px]', MUTED)}>
+								Signed in with <span class="font-medium">{providerLabel}</span>.
+							</p>
+
+							<!-- EMAIL VERIFICATION STATUS -->
+							<div
+								class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-black/10 p-3 dark:border-white/10"
+							>
+								<div class="flex items-center gap-2 text-sm">
+									{#if user.emailVerified}
+										<BadgeCheck size={18} class="text-emerald-500" />
+										<span>Email verified</span>
+									{:else}
+										<TriangleAlert size={18} class="text-amber-500" />
+										<span>Email not verified</span>
+									{/if}
+								</div>
+								{#if !user.emailVerified}
+									<Button
+										size="sm"
+										loading={sendingVerify}
+										disabled={sendingVerify || !fbUser}
+										on:click={resendVerification}
+									>
+										Resend verification
+									</Button>
+								{/if}
+							</div>
+
+							<!-- PASSWORD RESET -->
+							<div
+								class="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-black/10 p-3 dark:border-white/10"
+							>
+								<div class="flex items-center gap-2 text-sm">
+									<KeyRound size={18} class={MUTED} />
+									<span>Password</span>
+								</div>
+								<Button
+									size="sm"
+									loading={sendingReset}
+									disabled={sendingReset}
+									on:click={resetPassword}
+								>
+									Send reset email
+								</Button>
+							</div>
+						</section>
+
+						<!-- SESSION -->
+						<section class={CARD}>
+							<div class="flex flex-wrap items-center justify-between gap-3">
+								<div>
+									<h2 class="text-[15px] font-semibold">Session</h2>
+									<p class={cn('text-[13px]', MUTED)}>Sign out of Xianslate on this device.</p>
+								</div>
+								<Button on:click={() => signOutEverywhere()}><LogOut size={15} /> Sign out</Button>
+							</div>
+						</section>
+
+						<!-- DANGER ZONE -->
+						<section class="rounded-2xl border border-red-500/30 bg-red-500/[0.03] p-5">
+							<h2
+								class="flex items-center gap-2 text-[15px] font-semibold text-red-600 dark:text-red-400"
+							>
+								<TriangleAlert size={16} /> Danger zone
+							</h2>
+							<p class="mt-1 text-[13px] opacity-70">
+								Deleting your account permanently removes your library — every book, chapter,
+								translation, and glossary term. This can’t be undone.
+							</p>
+							<div class="mt-4">
+								<Button variant="danger" on:click={() => ((showDelete = true), (deleteConfirm = ''))}>
+									<Trash2 size={15} /> Delete account
+								</Button>
+							</div>
+						</section>
+					</div>
+				{/if}
+			</div>
 		</div>
 	{/if}
 </div>

@@ -3,7 +3,7 @@ import { browser } from '$app/environment';
 import { goto } from '$app/navigation';
 import { apiFetch } from '$lib/api';
 import { firebaseAuth } from '$lib/firebase';
-import { derived, get, writable } from 'svelte/store';
+import { get, writable } from 'svelte/store';
 
 // -- TYPES -- //
 
@@ -21,20 +21,17 @@ export type SessionUser = {
 
 // -- STORES -- //
 
-// THE CLIENT SOURCE OF TRUTH FOR "WHO AM I". SEEDED FROM THE SSR LAYOUT DATA ON WEB (NO FLASH) AND/OR
-// REFRESHED FROM /api/me (THE ONLY SOURCE ON NATIVE, WHERE NO SERVER LOAD RUNS). null = SIGNED OUT.
+// THE CLIENT SOURCE OF TRUTH FOR "WHO AM I". SEEDED FROM THE SSR LAYOUT DATA (NO FLASH) AND/OR
+// REFRESHED FROM /api/me. null = SIGNED OUT.
 export const currentUser = writable<SessionUser | null>(null);
 
 // TRUE ONCE refreshUser() HAS RESOLVED AT LEAST ONCE — LETS UI DISTINGUISH "STILL LOADING" FROM "SIGNED OUT".
 export const authReady = writable(false);
 
-// CONVENIENCE: IS THE CURRENT USER AN ADMIN? GATES THE ADMIN BUTTON / ADMIN PAGES ON THE CLIENT.
-export const isAdmin = derived(currentUser, ($u) => $u?.role === 'admin');
-
 // -- FUNCTIONS -- //
 
-// PULL THE CURRENT USER FROM THE SERVER (SAME-ORIGIN COOKIE ON WEB, BEARER TOKEN ON NATIVE). /api/me IS
-// EXEMPT FROM THE 401 GUARD, SO A SIGNED-OUT CALL RETURNS { user: null } RATHER THAN ERRORING.
+// PULL THE CURRENT USER FROM THE SERVER (SAME-ORIGIN COOKIE). /api/me IS EXEMPT FROM THE 401 GUARD, SO A
+// SIGNED-OUT CALL RETURNS { user: null } RATHER THAN ERRORING.
 export async function refreshUser(): Promise<SessionUser | null> {
 	if (!browser) return null;
 	try {
@@ -51,8 +48,7 @@ export async function refreshUser(): Promise<SessionUser | null> {
 	}
 }
 
-// SEED THE STORE FROM SSR LAYOUT DATA (WEB) WITHOUT CLOBBERING A FRESHER CLIENT VALUE. NO-OP ON NATIVE,
-// WHERE THE SERVER LOAD NEVER RUNS AND data.user IS undefined.
+// SEED THE STORE FROM SSR LAYOUT DATA WITHOUT CLOBBERING A FRESHER CLIENT VALUE.
 export function seedUser(user: SessionUser | null | undefined): void {
 	if (user === undefined) return;
 	currentUser.set(user);
@@ -70,7 +66,7 @@ export async function signOutEverywhere(redirectTo = '/login/'): Promise<void> {
 	try {
 		await apiFetch('/api/auth/logout', { method: 'POST' });
 	} catch {
-		// IGNORE — THE COOKIE IS BEST-EFFORT TO CLEAR (NATIVE HAS NONE).
+		// IGNORE — THE COOKIE IS BEST-EFFORT TO CLEAR.
 	}
 	currentUser.set(null);
 	authReady.set(true);

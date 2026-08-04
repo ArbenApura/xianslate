@@ -59,6 +59,10 @@ export const books = pgTable(
 		authorTarget: text('author_target'),
 		sourceUrl: text('source_url'),
 		coverUrl: text('cover_url'),
+		// LIBRARY ORGANIZATION (Phase 2): pinned FLOATS A BOOK TO THE TOP OF THE SHELF; archived HIDES IT FROM
+		// THE DEFAULT VIEW (RECOVERABLE VIA THE "Archived" FILTER). BOTH DEFAULT false SO EXISTING ROWS ARE UNAFFECTED.
+		pinned: boolean('pinned').notNull().default(false),
+		archived: boolean('archived').notNull().default(false),
 		// RESUME POINTER → chapters.id (bigint). NO DECLARED FK (THE READER WRITES IT FREELY); STAYS bigint.
 		lastChapterId: bigint('last_chapter_id', { mode: 'number' }),
 		// WHEN ANY CHAPTER OF THIS BOOK WAS LAST OPENED — DRIVES THE "CONTINUE READING" PICK (MOST RECENT WINS)
@@ -168,6 +172,35 @@ export const glossary = pgTable(
 		// FED TO THE TRANSLATION PROMPT TO DISAMBIGUATE THE TERM AND SHOWN IN THE GLOSSARY EDITOR.
 		context: text('context'),
 		tags: text('tags'),
+		// WHAT KIND OF ENTITY THIS NAMES — STRUCTURES THE EDITOR (GROUP / FILTER / COLOUR). NULLABLE = UNCATEGORISED.
+		category: text('category', {
+			enum: [
+				'character',
+				'location',
+				'organization',
+				'technique',
+				'item',
+				'realm',
+				'creature',
+				'title',
+				'concept',
+				'other',
+			],
+		}),
+		// HIGH-PRIORITY FLAG — PINNED TERMS LEAD THE TRANSLATION PROMPT, ARE EMPHASISED, AND ARE NEVER TRUNCATED.
+		pinned: boolean('pinned').notNull().default(false),
+		// 'ai' (AUTO-EXTRACTED, UNREVIEWED) vs 'user' (HUMAN-ADDED OR EDITED, AUTHORITATIVE).
+		status: text('status', { enum: ['ai', 'user'] })
+			.notNull()
+			.default('ai'),
+		// ALTERNATE SOURCE FORMS OF THE SAME ENTITY (EPITHETS / SHORT FORMS), JSON-ENCODED ARRAY. ALL MATCH IN A
+		// CHAPTER AND ALL RENDER TO `target`. null = NONE.
+		aliases: text('aliases'),
+		// THE CHAPTER WHERE THIS TERM WAS FIRST EXTRACTED — ITS FIRST APPEARANCE. SET-NULL (NOT CASCADE) SO
+		// DELETING THAT CHAPTER KEEPS THE TERM. IMMUTABLE ONCE SET (NEVER UPDATED ON CONFLICT).
+		firstChapterId: bigint('first_chapter_id', { mode: 'number' }).references(() => chapters.id, {
+			onDelete: 'set null',
+		}),
 		createdAt: epochMs('created_at')
 			.notNull()
 			.$defaultFn(() => Date.now()),
@@ -202,6 +235,16 @@ export const siteAdapters = pgTable('site_adapters', {
 	model: text('model').notNull(),
 	// INCREMENTS ON EVERY RE-HEAL SO AN OLD MAP CAN BE DIFFED / ROLLED BACK
 	version: integer('version').notNull().default(1),
+	// DEPRECATED (THE ZYTE BROWSER-RENDER TIER WAS REMOVED) — RETAINED AS A DORMANT COLUMN SO NO DESTRUCTIVE
+	// MIGRATION IS NEEDED; NOTHING READS OR WRITES IT ANYMORE. ALL HOSTS NOW FETCH VIA httpResponseBody (OR FREE).
+	needsRender: boolean('needs_render').notNull().default(false),
+	// PER-HOST ZYTE httpResponseBody COST OVERRIDE (USD PER *SUCCESSFUL* REQUEST). NULL = USE THE GLOBAL ENV
+	// ESTIMATE (ZYTE_COST_PER_REQUEST). ZYTE BILLS BY SITE-DIFFICULTY TIER (1–5) AND DOESN'T RETURN THE TIER PER
+	// REQUEST, SO THIS ENCODES A HOST'S *OBSERVED* TIER (MEASURED FROM THE ZYTE INVOICE) — MAKING THE COST METER +
+	// FETCH CHARGE PER-HOST ACCURATE INSTEAD OF ONE GLOBAL GUESS. SET VIA setHostFetchCost.
+	fetchCostHttp: doublePrecision('fetch_cost_http'),
+	// DEPRECATED (BROWSER-RENDER TIER REMOVED) — DORMANT COLUMN, NO LONGER READ OR WRITTEN.
+	fetchCostRender: doublePrecision('fetch_cost_render'),
 	// THE PAGE THE MAP WAS LEARNED FROM
 	sampleUrl: text('sample_url'),
 	// COOLDOWN ANCHOR — BLOCKS RE-HEALING THE SAME HOST MORE THAN ONCE PER WINDOW (ANTI-THRASH / COST)
@@ -272,6 +315,36 @@ export const aiUsage = pgTable(
 	],
 );
 
+// PER-REQUEST PAGE-FETCH BILLING LEDGER. ONE ROW PER *BILLED* TRANSPORT (CURRENTLY ZYTE, PASS-THROUGH COST);
+// FREE DIRECT/curl FETCHES ARE NOT LOGGED HERE (THEY'RE COUNTED IN site_events). KEYED DIRECTLY ON userId —
+// NOT chapterId — BECAUSE A FETCH HAPPENS DURING INGEST *BEFORE* THE CHAPTER ROW EXISTS, SO IT CAN'T RIDE THE
+// chapters→books OWNERSHIP CHAIN ai_usage USES. THE CHAPTER id IS ATTACHED WHEN KNOWN FOR THE STATS DIALOG.
+export const fetchUsage = pgTable(
+	'fetch_usage',
+	{
+		id: bigserial('id', { mode: 'number' }).primaryKey(),
+		userId: text('user_id')
+			.notNull()
+			.references(() => users.id, { onDelete: 'cascade' }),
+		// THE CHAPTER THIS FETCH SERVED, WHEN KNOWN — SET BY THE CALLER *AFTER* THE CHAPTER ROW EXISTS, SO THE
+		// PER-CHAPTER STATS DIALOG CAN ATTRIBUTE FETCH SPEND. NULL FOR BOOK-LEVEL FETCHES (COVER / TITLE BACKFILL).
+		chapterId: bigint('chapter_id', { mode: 'number' }).references(() => chapters.id, { onDelete: 'cascade' }),
+		host: text('host'),
+		// THE TRANSPORT THAT SERVED THE PAGE — 'zyte' (HTTP TIER); 'zyte-render' APPEARS ONLY IN LEGACY ROWS (THE
+		// BROWSER TIER WAS REMOVED).
+		provider: text('provider').notNull(),
+		costUsd: doublePrecision('cost_usd').notNull().default(0),
+		createdAt: epochMs('created_at')
+			.notNull()
+			.$defaultFn(() => Date.now()),
+	},
+	(t) => [
+		index('fetch_usage_user_idx').on(t.userId),
+		index('fetch_usage_chapter_idx').on(t.chapterId),
+		index('fetch_usage_created_idx').on(t.createdAt),
+	],
+);
+
 // -- TYPES -- //
 
 export type User = typeof users.$inferSelect;
@@ -295,3 +368,5 @@ export type SiteAdapter = typeof siteAdapters.$inferSelect;
 export type SiteEvent = typeof siteEvents.$inferSelect;
 
 export type AiUsage = typeof aiUsage.$inferSelect;
+
+export type FetchUsage = typeof fetchUsage.$inferSelect;

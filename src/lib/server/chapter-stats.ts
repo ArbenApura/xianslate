@@ -4,7 +4,13 @@
 // READ-ONLY — NO MODEL CALLS, SO OPENING THE DIALOG IS FREE.
 
 // IMPORTED TYPES
-import type { ChapterContentStats, ChapterPipelineItem, ChapterStatRun, ChapterStats } from '$lib/types';
+import type {
+	ChapterContentStats,
+	ChapterFetchItem,
+	ChapterPipelineItem,
+	ChapterStatRun,
+	ChapterStats,
+} from '$lib/types';
 import type { Language } from '$lib/languages';
 // IMPORTED DEP-MODULES
 import { and, desc, eq, lte, sql } from 'drizzle-orm';
@@ -12,7 +18,7 @@ import { and, desc, eq, lte, sql } from 'drizzle-orm';
 import { getLanguage, isMonolingual, languageName } from '$lib/languages';
 import { stripLeadingTitle } from '$lib/chapter-label';
 import { db } from './db';
-import { aiUsage, books, chapters, translations } from './db/schema';
+import { aiUsage, books, chapters, fetchUsage, translations } from './db/schema';
 import { matchTerms } from './glossary-match';
 
 // -- FUNCTIONS -- //
@@ -42,7 +48,7 @@ export async function getChapterStats(uuid: string): Promise<ChapterStats | null
 	// PREPEND THE TITLE SO TITLE-ONLY GLOSSARY NAMES COUNT TOO (MATCHES THE EXTRACT ENDPOINT).
 	const body = stripLeadingTitle(chapter.contentSource, chapter.titleSource);
 
-	const [runs, totalRow, positionRow, terms, pipelineRows] = await Promise.all([
+	const [runs, totalRow, positionRow, terms, pipelineRows, fetchRows] = await Promise.all([
 		db
 			.select({
 				model: translations.model,
@@ -78,6 +84,16 @@ export async function getChapterStats(uuid: string): Promise<ChapterStats | null
 			.from(aiUsage)
 			.where(eq(aiUsage.chapterId, chapter.id))
 			.groupBy(aiUsage.kind),
+		// BILLED PAGE-FETCH SPEND FOR THIS CHAPTER (ZYTE HTTP / RENDER) FROM fetch_usage, GROUPED BY TIER.
+		db
+			.select({
+				provider: fetchUsage.provider,
+				calls: sql<number>`count(*)`,
+				costUsd: sql<number>`coalesce(sum(${fetchUsage.costUsd}),0)`,
+			})
+			.from(fetchUsage)
+			.where(eq(fetchUsage.chapterId, chapter.id))
+			.groupBy(fetchUsage.provider),
 	]);
 
 	const history: ChapterStatRun[] = runs.map((r) => ({
@@ -110,6 +126,14 @@ export async function getChapterStats(uuid: string): Promise<ChapterStats | null
 		completionTokens: pipelineItems.reduce((s, r) => s + r.completionTokens, 0),
 		items: pipelineItems,
 	};
+
+	// BILLED PAGE-FETCH SPEND (ZYTE) FOR THIS CHAPTER, SPLIT BY TIER (HTTP vs RENDER).
+	const fetchItems: ChapterFetchItem[] = fetchRows.map((r) => ({
+		provider: r.provider,
+		calls: Number(r.calls),
+		costUsd: Number(r.costUsd),
+	}));
+	const fetch = { costUsd: fetchItems.reduce((s, r) => s + r.costUsd, 0), items: fetchItems };
 
 	const source = countContent(chapter.contentSource, chapter.titleSource, srcLang);
 	const target =
@@ -156,6 +180,7 @@ export async function getChapterStats(uuid: string): Promise<ChapterStats | null
 			history,
 		},
 		pipeline,
-		totalCostUsd: costUsd + pipeline.costUsd,
+		fetch,
+		totalCostUsd: costUsd + pipeline.costUsd + fetch.costUsd,
 	};
 }

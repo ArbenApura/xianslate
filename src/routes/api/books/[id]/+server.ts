@@ -1,8 +1,9 @@
 // IMPORTED DEP-TYPES
 import type { RequestHandler } from './$types';
 // IMPORTED DEP-MODULES
-import { json } from '@sveltejs/kit';
+import { error, json } from '@sveltejs/kit';
 import { asc, eq, sql } from 'drizzle-orm';
+import { z } from 'zod';
 // IMPORTED MODULES
 import { isMonolingual } from '$lib/languages';
 import { requireUser } from '$lib/server/auth/user';
@@ -13,6 +14,28 @@ import { matchTerms } from '$lib/server/glossary-match';
 import { recordAiUsage } from '$lib/server/site-stats';
 import { translateTerm, translateTitle } from '$lib/server/translate';
 
+// -- CONSTANTS -- //
+
+// EDIT BOOK METADATA — ALL FIELDS OPTIONAL; AT LEAST ONE MUST BE PRESENT (CHECKED IN THE HANDLER). EMPTY
+// STRINGS ON THE NULLABLE *Target / author FIELDS COLLAPSE TO null SO "CLEAR IT" IS EXPRESSIBLE FROM THE UI.
+const PatchBody = z.object({
+	title: z.string().trim().min(1).optional(),
+	titleTarget: z.string().trim().nullable().optional(),
+	author: z.string().trim().nullable().optional(),
+	authorTarget: z.string().trim().nullable().optional(),
+	// LIBRARY ORGANIZATION + COVER. coverUrl ACCEPTS AN http(s) URL OR A data: URI (CLIENT-RESIZED UPLOAD),
+	// CAPPED SO A HUGE BASE64 BLOB CAN'T BLOAT THE ROW / LIBRARY PAYLOAD; EMPTY STRING CLEARS IT.
+	pinned: z.boolean().optional(),
+	archived: z.boolean().optional(),
+	coverUrl: z
+		.string()
+		.trim()
+		.max(700_000)
+		.refine((v) => v === '' || /^(https?:\/\/|data:image\/)/.test(v), 'Cover must be an image URL or upload.')
+		.nullable()
+		.optional(),
+});
+
 // -- FUNCTIONS -- //
 
 export const GET: RequestHandler = async ({ params, locals }) => {
@@ -22,6 +45,7 @@ export const GET: RequestHandler = async ({ params, locals }) => {
 	// JUST TO TEST IT FOR null.
 	const list = await db
 		.select({
+			id: chapters.id,
 			uuid: chapters.uuid,
 			seq: chapters.seq,
 			titleSource: chapters.titleSource,
@@ -35,6 +59,8 @@ export const GET: RequestHandler = async ({ params, locals }) => {
 	return json({
 		book,
 		chapters: list.map((c) => ({
+			// NUMERIC id POWERS CLIENT-SIDE /api/translate CALLS (BATCH TRANSLATE) — OWNERSHIP IS RE-CHECKED THERE.
+			id: c.id,
 			uuid: c.uuid,
 			seq: c.seq,
 			titleSource: c.titleSource,
@@ -86,6 +112,49 @@ export const POST: RequestHandler = async ({ params, locals }) => {
 		// DON'T FAIL THE UI IF TRANSLATION IS UNAVAILABLE — FALL BACK TO THE SOURCE VALUES
 		return json({ titleTarget: titleTarget ?? book.title, authorTarget: authorTarget ?? book.author });
 	}
+};
+
+// EDIT THE BOOK'S TITLE / AUTHOR (SOURCE + TRANSLATED). THE LIBRARY'S LAZY BACKFILL (THE POST ABOVE) ONLY
+// FILLS *Target WHEN IT'S null, SO CLEARING titleTarget HERE LETS A RENAME RE-TRANSLATE ON NEXT LIBRARY LOAD.
+export const PATCH: RequestHandler = async ({ params, request, locals }) => {
+	const user = requireUser(locals);
+	const book = await assertBookOwner(user.id, params.id);
+
+	const parsed = PatchBody.safeParse(await request.json().catch(() => null));
+	if (!parsed.success) throw error(400, 'Provide a title, author, or their translations.');
+	const b = parsed.data;
+
+	const set: {
+		title?: string;
+		titleTarget?: string | null;
+		author?: string | null;
+		authorTarget?: string | null;
+		pinned?: boolean;
+		archived?: boolean;
+		coverUrl?: string | null;
+	} = {};
+	if (b.title !== undefined) set.title = b.title;
+	if (b.titleTarget !== undefined) set.titleTarget = b.titleTarget || null;
+	if (b.author !== undefined) set.author = b.author || null;
+	if (b.authorTarget !== undefined) set.authorTarget = b.authorTarget || null;
+	if (b.pinned !== undefined) set.pinned = b.pinned;
+	if (b.archived !== undefined) set.archived = b.archived;
+	if (b.coverUrl !== undefined) set.coverUrl = b.coverUrl || null;
+	if (Object.keys(set).length === 0) throw error(400, 'Nothing to update.');
+
+	const [updated] = await db.update(books).set(set).where(eq(books.id, book.id)).returning();
+	return json({
+		ok: true,
+		book: {
+			title: updated.title,
+			titleTarget: updated.titleTarget,
+			author: updated.author,
+			authorTarget: updated.authorTarget,
+			pinned: updated.pinned,
+			archived: updated.archived,
+			coverUrl: updated.coverUrl,
+		},
+	});
 };
 
 export const DELETE: RequestHandler = async ({ params, locals }) => {

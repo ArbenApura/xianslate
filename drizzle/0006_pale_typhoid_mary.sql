@@ -1,0 +1,1 @@
+ALTER TABLE "site_adapters" ADD COLUMN "needs_render" boolean DEFAULT false NOT NULL;

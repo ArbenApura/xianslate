@@ -22,6 +22,62 @@
 			"when": 1781286004279,
 			"tag": "0002_big_johnny_blaze",
 			"breakpoints": true
+		},
+		{
+			"idx": 3,
+			"version": "7",
+			"when": 1781441368421,
+			"tag": "0003_romantic_annihilus",
+			"breakpoints": true
+		},
+		{
+			"idx": 4,
+			"version": "7",
+			"when": 1781500044716,
+			"tag": "0004_hot_veda",
+			"breakpoints": true
+		},
+		{
+			"idx": 5,
+			"version": "7",
+			"when": 1781500951216,
+			"tag": "0005_quiet_selene",
+			"breakpoints": true
+		},
+		{
+			"idx": 6,
+			"version": "7",
+			"when": 1781501721388,
+			"tag": "0006_pale_typhoid_mary",
+			"breakpoints": true
+		},
+		{
+			"idx": 7,
+			"version": "7",
+			"when": 1781511233385,
+			"tag": "0007_curvy_lady_ursula",
+			"breakpoints": true
+		},
+		{
+			"idx": 8,
+			"version": "7",
+			"when": 1781517076100,
+			"tag": "0008_absent_nova",
+			"breakpoints": true
+		},
+		{
+			"idx": 9,
+			"version": "7",
+			"when": 1781524786248,
+			"tag": "0009_moaning_firebrand",
+			"breakpoints": true
+		},
+		{
+			"idx": 10,
+			"version": "7",
+			"when": 1785840162436,
+			"tag": "0010_military_silver_sable",
+			"breakpoints": true
 		}
 	]
 }
