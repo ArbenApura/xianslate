@@ -14,9 +14,9 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Deploy to Fly.io (remote build)
-        uses: superfly/flyctl-actions/deploy@master
+        uses: superfly/flyctl-actions@master
         with:
-          args: "--remote-only"
+          args: "deploy --remote-only"
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
 
