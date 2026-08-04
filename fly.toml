@@ -1,7 +1,4 @@
-# fly.toml app configuration file generated for xianslate on 2026-08-04T11:56:58Z
-#
-# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
-#
+# Xianslate — Fly.io configuration (hand-maintained; do not merge Fly's auto-generated PRs)
 
 app = "xianslate"
 # Tokyo — Japanese egress IPs get past the geo-blocks that JP novel sites (syosetu etc.) apply to foreign
@@ -19,8 +16,8 @@ dockerfile = "Dockerfile"
 # out — see the single-instance note at the bottom. Budget option: shared-cpu-1x / 2gb with NODE_OPTIONS=1536.
 
 [[vm]]
-  size = 'shared-cpu-2x'
-  memory = '4gb'
+size = 'shared-cpu-2x'
+memory = '4gb'
 
 [env]
 PORT = "3000"
@@ -39,8 +36,6 @@ force_https = true
 auto_stop_machines = true
 auto_start_machines = true
 min_machines_running = 1
-  checks = [{ grace_period = '10s', interval = '15s', method = 'GET', path = '/', timeout = '2s' }]
-  concurrency = { hard_limit = 750, soft_limit = 500, type = 'requests' }
 
 [http_service.concurrency]
 # EACH LIVE TRANSLATION HOLDS ONE LONG SSE CONNECTION, SO THIS MUST EXCEED (concurrent translators + readers).
