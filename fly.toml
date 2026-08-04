@@ -1,19 +1,14 @@
-# Fly.io — Xianslate. SINGLE process: one `node build` machine serves HTTP and runs translations in-process
-# (no Redis/queue/worker). Region MUST match the Neon region (low DB latency).
+# fly.toml app configuration file generated for xianslate on 2026-08-04T11:56:58Z
 #
-# SECRETS (set once, not in this file): see DEPLOYMENT.md —
-#   fly secrets set DATABASE_URL=... DATABASE_URL_DIRECT=... DATABASE_URL_REPLICA=... \
-#                   DEEPSEEK_API_KEY=... ZYTE_API_KEY=... FIREBASE_SERVICE_ACCOUNT='{...}' \
-#                   PUBLIC_FIREBASE_API_KEY=... PUBLIC_FIREBASE_AUTH_DOMAIN=... \
-#                   PUBLIC_FIREBASE_PROJECT_ID=... PUBLIC_FIREBASE_APP_ID=...
-# ZYTE_API_KEY is the managed-fetch transport (proxies + HTTP/JS-render). UNSET → free node-fetch→curl only.
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
 
 app = "xianslate"
 # Tokyo — Japanese egress IPs get past the geo-blocks that JP novel sites (syosetu etc.) apply to foreign
 # datacenter IPs, so the direct fetch path works for them. NOTE: Neon stays in Singapore — DB latency from
 # Tokyo is ~70–100ms round-trip, acceptable for a reader app. If that bothers you, create a Tokyo-region
 # Neon project and repoint DATABASE_URL*.
-primary_region = "nrt" # Japan (Tokyo) — old value "sin" (Singapore)
+primary_region = 'nrt'
 
 [build]
 dockerfile = "Dockerfile"
@@ -22,9 +17,10 @@ dockerfile = "Dockerfile"
 # SHARED CPU is right — RAM is the binding constraint (in-flight chapter buffers × DEEPSEEK_CONCURRENCY + heap).
 # 4 GB matches NODE_OPTIONS=--max-old-space-size=3072 below (~75% of RAM). Scale UP (shared-cpu-4x / 8gb), not
 # out — see the single-instance note at the bottom. Budget option: shared-cpu-1x / 2gb with NODE_OPTIONS=1536.
+
 [[vm]]
-size = "shared-cpu-2x"
-memory = "4gb"
+  size = 'shared-cpu-2x'
+  memory = '4gb'
 
 [env]
 PORT = "3000"
@@ -40,9 +36,11 @@ ZYTE_RPS = "2"
 [http_service]
 internal_port = 3000
 force_https = true
-auto_stop_machines = "stop"
+auto_stop_machines = true
 auto_start_machines = true
 min_machines_running = 1
+  checks = [{ grace_period = '10s', interval = '15s', method = 'GET', path = '/', timeout = '2s' }]
+  concurrency = { hard_limit = 750, soft_limit = 500, type = 'requests' }
 
 [http_service.concurrency]
 # EACH LIVE TRANSLATION HOLDS ONE LONG SSE CONNECTION, SO THIS MUST EXCEED (concurrent translators + readers).
