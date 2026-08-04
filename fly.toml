@@ -9,7 +9,11 @@
 # ZYTE_API_KEY is the managed-fetch transport (proxies + HTTP/JS-render). UNSET → free node-fetch→curl only.
 
 app = "xianslate"
-primary_region = "sin" # Singapore — MUST match the Neon region (ap-southeast-1). East-Asia alt: nrt / ap-northeast-1.
+# Tokyo — Japanese egress IPs get past the geo-blocks that JP novel sites (syosetu etc.) apply to foreign
+# datacenter IPs, so the direct fetch path works for them. NOTE: Neon stays in Singapore — DB latency from
+# Tokyo is ~70–100ms round-trip, acceptable for a reader app. If that bothers you, create a Tokyo-region
+# Neon project and repoint DATABASE_URL*.
+primary_region = "nrt" # Japan (Tokyo) — old value "sin" (Singapore)
 
 [build]
 dockerfile = "Dockerfile"
