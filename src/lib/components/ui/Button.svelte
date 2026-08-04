@@ -19,7 +19,7 @@
 	// -- CONSTANTS -- //
 
 	const BASE =
-		'inline-flex items-center justify-center gap-1.5 rounded-lg border font-medium transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-[#b23a2e]/40 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-50';
+		'inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border font-medium transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-[#b23a2e]/40 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-50';
 	// CINNABAR PRIMARY + A SOLID destructive VARIANT (THE TEXT-ONLY danger STAYS FOR LOW-WEIGHT CASES)
 	const VARIANTS = {
 		primary: 'border-transparent bg-[#b23a2e] text-white hover:bg-[#c0392b]',

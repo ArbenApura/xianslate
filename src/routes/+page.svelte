@@ -145,9 +145,9 @@
 		)}
 	>
 		<div class="mx-auto flex w-full max-w-6xl items-center justify-between gap-4 px-5 py-3.5 sm:px-8">
-			<!-- BRAND -->
-			<span class="inline-flex items-center gap-2 text-lg font-bold tracking-tight">
-				<Seal size={28} /> Xianslate
+			<!-- BRAND — WORDMARK HIDDEN BELOW sm SO THE AUTH CTAs (nowrap) FIT ON ONE LINE; THE SEAL CARRIES THE MARK -->
+			<span class="inline-flex min-w-0 items-center gap-2 text-lg font-bold tracking-tight">
+				<Seal size={28} class="shrink-0" /> <span class="hidden sm:inline">Xianslate</span>
 			</span>
 			<!-- IN-PAGE NAV (DESKTOP) -->
 			<nav class="hidden items-center gap-1 text-sm md:flex">

@@ -748,11 +748,11 @@
 		class="sticky top-0 z-20 border-b border-black/[0.06] bg-black/5 backdrop-blur dark:border-white/[0.045] dark:bg-white/5"
 	>
 		<div class="mx-auto flex max-w-6xl items-center justify-between px-4 py-3 sm:px-6">
-			<!-- BRAND — WORDMARK YIELDS (TRUNCATES) BEFORE THE ACTIONS, SO IT STAYS VISIBLE WHENEVER THERE IS ROOM -->
+			<!-- BRAND — WORDMARK HIDDEN BELOW sm (SEAL ONLY) SO THE ACTIONS AREN'T CRAMPED; TRUNCATES ≥ sm -->
 			<div class="flex min-w-0 items-center gap-2">
 				<span class="flex min-w-0 items-center gap-2 text-xl font-bold tracking-tight"
 					><Seal size={28} class="shrink-0" />
-					<span class="truncate">Xianslate</span></span
+					<span class="hidden truncate sm:inline">Xianslate</span></span
 				>
 				<span class="hidden text-xs opacity-50 sm:inline">· any story, in your language</span>
 			</div>
@@ -927,19 +927,20 @@
 								class="w-full rounded-lg border border-black/10 bg-transparent py-2 pl-9 pr-3 text-sm outline-none transition-colors placeholder:opacity-40 focus:border-[#c0392b] focus:ring-2 focus:ring-[#c0392b]/30 dark:border-white/[0.08]"
 							/>
 						</div>
-						<!-- SORT + SOURCE + SELECT-MODE -->
-						<div class="flex items-center gap-2 sm:ml-auto">
+						<!-- SORT + SOURCE + SELECT-MODE — flex-wrap LETS THE ROW DEGRADE GRACEFULLY ON THE NARROWEST
+						     SCREENS; min-w-0 ON SORT ALLOWS IT TO SHRINK (TRUNCATE) INSTEAD OF OVERFLOWING. -->
+						<div class="flex flex-wrap items-center gap-2 sm:ml-auto">
 							<Select
 								items={SORT_ITEMS}
 								value={sortKey}
 								on:change={(e) => setSort(e.detail)}
-								class="flex-1 sm:w-40 sm:flex-none"
+								class="min-w-0 flex-1 sm:w-40 sm:flex-none"
 							/>
 							<Select
 								items={SOURCE_ITEMS}
 								value={sourceFilter}
 								on:change={(e) => setSource(e.detail)}
-								class="w-32 shrink-0"
+								class="w-28 shrink-0 sm:w-32"
 							/>
 							<button
 								use:ripple
@@ -1161,8 +1162,9 @@
 							<div class="flex items-center justify-between gap-1 px-0.5">
 								<div class="min-w-0 flex-1">
 									<!-- META ONLY — THE TITLE LIVES ON THE COVER ABOVE, SO IT ISN'T REPEATED HERE. -->
-									<p class="flex items-center gap-1 text-xs opacity-60">
-										{#if b.author}<span class="truncate">{b.authorTarget || b.author}</span> ·{/if}
+									<p class="flex min-w-0 items-center gap-1 overflow-hidden text-xs opacity-60">
+										{#if b.author}<span class="min-w-0 truncate">{b.authorTarget || b.author}</span>
+											·{/if}
 										<span class="shrink-0">
 											{#if done}Finished · {b.chapterCount} ch
 											{:else if b.readChapters > 0}{b.readChapters}/{b.chapterCount} ch · {Math.round(
