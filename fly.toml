@@ -12,17 +12,17 @@ dockerfile = "Dockerfile"
 
 # VM SPEC. The workload is I/O-bound (DeepSeek/Zyte/Neon are all remote; no local model, no Chromium), so
 # SHARED CPU is right — RAM is the binding constraint (in-flight chapter buffers × DEEPSEEK_CONCURRENCY + heap).
-# 4 GB matches NODE_OPTIONS=--max-old-space-size=3072 below (~75% of RAM). Scale UP (shared-cpu-4x / 8gb), not
-# out — see the single-instance note at the bottom. Budget option: shared-cpu-1x / 2gb with NODE_OPTIONS=1536.
+# DOWNSCALED to shared-cpu-1x / 2gb (solo, lightly-used app — cost-minimal; auto_stop already sleeps it when
+# idle). If you need headroom, go UP (shared-cpu-2x / 4gb, NODE_OPTIONS=3072), not out — single instance only.
 
 [[vm]]
-size = 'shared-cpu-2x'
-memory = '4gb'
+size = 'shared-cpu-1x'
+memory = '2gb'
 
 [env]
 PORT = "3000"
-# GIVE NODE MORE HEAP THAN ITS ~2GB DEFAULT (SIZE TO ~75% OF THE MACHINE RAM — 3072 SUITS A 4GB VM).
-NODE_OPTIONS = "--max-old-space-size=3072"
+# GIVE NODE MORE HEAP THAN ITS ~2GB DEFAULT (SIZE TO ~75% OF THE MACHINE RAM — 1536 SUITS A 2GB VM).
+NODE_OPTIONS = "--max-old-space-size=1536"
 # TUNABLES (override per deployment): translation concurrency, DB pool.
 DEEPSEEK_CONCURRENCY = "64"
 DB_POOL_MAX = "25"
