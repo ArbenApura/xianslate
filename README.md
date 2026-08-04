@@ -7,6 +7,10 @@ cost.
 
 MIT licensed. See [LICENSE](./LICENSE).
 
+## Live demo
+
+Try it out: <https://xianslate.fly.dev/>
+
 ## Features
 
 -   **Ingest from 3 sources**: paste a chapter URL from supported sites (self-healing AI-learned parsers),
