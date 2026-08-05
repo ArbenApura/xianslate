@@ -1,17 +1,20 @@
 // REGENERATE THE ANDROID LAUNCHER ICON (AND THE assets/ SOURCES) FROM static/logo.svg.
 //
-// DESIGN: FULL-BLEED — THE SEAL'S RED SQUARE IS SCALED TO COVER THE ENTIRE CANVAS, SO ANDROID'S LAUNCHER
-// MASK (CIRCLE ON PIXEL, SQUIRCLE / ROUNDED SQUARE ELSEWHERE) SIMPLY CROPS RED, AND THE ICON READS AS A
-// RED CIRCLE WITH THE CARVED 仙 CHARACTER — NO VISIBLE SHAPE EDGES, NOTHING "CUT" OR SQUARISH.
+// DESIGN: FULL-BLEED RED + PADDED SEAL.
+//   - THE CANVAS IS SOLID CINNABAR RED (#b23a2e) EDGE-TO-EDGE, SO ANDROID'S LAUNCHER MASK (CIRCLE ON
+//     PIXEL, SQUIRCLE / ROUNDED SQUARE ELSEWHERE) ONLY CROPS RED — THE ICON READS AS A RED CIRCLE, NO
+//     SHAPE EDGES, NOTHING "CUT" OR SQUARISH.
+//   - THE SEAL (FRAME + 仙) IS SCALED TO 76% AND CENTERED — PADDING SO THE ENTIRE CHARACTER AND THE
+//     CARVED FRAME FIT INSIDE EVERY MASK. AT FULL-BLEED THE GLYPH'S CORNERS EXCEED THE CIRCLE (RADIUS =
+//     HALF THE CANVAS): THE FRAME CORNERS SIT AT ~59% OF THE CANVAS DIAGONAL, THE GLYPH AT ~51% — BOTH
+//     MUST BE < 50% TO CLEAR THE CIRCLE. 76% PUTS THE FRAME AT ~45% AND THE GLYPH AT ~39% — SAFE.
+//     (THE SEAL'S RED SQUARE BLENDS INTO THE RED CANVAS — THE VISIBLE RESULT IS A PADDED SEAL ON RED.)
 //
-// LAYERS (ALL STANDARD MASKS COVER IT):
-//   - FULL-RED BASE: THE SVG'S ROUNDED-CORNER RED RECT IS DRAWN OVER A SOLID #b23a2e CANVAS, SO THE
-//     CORNER CUTOUTS BLEND INVISIBLY — THE ICON IS RED EDGE-TO-EDGE.
-//   - CARVED FRAME + 仙: SCALED PROPORTIONALLY (FRAME AT ~11% INSET, GLYPH CENTERED AT 50%) — WELL INSIDE
-//     THE 66dp MASK SAFE ZONE, SO NEITHER THE CIRCLE NOR THE CORNER-CUT MASKS TOUCH THEM.
+// LAYERS:
+//   - LEGACY (PRE-8) + ROUND ICONS: THE SAME COMPOSITION (RED CANVAS + 76% SEAL) — FULL-BLEED, NO
+//     ROUNDED CORNERS NEEDED.
+//   - ADAPTIVE FOREGROUND: RED CANVAS + 76% SEAL.
 //   - ADAPTIVE BACKGROUND: SOLID #b23a2e, FULL-BLEED (NO GAPS AT MASK EDGES).
-// LEGACY (PRE-8) + ROUND ICONS USE THE SAME FULL-BLEED COMPOSITION (A RED SQUARE IS FINE — NO ROUNDED
-// CORNERS NEEDED WHEN THE ART ITSELF IS FULL-BLEED).
 
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -26,6 +29,10 @@ const svg = join(root, 'static/logo.svg');
 // CINNABAR RED — THE SEAL'S FILL (static/logo.svg), NOW THE FULL ICON BACKGROUND.
 const RED = { r: 178, g: 58, b: 46, alpha: 1 };
 
+// THE SEAL'S SCALE INSIDE THE CANVAS — THE "PADDING" THAT KEEPS THE WHOLE CHARACTER + FRAME VISIBLE
+// UNDER THE CIRCULAR MASK (SEE THE DESIGN COMMENT ABOVE).
+const SEAL_SCALE = 0.76;
+
 // LEGACY ICON SIZES PER DENSITY (48 = mdpi … 192 = xxxhdpi); ADAPTIVE LAYERS ARE 108dp PER DENSITY.
 const LEGACY_SIZES = [48, 72, 96, 144, 192];
 const ADAPTIVE_SIZES = [108, 162, 216, 324, 432];
@@ -36,12 +43,12 @@ const ASSETS = join(root, 'assets');
 
 // -- BUILD -- //
 
-// THE SVG (RED ROUNDED RECT + FRAME + 仙) SCALED TO COVER A `canvas`-PIXEL SQUARE, COMPOSITED OVER A
-// SOLID RED CANVAS SO THE ROUNDED-CORNER CUTOUTS ARE INVISIBLY FILLED — THE RESULT IS RED EDGE-TO-EDGE
-// WITH THE CARVED MARKS CENTERED.
-async function fullBleed(canvas) {
+// THE RED CANVAS WITH THE SEAL AT SEAL_SCALE CENTERED (THE SVG'S ROUNDED CORNERS + THE CANVAS ARE THE
+// SAME RED, SO THERE IS NO VISIBLE SEAM — JUST A PADDED SEAL ON RED).
+async function paddedSeal(canvas) {
+	const px = Math.round(canvas * SEAL_SCALE);
 	const seal = await sharp(svg, { density: 600 })
-		.resize(canvas, canvas, { fit: 'cover' })
+		.resize(px, px, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
 		.png()
 		.toBuffer();
 	return sharp({ create: { width: canvas, height: canvas, channels: 4, background: RED } })
@@ -65,14 +72,14 @@ const densityForSize = (sizes, size) => sizes.indexOf(size);
 
 async function main() {
 	// 1. SOURCE ASSETS (FOR FUTURE RE-RUNS / OTHER USES) — 1024px.
-	write(join(ASSETS, 'icon.png'), await fullBleed(1024));
-	write(join(ASSETS, 'icon-foreground.png'), await fullBleed(1024));
+	write(join(ASSETS, 'icon.png'), await paddedSeal(1024));
+	write(join(ASSETS, 'icon-foreground.png'), await paddedSeal(1024));
 	write(join(ASSETS, 'icon-background.png'), await solid(1024));
 
-	// 2. LEGACY + ROUND LAUNCHER ICONS (FULL-BLEED — NO SHAPE EDGES).
+	// 2. LEGACY + ROUND LAUNCHER ICONS (FULL-BLEED RED, PADDED SEAL).
 	for (const size of LEGACY_SIZES) {
 		const d = DENSITIES[densityForSize(LEGACY_SIZES, size)];
-		const png = await fullBleed(size);
+		const png = await paddedSeal(size);
 		write(join(RES, `mipmap-${d}/ic_launcher.png`), png);
 		write(join(RES, `mipmap-${d}/ic_launcher_round.png`), png);
 	}
@@ -80,7 +87,7 @@ async function main() {
 	// 3. ADAPTIVE LAYERS.
 	for (const size of ADAPTIVE_SIZES) {
 		const d = DENSITIES[densityForSize(ADAPTIVE_SIZES, size)];
-		write(join(RES, `mipmap-${d}/ic_launcher_foreground.png`), await fullBleed(size));
+		write(join(RES, `mipmap-${d}/ic_launcher_foreground.png`), await paddedSeal(size));
 		write(join(RES, `mipmap-${d}/ic_launcher_background.png`), await solid(size));
 	}
 
@@ -94,7 +101,7 @@ async function main() {
 	write(join(RES, 'mipmap-anydpi-v26/ic_launcher.xml'), adaptive);
 	write(join(RES, 'mipmap-anydpi-v26/ic_launcher_round.xml'), adaptive);
 
-	console.log('Android launcher icons regenerated: full-bleed cinnabar seal (no shape edges).');
+	console.log('Android launcher icons regenerated: padded seal (76%) on full-bleed cinnabar red.');
 }
 
 main().catch((e) => {
