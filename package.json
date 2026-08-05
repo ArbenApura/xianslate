@@ -7,7 +7,7 @@
 		"dev": "vite dev --host 0.0.0.0",
 		"build": "vite build",
 		"build:capacitor": "node tools/build-capacitor.mjs",
-		"assets:generate": "capacitor-assets generate --android",
+		"assets:generate": "node tools/generate-android-icons.mjs",
 		"cap:sync": "npx cap sync",
 		"cap:android": "npx cap open android",
 		"cap:ios": "npx cap open ios",
