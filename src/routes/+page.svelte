@@ -145,9 +145,10 @@
 		)}
 	>
 		<div class="mx-auto flex w-full max-w-6xl items-center justify-between gap-4 px-5 py-3.5 sm:px-8">
-			<!-- BRAND — WORDMARK HIDDEN BELOW sm SO THE AUTH CTAs (nowrap) FIT ON ONE LINE; THE SEAL CARRIES THE MARK -->
+			<!-- BRAND — WORDMARK ALWAYS SHOWN: THE SIGNED-OUT CTA IS NOW A SINGLE "Sign in", SO THE SEAL +
+			     WORDMARK FIT ON ONE LINE EVEN ON NARROW MOBILE -->
 			<span class="inline-flex min-w-0 items-center gap-2 text-lg font-bold tracking-tight">
-				<Seal size={28} class="shrink-0" /> <span class="hidden sm:inline">Xianslate</span>
+				<Seal size={28} class="shrink-0" /> <span>Xianslate</span>
 			</span>
 			<!-- IN-PAGE NAV (DESKTOP) -->
 			<nav class="hidden items-center gap-1 text-sm md:flex">
@@ -179,9 +180,9 @@
 					<Button href="/app/" variant="primary">Open app</Button>
 					<AccountMenu {user} />
 				{:else}
-					<!-- SIGNED OUT -->
-					<Button href="/login/" variant="ghost">Sign in</Button>
-					<Button href="/app/" variant="primary">Open app</Button>
+					<!-- SIGNED OUT — "Open app" WOULD ONLY BOUNCE TO /login (EVERY /app ROUTE IS AUTH-GATED), SO
+					     THE SINGLE APPROPRIATE CTA HERE IS "Sign in" -->
+					<Button href="/login/" variant="primary">Sign in</Button>
 				{/if}
 			</div>
 		</div>
