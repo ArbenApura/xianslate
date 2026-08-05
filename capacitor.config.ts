@@ -7,9 +7,11 @@ const config: CapacitorConfig = {
 	appId: 'dev.xianslate.app',
 	appName: 'Xianslate',
 	webDir: 'build-capacitor',
-	// ANDROID SERVES THE SPA AT https://localhost (WKWebVIEW ON iOS USES capacitor://localhost BY DEFAULT) —
+	// ANDROID SERVES THE SPA AT https://localhost (iOS WKWebView USES capacitor://localhost BY DEFAULT) —
 	// BOTH ARE ALLOWED AS CORS ORIGINS BY THE SERVER (see src/hooks.server.ts).
-	androidScheme: 'https',
+	server: {
+		androidScheme: 'https',
+	},
 };
 
 export default config;
