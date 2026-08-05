@@ -45,11 +45,15 @@ export async function recordFetchError(url: string, e: unknown): Promise<void> {
 	}
 }
 
-export async function recordMapUsage(host: string, usage: TranslationUsage): Promise<void> {
+// LEDGER ONE SITE-MAPPING MODEL CALL (kind='map'). userId ATTRIBUTES THE SPEND TO THE USER WHOSE FETCH
+// TRIGGERED THE (RE)LEARN — WITHOUT IT THE COST WAS SITE-WIDE AND UNCOUNTED IN ANY ACCOUNT'S USAGE. NULL
+// FOR LEGACY ROWS WRITTEN BEFORE ATTRIBUTION (THEY STAY EXCLUDED FROM PER-ACCOUNT TOTALS).
+export async function recordMapUsage(host: string, usage: TranslationUsage, userId?: string): Promise<void> {
 	try {
 		await db.insert(aiUsage).values({
 			kind: 'map',
 			host,
+			userId: userId ?? null,
 			model: usage.model,
 			promptTokens: usage.promptTokens,
 			cachedTokens: usage.cachedTokens,

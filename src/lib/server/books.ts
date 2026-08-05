@@ -175,7 +175,7 @@ export async function refreshChapterNav(uuid: string): Promise<ChapterView | nul
 	if (!book || book.sourceType !== 'web') return null;
 
 	// RE-FETCH IS BILLED LIKE INGEST; THE CHAPTER ALREADY EXISTS SO WE ATTRIBUTE IT DIRECTLY (row.id).
-	const parsed = await fetchChapter(row.chapterUrl, book.sourceLang, (e) => {
+	const parsed = await fetchChapter(row.chapterUrl, book.sourceLang, book.userId, (e) => {
 		void recordFetchUsage(book.userId, e.host, e.provider, e.costUsd, row.id);
 	});
 	await db
@@ -335,7 +335,7 @@ export async function refetchCover(
 	if (!book) return { ok: false, coverUrl: null, reason: 'not_found' };
 	if (!book.sourceUrl || !/^https?:\/\//i.test(book.sourceUrl))
 		return { ok: false, coverUrl: null, reason: 'no_source' };
-	const { cover } = await fetchBookMeta(book.sourceUrl, book.sourceLang, (e) =>
+	const { cover } = await fetchBookMeta(book.sourceUrl, book.sourceLang, book.userId, (e) =>
 		recordFetchUsage(book.userId, e.host, e.provider, e.costUsd),
 	);
 	if (cover) await db.update(books).set({ coverUrl: cover }).where(eq(books.id, id));
@@ -437,8 +437,11 @@ export async function ingestWebChapter(
 	// LANGUAGE FROM THE DECODED TEXT BEFORE CREATING THE BOOK. COLLECT BILLED (ZYTE) FETCHES HERE AND CHARGE
 	// THEM ONCE WE KNOW THE CHAPTER id (BELOW), SO THE STATS DIALOG CAN ATTRIBUTE THE FETCH SPEND.
 	const fetchBills: FetchBilling[] = [];
-	const parsed = await fetchChapter(url, effPair.sourceLang === AUTO_SOURCE ? undefined : effPair.sourceLang, (e) =>
-		fetchBills.push(e),
+	const parsed = await fetchChapter(
+		url,
+		effPair.sourceLang === AUTO_SOURCE ? undefined : effPair.sourceLang,
+		userId,
+		(e) => fetchBills.push(e),
 	);
 	if (effPair.sourceLang === AUTO_SOURCE) {
 		effPair.sourceLang = detectSourceLang(`${parsed.titleSource}\n${parsed.contentSource}`);
@@ -477,7 +480,7 @@ export async function ingestWebChapter(
 		// THAT MUST NEVER BLOCK (OR FAIL) THE FIRST CHAPTER. THE LIBRARY PICKS IT UP ON THE NEXT RENDER.
 		const metaIndexUrl = parsed.indexUrl ?? url;
 		// BOOK-LEVEL FETCH (COVER/TITLE) — BILL THE USER, BUT NO chapterId (IT BELONGS TO THE BOOK, NOT A CHAPTER).
-		void fetchBookMeta(metaIndexUrl, effPair.sourceLang, (e) =>
+		void fetchBookMeta(metaIndexUrl, effPair.sourceLang, userId, (e) =>
 			recordFetchUsage(userId, e.host, e.provider, e.costUsd),
 		).then((meta) => {
 			const set: { coverUrl?: string; title?: string; titleTarget?: null } = {};

@@ -295,6 +295,11 @@ export const aiUsage = pgTable(
 		// 'map' = SITE SELECTOR LEARNING; 'extract' | 'title' | 'term' | 'repair' = PER-CHAPTER PIPELINE SPEND
 		kind: text('kind').notNull(),
 		host: text('host'),
+		// THE USER WHO TRIGGERED THIS SPEND. CHAPTER-LINKED ROWS INHERIT OWNERSHIP THROUGH THE FK CHAIN, SO ONLY
+		// THE GLOBAL 'map' KIND NEEDS THIS DIRECT KEY — WITHOUT IT THOSE ROWS WERE UNATTRIBUTED SITE-WIDE COST.
+		// NULL FOR LEGACY 'map' ROWS WRITTEN BEFORE ATTRIBUTION EXISTED (AND THE GLOBAL 'map' ROWS THE MODEL
+		// LEARNING SHARES) — THEY STAY UNATTRIBUTED AND ARE EXCLUDED FROM PER-ACCOUNT USAGE TOTALS.
+		userId: text('user_id').references(() => users.id, { onDelete: 'cascade' }),
 		// THE CHAPTER THIS SPEND BELONGS TO (NULL FOR NON-CHAPTER CALLS LIKE SITE MAPPING OR A BOOK-TITLE
 		// BACKFILL) — LETS THE CHAPTER STATS DIALOG COUNT EXTRACTION/TITLE/REPAIR ALONGSIDE THE BODY COST.
 		// CHAPTER-LINKED ROWS INHERIT PER-USER OWNERSHIP THROUGH THIS FK CHAIN (PHASE 4); 'map' STAYS GLOBAL.
@@ -312,6 +317,7 @@ export const aiUsage = pgTable(
 		index('ai_usage_created_idx').on(t.createdAt),
 		index('ai_usage_kind_idx').on(t.kind),
 		index('ai_usage_chapter_idx').on(t.chapterId),
+		index('ai_usage_user_idx').on(t.userId),
 	],
 );
 

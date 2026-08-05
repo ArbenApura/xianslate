@@ -110,7 +110,7 @@ export async function hostFetchCost(url: string): Promise<number | null> {
 // ASK DEEPSEEK FOR THE SELECTORS (TINY OUTPUT) FROM A PAGE DIGEST (BOUNDED INPUT). thinking IS DISABLED
 // (deepseek-v4 STALLS/RETURNS EMPTY OTHERWISE) AND temperature 0 KEEPS THE MAP STABLE. `hint` CARRIES
 // CORRECTIVE FEEDBACK ON A RETRY.
-async function learnSelectors(root: HTMLElement, url: string, hint?: string): Promise<SelectorMap> {
+async function learnSelectors(root: HTMLElement, url: string, hint?: string, userId?: string): Promise<SelectorMap> {
 	if (!hasApiKey()) {
 		throw new FetchError(
 			'no_api_key',
@@ -145,13 +145,13 @@ async function learnSelectors(root: HTMLElement, url: string, hint?: string): Pr
 		);
 	}
 	// RECORD THE AI SPEND FOR THIS MAPPING CALL (BEST-EFFORT) — CAPTURED EVEN IF THE PARSE LATER FAILS.
-	void recordMapUsage(hostOf(url), computeUsage(res.usage));
+	void recordMapUsage(hostOf(url), computeUsage(res.usage), userId);
 	return coerceMap(res.choices[0]?.message?.content ?? '{}');
 }
 
 // AI FALLBACK FOR THE BOOK COVER — USED ONLY WHEN THE DETERMINISTIC extractCover (og:image / scored
 // <img>) FOUND NOTHING ON THE BOOK INDEX PAGE. PICKS THE COVER URL FROM AN IMAGE-CANDIDATE DIGEST.
-export async function learnCover(html: string, url: string): Promise<string | null> {
+export async function learnCover(html: string, url: string, userId?: string): Promise<string | null> {
 	if (!hasApiKey()) return null;
 	const digest = buildImageDigest(html, url);
 	if (!digest.trim()) return null;
@@ -175,7 +175,7 @@ export async function learnCover(html: string, url: string): Promise<string | nu
 	} catch {
 		return null;
 	}
-	void recordMapUsage(hostOf(url), computeUsage(res.usage));
+	void recordMapUsage(hostOf(url), computeUsage(res.usage), userId);
 	return coerceCover(res.choices[0]?.message?.content ?? '{}');
 }
 
@@ -232,7 +232,7 @@ async function persistAdapter(host: string, m: SelectorMap, sampleUrl: string): 
 
 // (RE)LEARN A HOST'S SELECTORS, VALIDATE AGAINST THIS PAGE (UP TO TWO ATTEMPTS WITH FEEDBACK), AND
 // PERSIST. SINGLE-FLIGHT PER HOST, AND COOLDOWN-GUARDED SO A REPEATEDLY-UNPARSEABLE PAGE CAN'T RE-BILL.
-function heal(host: string, url: string, html: string, root: HTMLElement): Promise<SelectorMap> {
+function heal(host: string, url: string, html: string, root: HTMLElement, userId?: string): Promise<SelectorMap> {
 	const existing = inflight.get(host);
 	if (existing) return existing;
 	const p = (async () => {
@@ -252,7 +252,7 @@ function heal(host: string, url: string, html: string, root: HTMLElement): Promi
 		for (let attempt = 0; attempt < 2; attempt++) {
 			let m: SelectorMap;
 			try {
-				m = await learnSelectors(root, url, hint);
+				m = await learnSelectors(root, url, hint, userId);
 			} catch (e) {
 				// A FRIENDLY FetchError (no_api_key / API hiccup) PROPAGATES AS-IS. A RAW coerceMap ERROR
 				// ("Model omitted title/body." ETC.) MUST NOT LEAK — RETRY WITH A HINT, THEN FALL THROUGH
@@ -281,7 +281,7 @@ function heal(host: string, url: string, html: string, root: HTMLElement): Promi
 
 // PUBLIC ENTRY: HTML + URL → ParsedChapter. APPLIES THE CACHED MAP, SELF-HEALS ON A MISS, AND THROWS A
 // TYPED FetchError THE API CAN TURN INTO A CLEAR MESSAGE.
-export async function parseChapter(html: string, url: string): Promise<ParsedChapter> {
+export async function parseChapter(html: string, url: string, userId?: string): Promise<ParsedChapter> {
 	const host = hostOf(url);
 	const root = parse(html);
 
@@ -294,7 +294,7 @@ export async function parseChapter(html: string, url: string): Promise<ParsedCha
 
 	// UNKNOWN HOST OR STALE MAP → (RE)LEARN.
 	try {
-		const learned = await heal(host, url, html, root);
+		const learned = await heal(host, url, html, root, userId);
 		const parsed = applyAdapter(root, html, learned, url);
 		if (parsed) return parsed;
 		console.warn(`[parse] healed map also failed for ${host} at ${url}`);

@@ -219,3 +219,70 @@ export interface ChapterStats {
 	// cost.costUsd (BODY) + pipeline.costUsd + fetch.costUsd — WHAT THIS CHAPTER ACTUALLY COST END-TO-END.
 	totalCostUsd: number;
 }
+
+/** ONE LEDGERED PIPELINE EXPENSE KIND ACCOUNT-WIDE (EXTRACTION / TITLE / LEAK-REPAIR) — FROM ai_usage */
+export interface AccountPipelineItem {
+	kind: string;
+	calls: number;
+	promptTokens: number;
+	cachedTokens: number;
+	completionTokens: number;
+	costUsd: number;
+}
+
+/** ONE BILLED PAGE-FETCH TIER ACCOUNT-WIDE (ZYTE 'zyte' = HTTP TIER) — FROM fetch_usage */
+export interface AccountFetchItem {
+	provider: string;
+	calls: number;
+	costUsd: number;
+}
+
+/** PER-MODEL AI SPEND ACCOUNT-WIDE — BODY TRANSLATION RUNS + PIPELINE/MAP MODEL CALLS MERGED BY MODEL */
+export interface AccountModelItem {
+	model: string;
+	runs: number;
+	calls: number;
+	promptTokens: number;
+	cachedTokens: number;
+	completionTokens: number;
+	costUsd: number;
+}
+
+/** PER-BOOK SPEND — BOOK-ATTRIBUTABLE ONLY (BODY + PIPELINE + CHAPTER-LINKED FETCHES) */
+export interface AccountBookItem {
+	bookId: string;
+	title: string;
+	promptTokens: number;
+	cachedTokens: number;
+	completionTokens: number;
+	costUsd: number;
+}
+
+/** FULL PER-ACCOUNT USAGE BEHIND THE ACCOUNT > USAGE SECTION (SEE $lib/server/account-usage) */
+export interface AccountUsage {
+	// ALL-IN TOTALS — BODY + PIPELINE + MAP + FETCH.
+	totalCostUsd: number;
+	promptTokens: number;
+	cachedTokens: number;
+	completionTokens: number;
+	totalTokens: number;
+	cacheHitRate: number;
+	// BODY TRANSLATION SPEND (translations CACHE — MAY HOLD SEVERAL RUNS PER CHAPTER).
+	body: { runs: number; costUsd: number; promptTokens: number; cachedTokens: number; completionTokens: number };
+	// PER-CHAPTER PIPELINE SPEND (EXTRACTION / TITLE / LEAK-REPAIR) FROM ai_usage, EXCLUDING 'map'.
+	pipeline: {
+		costUsd: number;
+		promptTokens: number;
+		cachedTokens: number;
+		completionTokens: number;
+		items: AccountPipelineItem[];
+	};
+	// SITE-MAPPING / COVER-LEARNING SPEND (ai_usage kind='map') ATTRIBUTED VIA userId — NULL-USER LEGACY
+	// ROWS ARE NOT COUNTED (THEY PREDATE ATTRIBUTION AND ARE NOT THIS ACCOUNT'S).
+	map: { calls: number; costUsd: number; promptTokens: number; cachedTokens: number; completionTokens: number };
+	// BILLED PAGE-FETCH SPEND (fetch_usage, KEYED DIRECTLY ON userId), SPLIT BY TIER.
+	fetch: { costUsd: number; items: AccountFetchItem[] };
+	// PER-BOOK AND PER-MODEL BREAKDOWNS (SORTED BY COST DESC).
+	books: AccountBookItem[];
+	models: AccountModelItem[];
+}

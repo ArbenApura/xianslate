@@ -461,12 +461,15 @@ async function fetchHtml(url: string, acceptLanguage: string, hints: string[]): 
 // FETCH A CHAPTER PAGE FROM ANY SUPPORTED HOST. TRANSPORT LIVES HERE; THE SITE-SPECIFIC PARSING IS
 // DELEGATED TO THE AI-LEARNED, SELF-HEALING ADAPTER. `sourceLang` TUNES Accept-Language AND THE LEGACY
 // CHARSET CANDIDATES (zh→Big5/GBK, ja→Shift_JIS/EUC-JP, ko→EUC-KR). ZYTE'S httpResponseBody TIER IS THE
-// PRIMARY TRANSPORT (FREE node-fetch→curl FALLBACK). `onBill` (WHEN GIVEN) RECEIVES EACH BILLED ZYTE FETCH
-// (PAY-PER-SUCCESS) SO THE CALLER CAN CHARGE THE USER AND ATTRIBUTE IT TO THE CHAPTER; OMIT IT FOR UNBILLED
-// (e.g. TEST-HARNESS) CALLS. EVERY FAILURE SURFACES AS A TYPED FetchError SO THE API CAN REPORT WHY.
+// PRIMARY TRANSPORT (FREE node-fetch→curl FALLBACK). `userId` ATTRIBUTES ANY AI SITE-MAPPING / COVER-
+// LEARNING SPEND TRIGGERED BY THIS FETCH TO THE CALLING ACCOUNT (OTHERWISE IT WAS SITE-WIDE, UNCOUNTED
+// COST). `onBill` (WHEN GIVEN) RECEIVES EACH BILLED ZYTE FETCH (PAY-PER-SUCCESS) SO THE CALLER CAN CHARGE
+// THE USER AND ATTRIBUTE IT TO THE CHAPTER; OMIT IT FOR UNBILLED (e.g. TEST-HARNESS) CALLS. EVERY FAILURE
+// SURFACES AS A TYPED FetchError SO THE API CAN REPORT WHY.
 export async function fetchChapter(
 	url: string,
 	sourceLang?: string,
+	userId?: string,
 	onBill?: (e: FetchBilling) => void,
 ): Promise<ParsedChapter> {
 	const lang = getLanguage(sourceLang);
@@ -479,7 +482,7 @@ export async function fetchChapter(
 	try {
 		const res = await fetchHtml(url, lang.acceptLanguage, lang.charsetHints);
 		bill(res);
-		const chapter = await parseChapter(res.html, url);
+		const chapter = await parseChapter(res.html, url, userId);
 		// RECORD THE OUTCOME FOR THE SITE-RELIABILITY LEDGER (BEST-EFFORT, NEVER BLOCKS THE FETCH).
 		void recordFetchOk(url);
 		return chapter;
@@ -493,17 +496,19 @@ export async function fetchChapter(
 // ON ANY FAILURE). COVER: og:image / scored <img> DETERMINISTICALLY, THEN AN AI PICK AS A FALLBACK. TITLE:
 // og:title — THE AUTHORITATIVE BOOK NAME WHEN THE CHAPTER PAGE'S HEADING MASHES BOOK + CHAPTER TOGETHER. THE
 // INDEX/BOOK PAGE IS THE RIGHT SOURCE FOR BOTH, SO THEY SHARE THE (BILLED) FETCH — `onBill` IS CALLED LIKE
-// fetchChapter (BOOK-LEVEL: NO chapterId). INPUT VALIDATION + SSRF GUARDING LIVE IN THE TRANSPORT.
+// fetchChapter (BOOK-LEVEL: NO chapterId). `userId` ATTRIBUTES AI COVER-LEARNING SPEND TO THE CALLING
+// ACCOUNT. INPUT VALIDATION + SSRF GUARDING LIVE IN THE TRANSPORT.
 export async function fetchBookMeta(
 	indexUrl: string,
 	sourceLang?: string,
+	userId?: string,
 	onBill?: (e: FetchBilling) => void,
 ): Promise<{ cover: string | null; title: string | null }> {
 	try {
 		const lang = getLanguage(sourceLang);
 		const res = await fetchHtml(indexUrl, lang.acceptLanguage, lang.charsetHints);
 		if (onBill && res.costUsd > 0) onBill({ host: hostOf(indexUrl), provider: res.provider, costUsd: res.costUsd });
-		const cover = extractCover(res.html, indexUrl) ?? (await learnCover(res.html, indexUrl));
+		const cover = extractCover(res.html, indexUrl) ?? (await learnCover(res.html, indexUrl, userId));
 		return { cover, title: extractBookTitle(res.html) };
 	} catch {
 		return { cover: null, title: null };
