@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Xianslate">
+	<!-- ANDROID LAUNCHER VARIANT OF THE BRAND MARK — SAME SEAL AS static/logo.svg, BUT WITHOUT THE
+	     CARVED INNER FRAME (THE STROKED ROUNDED RECTANGLE). THE FRAME READ AS A "ROUNDED SQUARE BORDER"
+	     ON THE LAUNCHER ICON; THIS BORDERLESS VARIANT IS USED ONLY FOR THE ANDROID APP LOGO
+	     (tools/generate-android-icons.mjs). THE WEB BRAND MARK (static/logo.svg) KEEPS ITS FRAME. -->
+	<rect width="64" height="64" rx="13" fill="#b23a2e" />
+	<!-- 仙 (XIAN) — IMMORTAL / CULTIVATOR; ROOT OF 仙侠 (XIANXIA) AND OF "XIANSLATE" -->
+	<text
+		x="32"
+		y="46"
+		text-anchor="middle"
+		font-family="'LXGW WenKai TC','Noto Serif TC','Songti SC','SimSun',serif"
+		font-size="42"
+		font-weight="700"
+		fill="#f7efe0">仙</text
+	>
+</svg>
