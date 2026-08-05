@@ -34,6 +34,7 @@ import {
 	coerceCover,
 	coerceMap,
 	COVER_SYSTEM,
+	extractBookTitleFromChapterPage,
 	extractProse,
 	fallbackNav,
 	findBestContentHtml,
@@ -331,7 +332,9 @@ export async function parseChapter(html: string, url: string, userId?: string): 
 				nextUrl,
 				indexUrl,
 				bookId: null,
-				bookTitle: null,
+				// NAME THE BOOK FROM THE PAGE'S OWN METADATA (og:title / <title>, CUT AT THE CHAPTER MARKER)
+				// RATHER THAN LEAVING IT NULL — OTHERWISE ingestWebChapter NAMES THE BOOK AFTER THE CHAPTER.
+				bookTitle: extractBookTitleFromChapterPage(html, fallbackTitle),
 				author: null,
 			};
 		}

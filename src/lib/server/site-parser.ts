@@ -563,6 +563,14 @@ export function applyAdapter(root: HTMLElement, html: string, m: SelectorMap, ur
 		const t = og.replace(/^노벨피아\s*-\s*[^-]+-\s*/, '').trim();
 		if (t && t.length <= 120 && t !== og) bookTitle = t;
 	}
+	// METADATA-DERIVED FALLBACK: THE BOOK NAME ALMOST ALWAYS LEADS THE NUMBERED CHAPTER MARKER IN THE PAGE'S
+	// OWN og:title / <title> ("书名_第X章 章节名_站名" → "书名"). WITHOUT THIS, A CHAPTER PAGE WITH NO
+	// BREADCRUMB-TO-INDEX ANCHOR (indexUrl NULL) YIELDS NO BOOK TITLE, AND ingestWebChapter NAMES THE BOOK
+	// AFTER ITS FIRST CHAPTER (parsed.bookTitle ?? parsed.titleSource) — THE REPORTED BUG.
+	if (!bookTitle) {
+		const t = extractBookTitleFromChapterPage(html, title);
+		if (t) bookTitle = t;
+	}
 
 	return {
 		titleSource: title,
@@ -912,17 +920,73 @@ function stripSiteName(title: string, site: string): string {
 	return out || title;
 }
 
+// A BOOK TITLE MAY NOT CONTAIN A NUMBERED CHAPTER/VOLUME MARKER — THE FIRST ONE ENDS THE BOOK NAME. ON A
+// CHAPTER PAGE THE NAME ALWAYS LEADS ("书名_第1234章 章节名_站名", "书名 - 第1話 タイトル", "book name -
+// Chapter 12"); ON AN INDEX PAGE IT LEADS THE SAME WAY ("书名_最新章节_站名"). COVERS CHINESE (第N章/节/回/
+// 卷/話/话/部), JAPANESE (第N話), AND LATIN (Chapter/Episode/Vol./Part N).
+const BOOK_CUT_CHAPTER =
+	/第\s*[\d〇零一二三四五六七八九十百千两]+\s*[章节節回卷話话部]|(?:chapter|episode|vol\.?|volume|part)\s*\d+/i;
+// INDEX-PAGE BOILERPLATE ("最新章节"/"最新章节列表"/"全文阅读"/"txt下载"/"无弹窗") AND BARE-NUMBER KOREAN
+// EPISODE MARKERS ("书名 12화") — CUT ONLY WHEN THE MARKER FORMS A SEPARATOR-BOUNDED SEGMENT, SO A BOOK
+// NAME THAT MERELY CONTAINS SUCH A STRING ("我的最新章节阅读系统", "第2名") ISN'T MUTILATED.
+const BOOK_CUT_SEGMENT =
+	/(?:^|[\s_\-—|:：·])(?:最新章节(?:列表)?|全文阅读|txt下载|无弹窗|\d+\s*[화회])(?:[\s_\-—|:：·]|$)/i;
+
+// REDUCE A RAW DOCUMENT <title> / og:title TO THE BOOK NAME: STRIP THE SITE SUFFIX, CUT AT THE FIRST
+// CHAPTER/VOLUME MARKER OR INDEX BOILERPLATE, THEN TRIM THE SURROUNDING SEPARATORS/QUOTES. RETURNS '' WHEN
+// THE STRING CARRIES NO BOOK NAME AT ALL (E.G. IT *IS* A BARE CHAPTER TITLE: "第1章 起点" → '').
+function cleanBookTitle(raw: string, site: string): string {
+	let t = (raw ?? '').trim();
+	if (!t) return '';
+	if (site) t = stripSiteName(t, site);
+	const cut = t.search(BOOK_CUT_CHAPTER);
+	if (cut > 0) {
+		t = t.slice(0, cut);
+	} else if (cut === 0) {
+		return ''; // STARTS WITH A CHAPTER MARKER — NO BOOK NAME PRESENT.
+	}
+	const seg = t.search(BOOK_CUT_SEGMENT);
+	if (seg > 0) {
+		t = t.slice(0, seg);
+	} else if (seg === 0) {
+		return ''; // STARTS WITH INDEX BOILERPLATE — NO BOOK NAME PRESENT.
+	}
+	t = t.replace(/^[\s_\-—|:：·「」『』《》.．,，、（）()]+|[\s_\-—|:：·「」『』《》.．,，、（）()]+$/g, '').trim();
+	return t.length >= 2 && t.length <= 120 ? t : '';
+}
+
+// DETERMINISTIC BOOK-TITLE EXTRACTION FROM A CHAPTER PAGE'S OWN METADATA — og:title (FALLBACK: THE DOCUMENT
+// <title>), SITE-NAME STRIPPED AND CUT AT THE FIRST NUMBERED CHAPTER/VOLUME MARKER ("书名_第X章 章节名_站名"
+// → "书名"). USED BY applyAdapter AND THE parseChapter DENSITY FALLBACK SO THE FIRST FETCH OF A NEW BOOK IS
+// NAMED AFTER THE BOOK, NOT ITS FIRST CHAPTER — THE BREADCRUMB-TO-INDEX ANCHOR (applyAdapter'S PRIMARY
+// SIGNAL) IS MISSING ON MOST SITES, AND WITHOUT THIS ingestWebChapter NAMES THE BOOK AFTER parsed.titleSource.
+// `chapterTitle` IS EXCLUDED SO A PAGE WHOSE METADATA *IS* THE CHAPTER HEADING (NO BOOK NAME ANYWHERE)
+// YIELDS null, PRESERVING THE OLD FALLBACK RATHER THAN NAMING THE BOOK AFTER A CHAPTER.
+export function extractBookTitleFromChapterPage(html: string, chapterTitle: string): string | null {
+	const meta = metaMap(html);
+	const site = (meta['og:site_name'] || meta['application-name'] || '').trim();
+	const raw = meta['og:title'] || meta['twitter:title'] || html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || '';
+	const t = cleanBookTitle(decodeEntities(raw), site);
+	return t && t !== chapterTitle ? t : null;
+}
+
 // EXTRACT THE BOOK'S OWN TITLE FROM ITS INDEX/BOOK PAGE — og:title (THE CLEAN BOOK NAME, WITHOUT THE
-// CHAPTER OR SITE SUFFIX), twitter:title AS A FALLBACK, BOILERPLATE-STRIPPED VIA og:site_name WHEN PRESENT.
-// THE AUTHORITATIVE SOURCE WHEN A CHAPTER PAGE'S HEADING MASHES BOOK + CHAPTER TOGETHER (e.g. faloo) AND THE
-// BREADCRUMB BOOK-LINK DOESN'T RESOLVE TO THE INDEX. WE DELIBERATELY DON'T FALL BACK TO <title> — IT'S USUALLY
-// POLLUTED WITH "…最新章节,…txt下载_站名" BOILERPLATE. RETURNS null SO THE CALLER KEEPS WHAT IT HAD.
+// CHAPTER OR SITE SUFFIX), twitter:title AS A FALLBACK, THEN THE DOCUMENT <title> — BOILERPLATE-STRIPPED
+// VIA og:site_name WHEN PRESENT AND CUT AT ANY CHAPTER/VOLUME MARKER OR INDEX BOILERPLATE, SO A MASHED
+// og:title ("书名_第X章 章节名") OR A POLLUTED <title> ("…最新章节,…txt下载_站名") CAN NEVER BECOME THE BOOK
+// NAME. THE AUTHORITATIVE SOURCE WHEN A CHAPTER PAGE'S HEADING MASHES BOOK + CHAPTER TOGETHER (e.g. faloo)
+// AND THE BREADCRUMB BOOK-LINK DOESN'T RESOLVE TO THE INDEX. RETURNS null SO THE CALLER KEEPS WHAT IT HAD.
 export function extractBookTitle(html: string): string | null {
 	const meta = metaMap(html);
-	let t = (meta['og:title'] || meta['twitter:title'] || '').trim();
 	const site = (meta['og:site_name'] || meta['application-name'] || '').trim();
-	if (t && site) t = stripSiteName(t, site);
-	return t && t.length <= 120 ? t : null;
+	let t = cleanBookTitle(meta['og:title'] || meta['twitter:title'] || '', site);
+	// <title> IS ONLY CONSULTED WHEN og:title IS ABSENT — SAFE NOW THAT cleanBookTitle CUTS THE BOILERPLATE
+	// THAT ONCE MADE IT TOO POLLUTED TO TRUST.
+	if (!t) {
+		const titleTag = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1];
+		if (titleTag) t = cleanBookTitle(decodeEntities(titleTag), site);
+	}
+	return t || null;
 }
 
 // BUILD AN IMAGE-CANDIDATE DIGEST FOR THE AI COVER FALLBACK — EACH <img>'s ABSOLUTE URL + ITS HINTS,
