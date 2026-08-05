@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "89536685652",
+    "project_id": "xianslate",
+    "storage_bucket": "xianslate.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:89536685652:android:8c7edc7d5744733ebdefc1",
+        "android_client_info": {
+          "package_name": "dev.xianslate.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "89536685652-1bhe7hk8g2f3qk94pncqaur9id7j4sc8.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyByn8Awm2JjPA015eBxluxeM1hNlDIz4yI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "89536685652-1bhe7hk8g2f3qk94pncqaur9id7j4sc8.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -13,4 +13,7 @@ ext {
     androidxJunitVersion = '1.3.0'
     androidxEspressoCoreVersion = '3.7.0'
     cordovaAndroidVersion = '14.0.1'
+    // CAPACITOR-FIREBASE AUTHENTICATION PLUGIN: INCLUDE THE NATIVE GOOGLE PROVIDER (play-services-auth) —
+    // OFF BY DEFAULT; REQUIRED FOR signInWithGoogle() (see @capacitor-firebase/authentication/android/build.gradle).
+    rgcfaIncludeGoogle = true
 }
