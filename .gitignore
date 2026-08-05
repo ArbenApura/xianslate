@@ -20,6 +20,9 @@ vite.config.ts.timestamp-*
 *.bak-*
 *.recovered-*
 
+# REASONIX DESKTOP TOOLING STATE
+/.reasonix
+
 # DEV / TEST ARTIFACTS
 # smoke-stability_20260613 verification harnesses (temp, contain test creds) — never commit
 scripts/_*.mjs
