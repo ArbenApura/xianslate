@@ -13,7 +13,7 @@
 	import { page } from '$app/stores';
 	import { get } from 'svelte/store';
 	import { AUTO_SOURCE, isMonolingual } from '$lib/languages';
-	import { currentUser } from '$lib/stores/auth';
+	import { authReady, currentUser } from '$lib/stores/auth';
 	import { settings, type Theme } from '$lib/stores/settings';
 	import { ripple } from '$lib/actions/ripple';
 	import { cn } from '$lib/utils/cn';
@@ -342,12 +342,42 @@
 		if (booksList.length === 0) loading = true;
 		try {
 			const res = await apiFetch('/api/books');
+			// REJECT NON-OK RESPONSES (E.G. A 401 { message } BODY MUST NEVER LAND IN booksList — IT WOULD
+			// CRASH THE SHELF REACTIVE STATEMENT WITH booksList.filter IS NOT A FUNCTION).
+			if (!res.ok) throw new Error('Could not load your library.');
 			booksList = await res.json();
 		} catch {
 			toast.error('Could not load your library.');
 		} finally {
 			loading = false;
 		}
+	}
+
+	// RESOLVE ONCE THE CLIENT AUTH STORE HAS SETTLED (authReady). ON THE CAPACITOR SPA data.user IS undefined
+	// (NO SSR), SO authReady STAYS FALSE UNTIL THE ROOT LAYOUT'S refreshUser() /api/me PROBE FINISHES — AND
+	// THE PAGE MOUNTS BEFORE THAT PROBE RUNS. WITHOUT THIS WAIT, A COLD START WHILE SIGNED OUT FIRES
+	// /api/books WITH NO Bearer (authHeaders CAN'T KNOW THE SESSION YET), 401s, AND TOASTS "Could not load
+	// your library." ON EVERY APP LAUNCH BEFORE THE LAYOUT GUARD EVEN GETS TO REDIRECT TO /login.
+	function whenAuthReady(): Promise<void> {
+		if (get(authReady)) return Promise.resolve();
+		return new Promise((resolve) => {
+			let settled = false;
+			const unsub = authReady.subscribe((ready) => {
+				if (ready) {
+					settled = true;
+					unsub();
+					resolve();
+				}
+			});
+			// SAFETY NET FOR A BROKEN INIT (MIRRORS THE 4s BOUND IN authHeaders) — NEVER LEAVE THE SHELF
+			// ON A FOREVER SKELETON.
+			setTimeout(() => {
+				if (!settled) {
+					unsub();
+					resolve();
+				}
+			}, 4000);
+		});
 	}
 
 	// LAZILY TRANSLATE + CACHE ANY MISSING BOOK TITLES / AUTHOR NAMES. RUNS THROUGH A SMALL CONCURRENT
@@ -728,6 +758,12 @@
 
 	onMount(async () => {
 		loadPrefs();
+		// AUTH GATE FIRST: DON'T TOUCH /api UNTIL THE CLIENT AUTH STORE HAS RESOLVED (SEE whenAuthReady).
+		// A COLD START WHILE SIGNED OUT MUST NOT FIRE /api/books — IT 401s AND TOASTS AN ERROR EVERY APP
+		// LAUNCH BEFORE THE LAYOUT GUARD REDIRECTS TO /login. THE GUARD DOES THE REDIRECTING; WE JUST DON'T
+		// RACE IT. (ON WEB authReady IS SEEDED FROM SSR DATA, SO THIS RESOLVES INSTANTLY.)
+		await whenAuthReady();
+		if (!get(currentUser)?.id && !get(page).data?.user?.id) return; // SIGNED OUT → THE GUARD REDIRECTS.
 		// PAINT THE LAST-SEEN LIBRARY INSTANTLY (NO SKELETON), THEN REVALIDATE OVER THE NETWORK IN PLACE.
 		const cached = readBooksCache();
 		if (cached) {

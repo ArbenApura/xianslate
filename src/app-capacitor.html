@@ -28,6 +28,11 @@
 				) {
 					return;
 				}
+				// NOTE: THE LANDING PAGE IS WEB-ONLY, BUT WE DO NOT REDIRECT HERE. A location.replace WOULD
+				// FORCE A FULL DOCUMENT LOAD OF /app/ THROUGH THE WEBVIEW'S LOCAL SERVER — THE SPA WAS BUILT
+				// FOR CLIENT-SIDE ROUTING, AND A FULL LOAD (OR A RACE WITH THE ROUTER BOOT AT /) LEAVES THE
+				// APP STUCK. THE ROOT LAYOUT GUARD HANDLES IT IN-PROCESS INSTEAD: IT BLANKS THE LANDING
+				// (NEVER SHOWN IN THE APP) AND goto()s /app/, WHICH RESOLVES TO THE LIBRARY OR /login.
 				const nativeFetch = window.fetch;
 				// `data` MUST BE devalue's FLATTENED-ARRAY FORM (the client runs devalue.unflatten on it) —
 				// devalue.stringify({ theme: 'sepia' }) === [{"theme":1},"sepia"], devalue.stringify({}) === [{}].

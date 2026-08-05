@@ -1,6 +1,7 @@
 // IMPORTED ENVS ($env/...)
 import { env } from '$env/dynamic/public';
 // IMPORTED DEP-MODULES
+import { onAuthStateChanged, type User } from 'firebase/auth';
 import { browser } from '$app/environment';
 // IMPORTED MODULES
 import { firebaseAuth } from '$lib/firebase';
@@ -23,11 +24,35 @@ export function apiUrl(path: string): string {
 // A FRESH FIREBASE ID TOKEN AS A Bearer HEADER — THE CAPACITOR SPA'S AUTH TRANSPORT (IT CANNOT HOLD THE
 // httpOnly SESSION COOKIE ACROSS ORIGINS). WEB REQUESTS RIDE THE COOKIE INSTEAD, BUT SENDING BOTH IS
 // HARMLESS (THE SERVER PREFERS THE COOKIE). NEVER RUNS DURING SSR — NO FIREBASE INIT, NO TOKEN FETCH.
+//
+// ON A COLD START (E.G. RELAUNCHING THE APP) FIREBASE RESTORES THE PERSISTED SESSION ASYNCHRONOUSLY —
+// currentUser IS null UNTIL THE RESTORE COMPLETES. WE WAIT FOR onAuthStateChanged (BOUNDED BY A TIMEOUT)
+// SO THE FIRST /api CALLS AREN'T SENT UNAUTHENTICATED: A 401 /api/me OR /api/books AT BOOT WAS THE
+// "STUCK ON LOADING + UNRESPONSIVE" BUG AFTER CLOSING AND REOPENING THE APP.
 export async function authHeaders(): Promise<Record<string, string>> {
 	if (!browser) return {};
+	const auth = firebaseAuth();
+	let user = auth.currentUser;
+	if (!user) {
+		// WAIT FOR THE SESSION RESTORE (RESOLVES FAST FOR GENUINELY SIGNED-OUT USERS — onAuthStateChanged
+		// FIRES WITH null ONCE RESTORE COMPLETES). THE TIMEOUT IS ONLY A SAFETY NET FOR A BROKEN INIT.
+		user = await new Promise<User | null>((resolve) => {
+			let settled = false;
+			const unsub = onAuthStateChanged(auth, (u) => {
+				settled = true;
+				unsub();
+				resolve(u);
+			});
+			setTimeout(() => {
+				if (!settled) {
+					unsub();
+					resolve(null);
+				}
+			}, 4000);
+		});
+	}
+	if (!user) return {};
 	try {
-		const user = firebaseAuth().currentUser;
-		if (!user) return {};
 		const token = await user.getIdToken();
 		return { authorization: `Bearer ${token}` };
 	} catch {

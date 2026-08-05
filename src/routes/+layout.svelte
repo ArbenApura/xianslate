@@ -9,6 +9,7 @@
 	// IMPORTED ENVS
 	import { browser } from '$app/environment';
 	// IMPORTED MODULES
+	import { Capacitor } from '@capacitor/core';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { authReady, currentUser, refreshUser, seedUser } from '$lib/stores/auth';
@@ -41,6 +42,13 @@
 	// WHEN SIGNED OUT — MATCHING hooks.server.ts.
 	$: if (browser && $authReady) enforceAuth($page.url.pathname, $page.url.search, $currentUser);
 
+	// NATIVE APP: THE LANDING PAGE IS WEB-ONLY. THE COLD-START REDIRECT LIVES IN app-capacitor.html; THIS
+	// GUARD CATCHES ANY CLIENT-SIDE NAVIGATION TO / (E.G. THE BRAND LINKS ON /login AND /signup) AND BLANKS
+	// THE SLOT SO THE LANDING NEVER FLASHES IN THE APP. /app/ THEN RESOLVES VIA enforceAuth: LIBRARY WHEN
+	// SIGNED IN, /login WHEN NOT.
+	$: nativeLanding = browser && Capacitor.isNativePlatform() && $page.url.pathname === '/';
+	$: if (nativeLanding) goto('/app/', { replaceState: true });
+
 	// -- FUNCTIONS -- //
 
 	function enforceAuth(pathname: string, search: string, user: SessionUser | null) {
@@ -71,5 +79,9 @@
 
 <!-- THEMED APP ROOT — ONE THEME APPLIES TO EVERY PAGE (LIBRARY, READER, GLOSSARY) -->
 <div class={cn('min-h-screen', rootClass)}>
-	<slot />
+	{#if nativeLanding}
+		<!-- BLANK — THE LANDING PAGE MUST NOT SHOW IN THE NATIVE APP; THE GUARD ABOVE REDIRECTS TO /app/ -->
+	{:else}
+		<slot />
+	{/if}
 </div>
