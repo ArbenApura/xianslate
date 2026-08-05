@@ -99,7 +99,28 @@ server-rendered hosts (most target novel sites) work normally.
 
 ---
 
-## 5. Smoke / verification checklist
+## 5. Mobile app (Capacitor)
+
+The Android/iOS apps are a **static SPA** of the same codebase that talks to this deployed API cross-origin.
+Deploying the API/web is **unchanged** (one instance, same secrets); the only server-side requirements are
+already in the code:
+
+-   **CORS**: `src/hooks.server.ts` answers preflights and stamps `Access-Control-Allow-*` for the two WebView
+    origins `capacitor://localhost` (Android) and `https://localhost` (iOS). No credentials flag — the app
+    authenticates with a **Bearer Firebase ID token** (accepted by `hooks.server.ts` alongside the web session
+    cookie).
+-   **`PUBLIC_API_BASE`**: the mobile build bakes the live API origin into its bundle at build time. Set it in
+    a gitignored `.env.capacitor` (e.g. `PUBLIC_API_BASE=https://xianslate.fly.dev`) — **not** in `.env`, which
+    would redirect local web dev at the live API. Then `yarn build:capacitor && npx cap sync` and build the
+    native project (`android/` is committed; `ios/` is generated on a Mac).
+-   **Firebase console**: add the Android app (package `dev.xianslate.app`) and its debug-keystore SHA-1 for
+    native Google sign-in; iOS needs `GoogleService-Info.plist`.
+
+Full build/run instructions: README → _Mobile apps (Capacitor)_.
+
+---
+
+## 6. Smoke / verification checklist
 
 Run once provisioning is done:
 

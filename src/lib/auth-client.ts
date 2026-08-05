@@ -1,7 +1,9 @@
 // IMPORTED DEP-TYPES
 import type { UserCredential } from 'firebase/auth';
-// IMPORTED MODULES
+// IMPORTED DEP-MODULES
+import { Capacitor } from '@capacitor/core';
 import { goto } from '$app/navigation';
+// IMPORTED MODULES
 import { apiFetch } from '$lib/api';
 import { refreshUser } from '$lib/stores/auth';
 
@@ -10,13 +12,17 @@ import { refreshUser } from '$lib/stores/auth';
 // IS HYDRATED FROM /api/me BEFORE NAVIGATING SO THE LIBRARY HEADER (ADMIN GATE / ACCOUNT MENU) IS CORRECT
 // IMMEDIATELY — THE ROOT LAYOUT'S SERVER LOAD WOULDN'T RE-RUN ON THIS CLIENT-SIDE NAVIGATION ON ITS OWN.
 export async function establishSession(cred: UserCredential, redirectTo = '/app/'): Promise<void> {
-	const idToken = await cred.user.getIdToken();
-	const res = await apiFetch('/api/auth/session', {
-		method: 'POST',
-		headers: { 'content-type': 'application/json' },
-		body: JSON.stringify({ idToken }),
-	});
-	if (!res.ok) throw new Error('Could not start your session. Please try again.');
+	// NATIVE (CAPACITOR): THE STATIC SPA CANNOT HOLD THE SAME-ORIGIN httpOnly COOKIE ACROSS ORIGINS — THE
+	// SERVER AUTHENTICATES ITS Bearer ID TOKEN ON EVERY /api CALL INSTEAD — SO NO SESSION-COOKIE POST HERE.
+	if (!Capacitor.isNativePlatform()) {
+		const idToken = await cred.user.getIdToken();
+		const res = await apiFetch('/api/auth/session', {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ idToken }),
+		});
+		if (!res.ok) throw new Error('Could not start your session. Please try again.');
+	}
 	await refreshUser();
 	await goto(redirectTo);
 }

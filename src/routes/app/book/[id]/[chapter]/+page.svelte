@@ -10,6 +10,7 @@
 	import { fade } from 'svelte/transition';
 	// IMPORTED MODULES
 	import { apiFetch } from '$lib/api';
+	import { streamSse } from '$lib/sse';
 	import { browser } from '$app/environment';
 	import { afterNavigate, goto } from '$app/navigation';
 	import { cjkStack, latinStack } from '$lib/fonts';
@@ -620,48 +621,21 @@
 		if (!view || isMonolingual(view.targetLang)) return;
 		const ctrl = new AbortController();
 		try {
-			const res = await apiFetch('/api/translate', {
-				method: 'POST',
-				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ chapterId, autoExtract: $settings.autoExtract, model: $settings.model }),
-				signal: ctrl.signal,
-			});
-			if (res.body) await waitForExtraction(res.body, ctrl.signal);
+			// STOP AT THE FIRST SIGNAL THAT THE EXTRACT STAGE IS SETTLED: THE `extracted` EVENT, OR `meta`
+			// (ALWAYS EMITTED PAST THE EXTRACT STAGE — COVERS A CACHE HIT / ALREADY-EXTRACTED CHAPTER).
+			await streamSse(
+				'/api/translate',
+				{ chapterId, autoExtract: $settings.autoExtract, model: $settings.model },
+				(msg) =>
+					msg.type === 'extracted' || msg.type === 'meta' || msg.type === 'done' || msg.type === 'error'
+						? 'stop'
+						: undefined,
+				ctrl.signal,
+			);
 		} catch {
 			// IGNORE — BACKGROUND WARM-UP IS BEST-EFFORT
 		} finally {
 			ctrl.abort();
-		}
-	}
-
-	// READ AN SSE TRANSLATE STREAM ONLY FAR ENOUGH TO KNOW ITS GLOSSARY-EXTRACTION STAGE HAS FINISHED (THE
-	// `extracted` EVENT) OR WAS SKIPPED (`meta` IS ALWAYS EMITTED PAST THE EXTRACT STAGE, SO IT COVERS A
-	// CACHE HIT / ALREADY-EXTRACTED CHAPTER). RESOLVES ON THAT SIGNAL, OR WHEN THE STREAM ENDS / ERRORS.
-	async function waitForExtraction(body: ReadableStream<Uint8Array>, signal: AbortSignal) {
-		const reader = body.getReader();
-		const decoder = new TextDecoder();
-		let buf = '';
-		for (;;) {
-			const { value, done } = await reader.read();
-			if (done || signal.aborted) return;
-			buf += decoder.decode(value, { stream: true });
-			const blocks = buf.split('\n\n');
-			buf = blocks.pop() ?? '';
-			for (const block of blocks) {
-				// SKIP HEARTBEAT COMMENTS (": ping"); ONLY "data:" LINES CARRY EVENTS (SEE translate()).
-				const dataLine = block.split('\n').find((l) => l.startsWith('data:'));
-				if (!dataLine) continue;
-				const line = dataLine.slice(5).trim();
-				if (!line) continue;
-				let msg: { type?: string };
-				try {
-					msg = JSON.parse(line);
-				} catch {
-					continue;
-				}
-				if (msg.type === 'extracted' || msg.type === 'meta' || msg.type === 'done' || msg.type === 'error')
-					return;
-			}
 		}
 	}
 
@@ -770,38 +744,12 @@
 		extractFound = 0;
 		enText = '';
 		try {
-			const res = await apiFetch('/api/translate', {
-				method: 'POST',
-				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({
-					chapterId: view.id,
-					force,
-					autoExtract: $settings.autoExtract,
-					model: $settings.model,
-				}),
-				signal: ctrl.signal,
-			});
-			if (!res.ok || !res.body) throw new Error('Translation request failed.');
-			const reader = res.body.getReader();
-			const decoder = new TextDecoder();
-			let buf = '';
-			for (;;) {
-				const { value, done } = await reader.read();
-				if (done) break;
-				// THIS RUN WAS SUPERSEDED (USER NAVIGATED AWAY) — STOP APPLYING ITS OUTPUT
-				if (ctrl.signal.aborted || inflight !== ctrl) return;
-				buf += decoder.decode(value, { stream: true });
-				const blocks = buf.split('\n\n');
-				buf = blocks.pop() ?? '';
-				for (const block of blocks) {
-					// AN SSE BLOCK IS EITHER A "data: {…}" EVENT OR A COMMENT HEARTBEAT (": ping") THE SERVER
-					// SENDS TO KEEP THE CONNECTION ALIVE DURING THE LONG EXTRACT/TITLE STAGE. ONLY PARSE THE
-					// FORMER — A COMMENT LINE IS NOT JSON AND WOULD THROW.
-					const dataLine = block.split('\n').find((l) => l.startsWith('data:'));
-					if (!dataLine) continue;
-					const line = dataLine.slice(5).trim();
-					if (!line) continue;
-					const msg = JSON.parse(line);
+			await streamSse(
+				'/api/translate',
+				{ chapterId: view.id, force, autoExtract: $settings.autoExtract, model: $settings.model },
+				(msg) => {
+					// THIS RUN WAS SUPERSEDED (USER NAVIGATED AWAY) — STOP APPLYING ITS OUTPUT
+					if (ctrl.signal.aborted || inflight !== ctrl) return 'stop';
 					if (msg.type === 'delta') {
 						enText += msg.text;
 						// CACHE HITS ARRIVE AS A SINGLE FULL-TEXT DELTA — KEEP THE 'cached' PHASE
@@ -855,8 +803,10 @@
 					} else if (msg.type === 'error') {
 						throw new Error(msg.message);
 					}
-				}
-			}
+					return undefined;
+				},
+				ctrl.signal,
+			);
 		} catch (e) {
 			// NAVIGATED AWAY MID-STREAM → SILENT (THE SERVER JOB STILL FINISHES + SAVES)
 			if (ctrl.signal.aborted || (e instanceof DOMException && e.name === 'AbortError')) return;
@@ -891,60 +841,27 @@
 		termsOpen = false;
 		extractOpen = true;
 		try {
-			const res = await apiFetch('/api/extract', {
-				method: 'POST',
-				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ chapterId, model: $settings.model }),
-			});
-			// A PRE-STREAM FAILURE (e.g. AN OWNERSHIP 404) IS A NORMAL RESPONSE, NOT SSE.
-			if (!res.ok || !res.body) throw new Error('Extraction failed');
-			const reader = res.body.getReader();
-			const decoder = new TextDecoder();
-			let buf = '';
-			for (;;) {
-				const { value, done } = await reader.read();
-				if (done) break;
-				buf += decoder.decode(value, { stream: true });
-				const blocks = buf.split('\n\n');
-				buf = blocks.pop() ?? '';
-				for (const block of blocks) {
-					if (token !== extractToken) return; // NAVIGATED AWAY — STOP UPDATING THE OLD CHAPTER'S DIALOG
-					const dataLine = block.split('\n').find((l) => l.startsWith('data:'));
-					if (!dataLine) continue; // HEARTBEAT COMMENT
-					let msg: {
-						type: string;
-						done?: number;
-						total?: number;
-						terms?: number;
-						extracted?: number;
-						added?: number;
-						extractedAt?: number;
-						message?: string;
-					};
-					try {
-						msg = JSON.parse(dataLine.slice(5).trim());
-					} catch {
-						continue;
-					}
-					if (msg.type === 'progress') {
-						extractDone = msg.done ?? 0;
-						extractTotal = msg.total ?? 0;
-						extractFound = msg.terms ?? 0;
-					} else if (msg.type === 'done') {
-						extractFound = msg.extracted ?? extractFound;
-						extractAdded = msg.added ?? 0;
-						extractedCount = msg.added ?? 0;
-						extractPhase = 'done';
-						if (msg.extractedAt && view) view.extractedAt = msg.extractedAt;
-						// REFRESH THE CACHED TERM SET + HIGHLIGHTS SO THE NEW MATCHES SHOW WITHOUT A RELOAD.
-						termsLoadedFor = null;
-						if (termsOpen || $settings.boldTerms) void loadChapterTerms();
-						return;
-					} else if (msg.type === 'error') {
-						throw new Error(msg.message ?? 'Extraction failed');
-					}
+			await streamSse('/api/extract', { chapterId, model: $settings.model }, (msg) => {
+				if (token !== extractToken) return 'stop'; // NAVIGATED AWAY — STOP UPDATING THE OLD CHAPTER'S DIALOG
+				if (msg.type === 'progress') {
+					extractDone = msg.done ?? 0;
+					extractTotal = msg.total ?? 0;
+					extractFound = msg.terms ?? 0;
+				} else if (msg.type === 'done') {
+					extractFound = msg.extracted ?? extractFound;
+					extractAdded = msg.added ?? 0;
+					extractedCount = msg.added ?? 0;
+					extractPhase = 'done';
+					if (msg.extractedAt && view) view.extractedAt = msg.extractedAt;
+					// REFRESH THE CACHED TERM SET + HIGHLIGHTS SO THE NEW MATCHES SHOW WITHOUT A RELOAD.
+					termsLoadedFor = null;
+					if (termsOpen || $settings.boldTerms) void loadChapterTerms();
+					return 'stop';
+				} else if (msg.type === 'error') {
+					throw new Error(msg.message ?? 'Extraction failed');
 				}
-			}
+				return undefined;
+			});
 		} catch (e) {
 			if (token === extractToken) {
 				extractPhase = 'error';

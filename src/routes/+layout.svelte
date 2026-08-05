@@ -12,6 +12,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { authReady, currentUser, refreshUser, seedUser } from '$lib/stores/auth';
+	import { initNativeRuntime } from '$lib/native';
 	import { settings, THEME_CLASS } from '$lib/stores/settings';
 	import { cn } from '$lib/utils/cn';
 	import { onMount } from 'svelte';
@@ -60,6 +61,8 @@
 	onMount(() => {
 		// CONFIRM / FRESHEN THE SESSION FROM /api/me. SKIP ONLY WHEN THE SERVER ALREADY SAID "SIGNED OUT".
 		if (data.user === undefined || data.user) refreshUser();
+		// CAPACITOR NATIVE: BACK BUTTON, LIFECYCLE, KEYBOARD, STATUS BAR (NO-OP ON WEB).
+		initNativeRuntime();
 	});
 </script>
 

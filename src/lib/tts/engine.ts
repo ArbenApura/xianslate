@@ -15,6 +15,7 @@ import type { Readable } from 'svelte/store';
 // IMPORTED TYPES
 import type { Sentence } from './text';
 // IMPORTED DEP-MODULES
+import { Capacitor } from '@capacitor/core';
 import { get, writable } from 'svelte/store';
 import { browser } from '$app/environment';
 // IMPORTED MODULES
@@ -78,8 +79,18 @@ function createEngine() {
 	// eslint-disable-next-line @typescript-eslint/no-unused-vars
 	let current: SpeechSynthesisUtterance | null = null;
 
-	function supported(): boolean {
+	function hasWebSpeech(): boolean {
 		return browser && 'speechSynthesis' in window;
+	}
+
+	function hasNativeTts(): boolean {
+		// THE CAPACITOR FALLBACK — ANDROID's WebView HAS NO Web Speech API (iOS WKWebView KEEPS IT, SO IT
+		// STAYS THE PREFERRED PATH THERE).
+		return browser && Capacitor.isNativePlatform();
+	}
+
+	function supported(): boolean {
+		return hasWebSpeech() || hasNativeTts();
 	}
 
 	// REMEMBER WHETHER A VOICE ACTUALLY REPORTS WORD-BOUNDARY TIMING. SOME VOICES (NOTABLY Google'S
@@ -177,6 +188,14 @@ function createEngine() {
 
 		state.update((x) => ({ ...x, sentStart: sen.start, sentEnd: sen.end, wordStart: -1, wordEnd: -1 }));
 
+		// NATIVE (CAPACITOR) FALLBACK — NO speechSynthesis ON ANDROID WebView. THE TTS PLUGIN HAS NO
+		// END-OF-SENTENCE EVENT, SO SPEAK THE WHOLE REMAINDER AS ONE QUEUED CALL AND ADVANCE THE HIGHLIGHT
+		// FROM ITS onRangeStart WORD OFFSETS (SEE speakNativeFrom / nativeRange).
+		if (!hasWebSpeech()) {
+			speakNativeFrom(st.paraIndex, st.sentIndex);
+			return;
+		}
+
 		const s = get(ttsSettings);
 		const u = new SpeechSynthesisUtterance(text);
 		u.rate = clamp(s.rate, 0.5, 2.5);
@@ -232,11 +251,7 @@ function createEngine() {
 	function startAt(paraIndex: number, sentIndex: number) {
 		if (!supported() || !blocks.length) return;
 		gen++;
-		try {
-			window.speechSynthesis.cancel();
-		} catch {
-			/* IGNORE */
-		}
+		cancelAll();
 		state.update((x) => ({
 			...x,
 			status: 'playing',
@@ -245,7 +260,7 @@ function createEngine() {
 			wordStart: -1,
 			wordEnd: -1,
 		}));
-		startKeepalive();
+		if (hasWebSpeech()) startKeepalive();
 		// A MICROTASK GAP AFTER cancel() MAKES THE FOLLOWING speak() RELIABLE IN Chrome.
 		setTimeout(() => speakCurrent(), 0);
 	}
@@ -256,6 +271,12 @@ function createEngine() {
 
 	function pause() {
 		if (!supported() || get(state).status !== 'playing') return;
+		if (!hasWebSpeech()) {
+			// NATIVE: THE TTS PLUGIN HAS NO PAUSE — STOP THE READ (THE PLAY BUTTON RESTARTS FROM THE
+			// CURRENT POSITION VIA startAt). WEB KEEPS THE REAL pause/resume.
+			finish();
+			return;
+		}
 		try {
 			window.speechSynthesis.pause();
 		} catch {
@@ -278,16 +299,113 @@ function createEngine() {
 		gen++;
 		stopKeepalive();
 		current = null;
-		try {
-			window.speechSynthesis.cancel();
-		} catch {
-			/* IGNORE */
+		if (nativeIdleTimer) {
+			clearTimeout(nativeIdleTimer);
+			nativeIdleTimer = null;
 		}
+		cancelAll();
 		state.set({ ...IDLE, lang, total: blocks.length });
 	}
 
 	function stop() {
 		finish();
+	}
+
+	// CANCEL WHATEVER TTS ENGINE IS ACTIVE — THE WEB SPEECH SYNTHESIZER AND/OR THE NATIVE PLUGIN.
+	function cancelAll() {
+		if (hasWebSpeech()) {
+			try {
+				window.speechSynthesis.cancel();
+			} catch {
+				/* IGNORE */
+			}
+		}
+		if (hasNativeTts()) {
+			import('@capacitor-community/text-to-speech')
+				.then(({ TextToSpeech }) => TextToSpeech.stop())
+				.catch(() => {});
+		}
+	}
+
+	// -- NATIVE TTS (CAPACITOR) -- //
+	// ANDROID WebView HAS NO Web Speech API. THE @capacitor-community/text-to-speech PLUGIN HAS NO
+	// END-OF-SENTENCE EVENT, SO WE SPEAK THE WHOLE REMAINDER AS ONE CALL (queueStrategy Flush) AND MAP ITS
+	// onRangeStart WORD OFFSETS BACK ONTO (paraIndex, sentIndex, wordStart) VIA A RUNNING OFFSET TABLE.
+
+	// OFFSET TABLE FOR THE CURRENT NATIVE REMAINDER (BUILT BY speakNativeFrom), PLUS A GEN TIE-BREAK SO A
+	// SUPERSEDED RUN'S WORD EVENTS DON'T MOVE THE HIGHLIGHT.
+	let nativeSegs: { para: number; sent: number; start: number; len: number }[] = [];
+	let nativeGen = 0;
+	// THE PLUGIN HAS NO END-OF-SPEECH EVENT — WHEN NO WORD RANGE ARRIVES FOR A WHILE, SPEECH IS DONE:
+	// RESET THE WATCHDOG ON EVERY WORD AND FINISH (→ IDLE) AFTER A QUIET GAP.
+	let nativeIdleTimer: ReturnType<typeof setTimeout> | null = null;
+
+	function nativeRange(start: number, end: number) {
+		if (gen !== nativeGen) return;
+		if (nativeIdleTimer) clearTimeout(nativeIdleTimer);
+		nativeIdleTimer = setTimeout(() => {
+			if (gen === nativeGen && get(state).status === 'playing') finish();
+		}, 3000);
+		const seg = nativeSegs.find((s) => start >= s.start && start < s.start + s.len);
+		if (!seg) return;
+		const block = blocks[seg.para];
+		const sen = block?.sentences[seg.sent];
+		if (!block || !sen) return;
+		state.update((x) => ({
+			...x,
+			paraIndex: seg.para,
+			sentIndex: seg.sent,
+			sentStart: sen.start,
+			sentEnd: sen.end,
+			wordStart: sen.start + (start - seg.start),
+			wordEnd: sen.start + (end - seg.start),
+		}));
+	}
+
+	// REGISTER THE WORD-OFFSET LISTENER ONCE (ANDROID EMITS PER-WORD EVENTS; iOS HAS NONE, SO WORD
+	// HIGHLIGHTING STAYS OFF THERE AND THE SENTENCE HIGHLIGHT TRACKS THE FIRST SENTENCE OF THE REMAINDER).
+	if (hasNativeTts()) {
+		import('@capacitor-community/text-to-speech')
+			.then(({ TextToSpeech }) =>
+				TextToSpeech.addListener('onRangeStart', ({ start, end }) => nativeRange(start, end)),
+			)
+			.catch(() => {});
+	}
+
+	async function speakNativeFrom(paraIndex: number, sentIndex: number) {
+		const { TextToSpeech, QueueStrategy } = await import('@capacitor-community/text-to-speech');
+		// FLATTEN EVERY SENTENCE FROM THE CURRENT POSITION INTO ONE TEXT + A SEGMENT TABLE.
+		const segments: { para: number; sent: number; start: number; len: number }[] = [];
+		let text = '';
+		for (let p = paraIndex; p < blocks.length; p++) {
+			for (let k = p === paraIndex ? sentIndex : 0; k < blocks[p].sentences.length; k++) {
+				const sen = blocks[p].sentences[k];
+				const t = blocks[p].plain.slice(sen.start, sen.end);
+				if (!/\S/.test(t)) continue;
+				segments.push({ para: p, sent: k, start: text.length, len: t.length });
+				text += (text ? ' ' : '') + t;
+			}
+		}
+		if (!text) {
+			finish();
+			return;
+		}
+		nativeSegs = segments;
+		nativeGen = gen;
+		state.update((x) => ({ ...x, status: 'playing', paraIndex, sentIndex, wordStart: -1, wordEnd: -1 }));
+		const s = get(ttsSettings);
+		try {
+			await TextToSpeech.speak({
+				text,
+				lang,
+				rate: clamp(s.rate, 0.5, 2.5),
+				pitch: clamp(s.pitch, 0, 2),
+				volume: clamp(s.volume, 0, 1),
+				queueStrategy: QueueStrategy.Flush,
+			});
+		} catch {
+			finish();
+		}
 	}
 
 	// JUMP ONE SENTENCE FORWARD/BACK, CROSSING PARAGRAPH BOUNDARIES.

@@ -132,24 +132,25 @@ confirming you can add a book (URL, EPUB, or TXT) and translate.
 
 ### Environment reference (`.env`)
 
-| Var                           | Purpose                                                                  | Default                    |
-| ----------------------------- | ------------------------------------------------------------------------ | -------------------------- |
-| `DEEPSEEK_API_KEY`            | DeepSeek API key (server-side only)                                      | —                          |
-| `DEEPSEEK_BASE_URL`           | API base URL                                                             | `https://api.deepseek.com` |
-| `DEEPSEEK_MODEL`              | Model id                                                                 | `deepseek-v4-flash`        |
-| `DEEPSEEK_REASONING`          | `enabled` allows the model's chain-of-thought; anything else disables it | `disabled`                 |
-| `DATABASE_URL`                | Pooled Postgres URL (runtime)                                            | —                          |
-| `DATABASE_URL_DIRECT`         | Direct/session Postgres URL (migrations)                                 | —                          |
-| `DATABASE_URL_REPLICA`        | Read-replica URL (= the pooled primary until a replica is added)         | —                          |
-| `PUBLIC_FIREBASE_API_KEY`     | Firebase web-app `apiKey` (public)                                       | —                          |
-| `PUBLIC_FIREBASE_AUTH_DOMAIN` | Firebase web-app `authDomain` (public)                                   | —                          |
-| `PUBLIC_FIREBASE_PROJECT_ID`  | Firebase web-app `projectId` (public)                                    | —                          |
-| `PUBLIC_FIREBASE_APP_ID`      | Firebase web-app `appId` (public)                                        | —                          |
-| `FIREBASE_SERVICE_ACCOUNT`    | The whole service-account JSON as a single-line string (server-only)     | —                          |
-| `ZYTE_API_KEY`                | Optional paid fetch transport; unset → free fetch→curl path              | —                          |
-| `ZYTE_COST_PER_REQUEST`       | Pass-through Zyte cost estimate per successful fetch (USD)               | `0.00044`                  |
-| `DEEPSEEK_CONCURRENCY`        | Max parallel translation calls (single process)                          | `64`                       |
-| `DB_POOL_MAX`                 | postgres.js connections per role                                         | `25`                       |
+| Var                           | Purpose                                                                                                                                                                                                                               | Default                    |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
+| `DEEPSEEK_API_KEY`            | DeepSeek API key (server-side only)                                                                                                                                                                                                   | —                          |
+| `DEEPSEEK_BASE_URL`           | API base URL                                                                                                                                                                                                                          | `https://api.deepseek.com` |
+| `DEEPSEEK_MODEL`              | Model id                                                                                                                                                                                                                              | `deepseek-v4-flash`        |
+| `DEEPSEEK_REASONING`          | `enabled` allows the model's chain-of-thought; anything else disables it                                                                                                                                                              | `disabled`                 |
+| `DATABASE_URL`                | Pooled Postgres URL (runtime)                                                                                                                                                                                                         | —                          |
+| `DATABASE_URL_DIRECT`         | Direct/session Postgres URL (migrations)                                                                                                                                                                                              | —                          |
+| `DATABASE_URL_REPLICA`        | Read-replica URL (= the pooled primary until a replica is added)                                                                                                                                                                      | —                          |
+| `PUBLIC_FIREBASE_API_KEY`     | Firebase web-app `apiKey` (public)                                                                                                                                                                                                    | —                          |
+| `PUBLIC_FIREBASE_AUTH_DOMAIN` | Firebase web-app `authDomain` (public)                                                                                                                                                                                                | —                          |
+| `PUBLIC_FIREBASE_PROJECT_ID`  | Firebase web-app `projectId` (public)                                                                                                                                                                                                 | —                          |
+| `PUBLIC_FIREBASE_APP_ID`      | Firebase web-app `appId` (public)                                                                                                                                                                                                     | —                          |
+| `FIREBASE_SERVICE_ACCOUNT`    | The whole service-account JSON as a single-line string (server-only)                                                                                                                                                                  | —                          |
+| `PUBLIC_API_BASE`             | Live API origin for the **Capacitor mobile build only** — read from `.env.capacitor` by `yarn build:capacitor` and baked into the static bundle. Leave out of `.env` so the web app stays same-origin (see _Mobile apps (Capacitor)_) | — (same-origin)            |
+| `ZYTE_API_KEY`                | Optional paid fetch transport; unset → free fetch→curl path                                                                                                                                                                           | —                          |
+| `ZYTE_COST_PER_REQUEST`       | Pass-through Zyte cost estimate per successful fetch (USD)                                                                                                                                                                            | `0.00044`                  |
+| `DEEPSEEK_CONCURRENCY`        | Max parallel translation calls (single process)                                                                                                                                                                                       | `64`                       |
+| `DB_POOL_MAX`                 | postgres.js connections per role                                                                                                                                                                                                      | `25`                       |
 
 Optional per-model price overrides (USD per 1M tokens) for the cost meter — these default to DeepSeek's
 published Flash/Pro rates, override only to track price changes:
@@ -194,6 +195,53 @@ existing book) · `GET/POST/DELETE /api/books[/:id]` (`POST /api/books` creates 
 `PUT/DELETE /api/glossary/:id` · `POST /api/glossary/import` ·
 `GET /api/glossary/export?scope=global|book|effective` · `POST /api/extract` ·
 `POST /api/translate` (SSE).
+
+## Mobile apps (Capacitor)
+
+Android (and iOS, built from a Mac) runs the app as a **static SPA** served by the deployed API. The native
+WebView has no Node server, so the app talks **cross-origin** to the live backend (`https://xianslate.fly.dev`
+by default) — the server allows CORS for the two WebView origins, `capacitor://localhost` (Android) and
+`https://localhost` (iOS), and authenticates the app via the same Firebase account: the native client sends a
+fresh Firebase **ID token** as an `Authorization: Bearer` header on every `/api` call, while the web app keeps
+the httpOnly session cookie (the server accepts both — cookie wins when both are present).
+
+### Build
+
+```bash
+# 1. Point the mobile build at your live API — a gitignored, mobile-only env file:
+#    echo 'PUBLIC_API_BASE=https://xianslate.fly.dev' > .env.capacitor
+#    (NOT .env — that would make `vite dev` / the web build call the live API cross-origin too.)
+
+# 2. Build the static SPA (PUBLIC_* vars incl. PUBLIC_API_BASE are inlined at build time):
+yarn build:capacitor            # → build-capacitor/
+
+# 3. Copy it into the native projects:
+npx cap sync
+
+# 4. Android (this machine): open Android Studio, or build a debug APK from the CLI:
+yarn cap:android                # opens Android Studio
+# cd android && ./gradlew assembleDebug
+
+# iOS (macOS + Xcode only — the ios/ project is generated but gitignored, "deferred"):
+yarn cap:ios
+```
+
+### Firebase console setup (one-time, per platform)
+
+-   **Android**: add an Android app (package `dev.xianslate.app`) and register the debug keystore **SHA-1**
+    fingerprint (`keytool -list -v -keystore ~/.android/debug.keystore -alias androiddebugkey -storepass android`)
+    so native **Google sign-in** works. Email/password needs nothing extra.
+-   **iOS**: drop `GoogleService-Info.plist` into `ios/App/App/` when you build on a Mac.
+
+### Native behaviour notes
+
+-   **Back button** (Android): hardware back drives the SPA router's history (the WebView back stack doesn't);
+    on the root screen it minimizes the app instead of killing it.
+-   **Streaming**: translate/extract SSE streams via `fetch` + `ReadableStream` (web + Android WebView) and
+    falls back to **XMLHttpRequest progress streaming** on iOS WKWebView (whose `fetch` has no streaming body).
+-   **TTS**: Android's WebView has no Web Speech API, so the reader uses the native
+    `@capacitor-community/text-to-speech` plugin (no pause/resume — the pause button stops the read); iOS
+    keeps the Web Speech engine with word highlighting.
 
 ## Notes
 

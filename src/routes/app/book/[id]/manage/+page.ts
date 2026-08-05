@@ -4,6 +4,8 @@ import type { PageLoad } from './$types';
 import type { SourceType } from '$lib/types';
 // IMPORTED DEP-MODULES
 import { error } from '@sveltejs/kit';
+// IMPORTED MODULES
+import { apiUrl, authHeaders } from '$lib/api';
 
 // -- TYPES -- //
 
@@ -36,10 +38,11 @@ type ManageData = {
 
 // -- FUNCTIONS -- //
 
-// LOAD THE BOOK + ITS ORDERED CHAPTERS THROUGH /api SO MANAGE RENDERS IDENTICALLY UNDER WEB SSR — NO
-// SERVER LOAD IS REACHED.
+// LOAD THE BOOK + ITS ORDERED CHAPTERS THROUGH /api SO MANAGE RENDERS IDENTICALLY UNDER WEB SSR AND THE
+// CAPACITOR STATIC SPA (apiUrl → ABSOLUTE PUBLIC_API_BASE THERE; authHeaders → Bearer FIREBASE ID TOKEN) —
+// NO SERVER LOAD IS REACHED.
 export const load: PageLoad = async ({ params, fetch }) => {
-	const res = await fetch(`/api/books/${params.id}/chapters`);
+	const res = await fetch(apiUrl(`/api/books/${params.id}/chapters`), { headers: await authHeaders() });
 	if (!res.ok) throw error(res.status, 'Book not found.');
 	return (await res.json()) as ManageData;
 };

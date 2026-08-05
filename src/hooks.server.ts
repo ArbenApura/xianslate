@@ -1,5 +1,5 @@
 // IMPORTED DEP-TYPES
-import type { Handle } from '@sveltejs/kit';
+import type { Handle, RequestEvent } from '@sveltejs/kit';
 // IMPORTED TYPES
 import type { AuthUser } from '$lib/server/auth/user';
 // IMPORTED DEP-MODULES
@@ -7,7 +7,7 @@ import { json, redirect } from '@sveltejs/kit';
 import { sequence } from '@sveltejs/kit/hooks';
 // IMPORTED MODULES
 import { upsertUserFromToken } from '$lib/server/auth/user';
-import { SESSION_COOKIE, verifySessionCookie } from '$lib/server/auth/verify';
+import { SESSION_COOKIE, verifyIdToken, verifySessionCookie } from '$lib/server/auth/verify';
 import { THEME_BG, THEME_COOKIE } from '$lib/stores/settings';
 
 // -- TYPES -- //
@@ -30,27 +30,80 @@ if (!globalThis.__xsProcessGuards) {
 
 const DARK = ['dark', 'oled', 'contrast'];
 
+// -- CONSTANTS -- //
+
+// CORS ORIGINS OF THE CAPACITOR NATIVE APPS (ANDROID WebView = capacitor://localhost, iOS WKWebView =
+// https://localhost). THE MOBILE APP IS A STATIC SPA THAT CALLS THIS SAME SERVER CROSS-ORIGIN. THE WEB
+// APP IS SAME-ORIGIN, SO IT NEVER MATCHES AND IS COMPLETELY UNTOUCHED.
+const CAPACITOR_ORIGINS = new Set(['capacitor://localhost', 'https://localhost']);
+
+function corsHeaders(origin: string): Record<string, string> {
+	return {
+		'access-control-allow-origin': origin,
+		'access-control-allow-methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
+		'access-control-allow-headers': 'authorization, content-type',
+		'access-control-max-age': '86400',
+	};
+}
+
+// -- HANDLES -- //
+
+// CORS FOR THE CAPACITOR STATIC SPA. PREFLIGHTS (OPTIONS) SHORT-CIRCUIT HERE; EVERY REAL RESPONSE TO A
+// KNOWN NATIVE ORIGIN GETS THE HEADERS ATTACHED. NO CREDENTIALS FLAG — THE NATIVE APP AUTHENTICATES WITH
+// A Bearer FIREBASE ID TOKEN, NOT COOKIES, SO NOTHING EXTRA IS REQUIRED FOR CROSS-ORIGIN FETCHES.
+const corsHandle: Handle = async ({ event, resolve }) => {
+	const origin = event.request.headers.get('origin');
+	if (!origin || !CAPACITOR_ORIGINS.has(origin)) return resolve(event);
+	if (event.request.method === 'OPTIONS') {
+		return new Response(null, { status: 204, headers: corsHeaders(origin) });
+	}
+	const response = await resolve(event);
+	for (const [name, value] of Object.entries(corsHeaders(origin))) {
+		response.headers.set(name, value);
+	}
+	return response;
+};
+
+// RESOLVE THE AUTHENTICATED USER FROM EITHER TRANSPORT — THE SAME-ORIGIN SESSION COOKIE (WEB) OR A
+// Bearer FIREBASE ID TOKEN (CAPACITOR STATIC SPA — NO COOKIE POSSIBLE ACROSS ORIGINS). COOKIE WINS WHEN
+// BOTH ARE PRESENT (THE WEB CLIENT SENDS BOTH; THEY NAME THE SAME USER). EACH VERIFY USES FIREBASE'S
+// CACHED PUBLIC KEYS — NO NETWORK ROUND-TRIP PER REQUEST.
+const BEARER_RE = /^Bearer\s+(.+)$/i;
+
+async function resolveUser(event: RequestEvent): Promise<AuthUser | null> {
+	const cookie = event.cookies.get(SESSION_COOKIE);
+	if (cookie) {
+		try {
+			return await upsertUserFromToken(await verifySessionCookie(cookie));
+		} catch {
+			// INVALID / EXPIRED / REVOKED → TREAT AS SIGNED OUT (NEVER 500 THE WHOLE REQUEST ON A STALE COOKIE).
+		}
+	}
+	const header = event.request.headers.get('authorization');
+	const match = header ? BEARER_RE.exec(header) : null;
+	if (match) {
+		try {
+			return await upsertUserFromToken(await verifyIdToken(match[1]));
+		} catch {
+			// INVALID / EXPIRED TOKEN → SIGNED OUT (THE FIREBASE WEB SDK REFRESHES ID TOKENS ~EVERY HOUR,
+			// SO A STALE ONE IS A TRANSIENT STATE — THE CLIENT RETRIES AFTER getIdToken(true)).
+		}
+	}
+	return null;
+}
+
 // -- FUNCTIONS -- //
 
 // RESOLVE THE AUTHENTICATED USER AND ENFORCE ROUTE GUARDS FROM THE SAME-ORIGIN SESSION COOKIE. NO COOKIE →
 // ZERO AUTH WORK (ANONYMOUS ASSET/LANDING HITS PAY NOTHING). populates event.locals.user.
 const authHandle: Handle = async ({ event, resolve }) => {
-	let user: AuthUser | null = null;
-	const cookie = event.cookies.get(SESSION_COOKIE);
-	if (cookie) {
-		try {
-			user = await upsertUserFromToken(await verifySessionCookie(cookie));
-		} catch {
-			// INVALID / EXPIRED / REVOKED → TREAT AS SIGNED OUT (NEVER 500 THE WHOLE REQUEST ON A STALE COOKIE).
-			user = null;
-		}
-	}
-	event.locals.user = user;
+	event.locals.user = await resolveUser(event);
 
 	const { pathname } = event.url;
 
 	// /api/* IS JSON — RETURN 401 JSON, NEVER A REDIRECT. /api/auth/* (SIGN-IN/OUT) AND /api/me (THE
 	// "WHO AM I" PROBE — RETURNS { user: null } WHEN SIGNED OUT) ARE PUBLIC SO THEY NEVER 401.
+	const user = event.locals.user;
 	if (pathname.startsWith('/api/')) {
 		const isPublicApi = pathname.startsWith('/api/auth/') || pathname === '/api/me' || pathname === '/api/me/';
 		if (!isPublicApi && !user) return json({ message: 'Sign in required.' }, { status: 401 });
@@ -85,7 +138,7 @@ const themeHandle: Handle = async ({ event, resolve }) => {
 
 // -- LIFECYCLES -- //
 
-// AUTH (401/REDIRECT) FIRST, THEN THEME (RENDER).
+// CORS (PREFLIGHT + HEADERS FOR THE NATIVE SPA) FIRST, THEN AUTH (401/REDIRECT), THEN THEME (RENDER).
 // TRANSLATION RUNS IN-PROCESS (SINGLE-INSTANCE): /api/translate DRIVES THE IN-MEMORY JOB DIRECTLY — NO
 // WORKER OR CACHE-BUS TO START. GLOSSARY / SITE-ADAPTER CACHE INVALIDATION IS LOCAL TO THIS PROCESS.
-export const handle = sequence(authHandle, themeHandle);
+export const handle = sequence(corsHandle, authHandle, themeHandle);
