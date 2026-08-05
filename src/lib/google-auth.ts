@@ -14,7 +14,19 @@ import { firebaseAuth } from '$lib/firebase';
 export async function googleSignIn(): Promise<UserCredential> {
 	if (Capacitor.isNativePlatform()) {
 		const { FirebaseAuthentication } = await import('@capacitor-firebase/authentication');
-		const result = await FirebaseAuthentication.signInWithGoogle();
+		// CREDENTIAL MANAGER (DEFAULT) THROWS "No credentials available" WHEN THE DEVICE HAS NO GOOGLE
+		// ACCOUNT CONFIGURED (FRESH DEVICE / EMPTY EMULATOR) — IT CAN'T SHOW A PICKER. FALL BACK TO THE
+		// LEGACY GOOGLE SIGN-IN FLOW, WHICH ALWAYS SHOWS THE ACCOUNT PICKER (AND LETS THE USER ADD ONE).
+		let result;
+		try {
+			result = await FirebaseAuthentication.signInWithGoogle();
+		} catch (e) {
+			if (e instanceof Error && /no credentials available/i.test(e.message)) {
+				result = await FirebaseAuthentication.signInWithGoogle({ useCredentialManager: false });
+			} else {
+				throw e;
+			}
+		}
 		const idToken = result.credential?.idToken;
 		// A GOOGLE SIGN-IN WITH NO ID TOKEN IS A FAILED FLOW — DON'T MINT A CREDENTIAL OUT OF NOTHING.
 		if (!idToken) throw new Error('Google sign-in did not return an ID token.');
