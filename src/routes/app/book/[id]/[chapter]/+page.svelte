@@ -480,6 +480,24 @@
 		if (!view.contentTarget) translate(false);
 	}
 
+	// -- OFFLINE RESUME POINTER -- //
+
+	// WHEN A CHAPTER WAS SERVED FROM THE OFFLINE CACHE, THE PAGE-LOAD resume=1 SIDE EFFECT NEVER RAN (NO
+	// NETWORK) — QUEUE A resume OP SO THE SYNC ENGINE MOVES THE SERVER'S RESUME POINTER ON RECONNECT.
+	// WITHOUT THIS, READING OFFLINE LEFT THE POINTER AT THE LAST ONLINE-OPENED CHAPTER, SO REOPENING THE
+	// BOOK AFTERWARDS REDIRECTED TO THE WRONG CHAPTER. DEPENDS ON $currentUser (NOT get()) SO A COLD START
+	// — WHERE THE LAYOUT'S hydrateSession() FILLS THE STORE AFTER THIS PAGE MOUNTS — STILL QUEUES THE OP
+	// ONCE THE USER ARRIVES. GUARDED PER-uuid (SET ONLY ON AN ACTUAL ENQUEUE) SO NEXT-PREFETCH view SPREADS
+	// (view = { ...view, nextUuid }) DON'T RE-QUEUE THE SAME CHAPTER.
+	let lastResumeQueued: string | null = null;
+	$: if (data.fromCache && view && view.uuid !== lastResumeQueued) {
+		const uid = $currentUser?.id;
+		if (uid) {
+			lastResumeQueued = view.uuid;
+			void enqueueWrite(uid, 'resume', { uuid: view.uuid });
+		}
+	}
+
 	// CHAPTER-FETCH OVERLAY CONTROLS — START THE PROGRESS SCREEN + ITS ELAPSED-TIME TICKER, STOP/RESET IT, OR
 	// CANCEL THE IN-FLIGHT NAVIGATION ENTIRELY (ABORTS THE SERVER FETCH AND STAYS ON THE CURRENT CHAPTER).
 	function startFetch(dir: 'prev' | 'next') {
@@ -1081,23 +1099,33 @@
 		});
 	}
 
-	// FLUSH THE FINAL MAX FOR A CHAPTER WHEN LEAVING IT. ONLINE → sendBeacon SURVIVES NAVIGATION / TAB
-	// CLOSE; OFFLINE → THE OUTBOX KEEPS IT (sendBeacon HAS NO BEARER HEADER AND DIES CROSS-ORIGIN ON
-	// THE NATIVE BUILD ANYWAY, SO THE QUEUE IS THE ONLY RELIABLE OFFLINE PATH).
+	// FLUSH THE FINAL MAX FOR A CHAPTER WHEN LEAVING IT / THE TAB HIDES. THE BEARER-CARRYING keepalive
+	// fetch (SAME AS sendProgress) SURVIVES NAVIGATION / TAB CLOSE; ANY FAILURE FALLS BACK TO THE OUTBOX —
+	// sendBeacon WAS UNUSABLE HERE: IT CARRIES NO Bearer AND DIES CROSS-ORIGIN ON THE NATIVE BUILD (THE SPA
+	// LIVES AT https://localhost, THE API AT PUBLIC_API_BASE), SO A "SUCCESSFUL" BEACON STILL 401s AND THE
+	// FINAL PROGRESS DELTA WAS SILENTLY LOST ON EVERY CHAPTER LEAVE.
 	function flushProgress(uuid: string, p: number) {
 		if (!browser || p <= lastSentProgress + 0.001) return;
 		lastSentProgress = p;
 		const uid = get(currentUser)?.id;
-		if (uid && !isOnline()) {
+		if (!uid) return;
+		// OFFLINE → THE QUEUE IS THE ONLY RELIABLE PATH (THE SYNC ENGINE REPLAYS IT ON RECONNECT).
+		if (!isOnline()) {
 			void enqueueWrite(uid, 'progress', { uuid, progress: p });
 			return;
 		}
-		try {
-			const blob = new Blob([JSON.stringify({ progress: p })], { type: 'application/json' });
-			navigator.sendBeacon(`/api/chapters/${uuid}/progress`, blob);
-		} catch {
-			// IGNORE — BEST-EFFORT
-		}
+		apiFetch(`/api/chapters/${uuid}/progress`, {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ progress: p }),
+			keepalive: true,
+		})
+			.then((res) => {
+				if (!res.ok) throw new Error(`progress flush failed: ${res.status}`);
+			})
+			.catch(() => {
+				if (uid) void enqueueWrite(uid, 'progress', { uuid, progress: p });
+			});
 	}
 
 	// MARK THIS CHAPTER READ (→ 1) OR UNREAD (→ 0). A DIRECT, NON-MONOTONIC WRITE VIA THE BOOK READ

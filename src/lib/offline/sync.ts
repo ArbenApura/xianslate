@@ -67,7 +67,7 @@ async function revalidateOpenBook(userId: string): Promise<void> {
 			const res = await apiFetch(`/api/books/${bookId}/chapters`);
 			if (!res.ok) continue;
 			const data = await res.json();
-			cacheToc(bookId, userId, { book: data.book, resumeUuid: data.resumeUuid, chapters: data.chapters });
+			await cacheToc(bookId, userId, { book: data.book, resumeUuid: data.resumeUuid, chapters: data.chapters });
 		} catch {
 			// IGNORE — KEEP THE STALE COPY.
 		}

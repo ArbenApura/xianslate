@@ -50,7 +50,8 @@ export const load: PageLoad = async ({ params, fetch }) => {
 		const res = await fetch(apiUrl(`/api/books/${params.id}/chapters`), { headers: await authHeaders() });
 		if (!res.ok) throw error(res.status, 'Book not found.');
 		const data = (await res.json()) as ManageData;
-		cacheToc(params.id, get(currentUser)?.id, {
+		// AWAITED SO THE PREFETCH BELOW ALWAYS SEES THE FRESH TOC (SEE book/[id]/+page.ts — SAME RACE).
+		await cacheToc(params.id, get(currentUser)?.id, {
 			book: data.book,
 			resumeUuid: data.resumeUuid,
 			chapters: data.chapters,

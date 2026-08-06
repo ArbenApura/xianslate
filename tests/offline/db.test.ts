@@ -19,6 +19,7 @@ import {
 	metaSet,
 	outboxCount,
 	outboxEnqueue,
+	outboxMarkAttempt,
 	outboxPending,
 	outboxRemove,
 	_closeForTests,
@@ -88,6 +89,15 @@ describe('outbox', () => {
 		expect(b).not.toBeNull();
 		await outboxRemove(a!);
 		expect((await outboxPending('u1')).map((o) => o.id)).toEqual([b]);
+	});
+
+	it('outboxMarkAttempt records attempts + lastAttemptAt without changing the id', async () => {
+		const id = await outboxEnqueue(op({ userId: 'u1' }));
+		expect(id).not.toBeNull();
+		await outboxMarkAttempt(id!, 3, 123456);
+		const pending = await outboxPending('u1');
+		expect(pending).toHaveLength(1);
+		expect(pending[0]).toMatchObject({ id, attempts: 3, lastAttemptAt: 123456 });
 	});
 });
 

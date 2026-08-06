@@ -11,7 +11,7 @@
 import { apiFetch } from '$lib/api';
 import { isOnline } from '$lib/offline/network';
 import { classifyOutcome } from '$lib/offline/outbox-core';
-import { outboxEnqueue, outboxPending, outboxRemove, type OutboxOp } from '$lib/offline/db';
+import { outboxEnqueue, outboxMarkAttempt, outboxPending, outboxRemove, type OutboxOp } from '$lib/offline/db';
 
 // -- TYPES -- //
 
@@ -20,6 +20,13 @@ export type OutboxOpName = OutboxOp['op'];
 // -- STATE -- //
 
 let flushing = false;
+
+// -- CONSTANTS -- //
+
+// MIN GAP BETWEEN REPLAY ATTEMPTS OF A TRANSIENTLY-FAILED OP — A DOWN SERVER MUST NOT BE HAMMERED ON
+// EVERY SYNC TRIGGER (ONLINE FLAP / APP RESUME / BOOT PROBE). DELIBERATELY NO DROP CAP: A TRANSIENT OP
+// RETRIES FOREVER, JUST THROTTLED, SO QUEUED OFFLINE WRITES ARE NEVER SILENTLY LOST.
+const RETRY_BACKOFF_MS = 60_000;
 
 // -- FUNCTIONS -- //
 
@@ -130,6 +137,10 @@ export async function flushOutbox(userId: string): Promise<number> {
 			// THE QUEUE ONLY REPLAYS WHEN THE NETWORK IS (BELIEVED) UP — A FAILED FETCH BELOW MARKS
 			// OFFLINE VIA apiFetch, SO THE NEXT RUN PICKUP IS THE ONLINE EVENT.
 			if (!isOnline()) break;
+			// BACK OFF AN OP THAT JUST FAILED TRANSIENTLY: ONCE attempts > 0, DON'T REPLAY IT AGAIN WITHIN
+			// RETRY_BACKOFF_MS. THE WHOLE QUEUE DRAINS AT MOST ONCE PER WINDOW, SO A HARD-DOWN SERVER ISN'T
+			// HIT ON EVERY TRIGGER — AND THE OP IS NEVER DROPPED (DATA SAFETY WINS OVER QUEUE PROGRESS).
+			if ((op.attempts ?? 0) > 0 && Date.now() - (op.lastAttemptAt ?? 0) < RETRY_BACKOFF_MS) break;
 			try {
 				await runOp(op);
 				await outboxRemove(op.id ?? 0);
@@ -137,11 +148,13 @@ export async function flushOutbox(userId: string): Promise<number> {
 			} catch (e) {
 				// PERMANENT 4xx (BOOK/TERM DELETED ELSEWHERE, ETC.) → DROP IT AND KEEP FLUSHING (A DROPPED OP
 				// MUST NOT BLOCK THE OPS AFTER IT — THE MODULE CONTRACT AT THE TOP OF THIS FUNCTION).
-				// ANYTHING ELSE (NETWORK, 5xx, TRANSIENT 4xx) → KEEP IT AND STOP: THE NEXT ONLINE EVENT RETRIES.
+				// ANYTHING ELSE (NETWORK, 5xx, TRANSIENT 4xx) → REMEMBER THE FAILURE FOR BACKOFF AND STOP:
+				// THE NEXT SYNC TRIGGER RETRIES, BUT ONLY AFTER THE WINDOW.
 				if (classifyOutcome(e) === 'drop') {
 					await outboxRemove(op.id ?? 0);
 					continue;
 				}
+				await outboxMarkAttempt(op.id ?? 0, (op.attempts ?? 0) + 1, Date.now());
 				break;
 			}
 		}

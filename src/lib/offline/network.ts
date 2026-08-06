@@ -14,10 +14,6 @@ import { get, writable } from 'svelte/store';
 // ON SSR/UNKNOWN SO NON-BROWSER CODE NEVER FALSE-POSITIVES INTO "OFFLINE" MODE.
 export const online = writable<boolean>(!browser || typeof navigator === 'undefined' ? true : navigator.onLine);
 
-// LAST TIME THE STORE FLIPPED FROM FALSE → TRUE (ms epoch, 0 IF NEVER SEEN ONLINE) — THE SYNC ENGINE USES
-// THIS TO AVOID FLUSHING THE OUTBOX IN A LOOP WHILE THE DEVICE IS STILL UNREACHABLE.
-export const lastOnlineAt = writable<number>(0);
-
 // -- STATE -- //
 
 let listening = false;
@@ -30,7 +26,6 @@ export function initNetworkListeners(): void {
 	listening = true;
 	const setOn = () => {
 		online.set(true);
-		lastOnlineAt.set(Date.now());
 	};
 	const setOff = () => online.set(false);
 	window.addEventListener('online', setOn);
@@ -47,10 +42,7 @@ export function markOffline(): void {
 
 // CALLED BY apiFetch WHEN A REQUEST COMES BACK AT ALL (EVEN AN HTTP ERROR BODY MEANS THE NETWORK IS UP).
 export function markOnline(): void {
-	if (browser) {
-		online.set(true);
-		lastOnlineAt.set(Date.now());
-	}
+	if (browser) online.set(true);
 }
 
 // SYNC READER FOR NON-REACTIVE CODE (GUARDS, QUEUES).

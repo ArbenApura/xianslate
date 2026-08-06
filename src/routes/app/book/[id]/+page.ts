@@ -19,8 +19,9 @@ export const load: PageLoad = async ({ params, fetch }) => {
 		const res = await fetch(apiUrl(`/api/books/${params.id}/chapters`), { headers: await authHeaders() });
 		if (!res.ok) throw error(res.status, 'Book not found.');
 		data = (await res.json()) as { book: unknown; resumeUuid: string | null; chapters: { uuid: string }[] };
-		// CACHE THE TOC SO THE RESUME REDIRECT + MANAGE PAGE WORK OFFLINE.
-		cacheToc(params.id, get(currentUser)?.id, {
+		// CACHE THE TOC SO THE RESUME REDIRECT + MANAGE PAGE WORK OFFLINE — AWAITED SO THE PREFETCH BELOW
+		// ALWAYS SEES THE FRESH TOC (THE tocPut MUST COMMIT BEFORE prefetchUntranslatedSources READS IT).
+		await cacheToc(params.id, get(currentUser)?.id, {
 			book: data.book,
 			resumeUuid: data.resumeUuid,
 			chapters: data.chapters,

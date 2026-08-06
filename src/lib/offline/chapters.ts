@@ -48,13 +48,18 @@ export async function readCachedChapter(uuid: string): Promise<unknown | null> {
 
 // STORE THE PER-BOOK TOC RESPONSE ({ book, resumeUuid, chapters }) FOR OFFLINE REDIRECTS + MANAGE.
 // ALSO NOTES THE BOOK AS RECENTLY-OPENED SO THE SYNC ENGINE REFRESHES ITS TOC ON RECONNECT.
-export function cacheToc(bookId: string, userId: string | null | undefined, data: TocRow['data']): void {
-	void (async () => {
-		const uid = await cacheUserId(userId);
-		if (!uid) return;
-		await tocPut(bookId, uid, data);
-		await noteRecentBook(bookId);
-	})();
+// RETURNS A PROMISE SO CALLERS CAN AWAIT THE WRITE BEFORE prefetchUntranslatedSources READS THE CACHED
+// TOC — WITHOUT THE AWAIT, THE PREFETCH'S tocGet CAN BE CREATED BEFORE THIS tocPut COMMITS AND THE
+// FIRST-EVER OPEN OF A BOOK SILENTLY SKIPS THE SOURCE PREFETCH (RACE — SEE THE LOADS' ORDER).
+export async function cacheToc(
+	bookId: string,
+	userId: string | null | undefined,
+	data: TocRow['data'],
+): Promise<void> {
+	const uid = await cacheUserId(userId);
+	if (!uid) return;
+	await tocPut(bookId, uid, data);
+	await noteRecentBook(bookId);
 }
 
 // TRACK RECENTLY-OPENED BOOKS (CAP 5) SO THE SYNC ENGINE KNOWS WHICH TOCs TO REVALIDATE ON RECONNECT.

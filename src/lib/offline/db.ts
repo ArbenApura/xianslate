@@ -62,6 +62,9 @@ export type OutboxOp = {
 	userId: string;
 	createdAt: number;
 	attempts: number;
+	// SET BY THE FLUSHER ON A TRANSIENT FAILURE (WITH attempts) — LETS flushOutbox BACK OFF RE-PLAYING AN
+	// OP THAT JUST FAILED, INSTEAD OF HAMMERING THE API ON EVERY SYNC TRIGGER.
+	lastAttemptAt?: number;
 };
 
 // -- STATE -- //
@@ -295,6 +298,37 @@ export async function outboxRemove(id: number): Promise<void> {
 		await tx(db, 'outbox', 'readwrite', (s) => s.delete(id));
 	} catch {
 		// IGNORE
+	}
+}
+
+// RECORD A TRANSIENT FAILURE ON A QUEUED OP (attempts + lastAttemptAt) SO THE FLUSHER CAN BACK OFF.
+// ON AN autoIncrement STORE, PUTTING WITH THE EXISTING KEY UPDATES THE ROW IN PLACE (NO NEW KEY).
+// THE GET + PUT RUN IN ONE readwrite TRANSACTION — A GET-THEN-SEPARATE-PUT COULD RESURRECT AN OP THAT A
+// CONCURRENT TAB (THE `flushing` GUARD IN outbox.ts IS PER-TAB) JUST FLUSHED AND REMOVED. BEST-EFFORT:
+// IF THE WRITE FAILS THE OP STAYS QUEUED WITH ITS OLD ATTEMPT COUNT — BACKOFF IS AN OPTIMIZATION.
+export async function outboxMarkAttempt(id: number, attempts: number, lastAttemptAt: number): Promise<void> {
+	const db = await openDb();
+	if (!db) return;
+	try {
+		await new Promise<void>((resolve, reject) => {
+			const t = db.transaction('outbox', 'readwrite');
+			const s = t.objectStore('outbox');
+			const getReq = s.get(id);
+			getReq.onsuccess = () => {
+				const op = getReq.result as OutboxOp | undefined;
+				if (!op) {
+					resolve(); // ALREADY REMOVED (FLUSHED ELSEWHERE) — NOTHING TO MARK.
+					return;
+				}
+				op.attempts = attempts;
+				op.lastAttemptAt = lastAttemptAt;
+				s.put(op, id);
+			};
+			t.oncomplete = () => resolve();
+			t.onerror = () => reject(t.error);
+		});
+	} catch {
+		// IGNORE — BEST-EFFORT BOOKKEEPING.
 	}
 }
 

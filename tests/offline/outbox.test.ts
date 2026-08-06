@@ -11,7 +11,7 @@ const apiFetch = vi.fn();
 vi.mock('$lib/api', () => ({ apiFetch: (...a: unknown[]) => apiFetch(...a) }));
 
 import { flushOutbox, pendingCount } from '$lib/offline/outbox';
-import { outboxEnqueue, _closeForTests, type OutboxOp } from '$lib/offline/db';
+import { outboxEnqueue, outboxPending, _closeForTests, type OutboxOp } from '$lib/offline/db';
 
 async function wipeDb(): Promise<void> {
 	_closeForTests();
@@ -85,13 +85,46 @@ describe('flushOutbox — transient stop', () => {
 		expect(await pendingCount('u1')).toBe(1);
 	});
 
-	it('recovers on the next flush once the server is reachable again', async () => {
-		apiFetch.mockResolvedValueOnce({ ok: false, status: 503 }).mockResolvedValue({ ok: true, status: 200 });
-		await outboxEnqueue(op({}));
-		expect(await flushOutbox('u1')).toBe(0);
-		expect(await pendingCount('u1')).toBe(1);
-		expect(await flushOutbox('u1')).toBe(1);
-		expect(await pendingCount('u1')).toBe(0);
+	it('recovers on a later flush once the server is reachable again (after the backoff window)', async () => {
+		vi.useFakeTimers({ toFake: ['Date'] });
+		try {
+			apiFetch.mockResolvedValueOnce({ ok: false, status: 503 }).mockResolvedValue({ ok: true, status: 200 });
+			await outboxEnqueue(op({}));
+			expect(await flushOutbox('u1')).toBe(0);
+			expect(await pendingCount('u1')).toBe(1);
+			// WITHIN THE BACKOFF WINDOW THE QUEUE HOLDS (NO REPLAY — SEE RETRY_BACKOFF_MS)…
+			expect(await flushOutbox('u1')).toBe(0);
+			expect(apiFetch).toHaveBeenCalledTimes(1);
+			// …ONCE THE WINDOW ELAPSES THE OP IS REPLAYED AND SUCCEEDS.
+			vi.setSystemTime(Date.now() + 61_000);
+			expect(await flushOutbox('u1')).toBe(1);
+			expect(await pendingCount('u1')).toBe(0);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+});
+
+describe('flushOutbox — transient backoff', () => {
+	it('a transiently-failed op is not replayed within the backoff window, then retries after it', async () => {
+		vi.useFakeTimers({ toFake: ['Date'] });
+		try {
+			apiFetch.mockRejectedValue(new TypeError('Failed to fetch'));
+			await outboxEnqueue(op({}));
+			expect(await flushOutbox('u1')).toBe(0);
+			// THE FAILURE IS REMEMBERED (attempts/lastAttemptAt) — THE OP IS NEVER DROPPED.
+			expect((await outboxPending('u1'))[0]).toMatchObject({ attempts: 1 });
+			// A RE-FLUSH WITHIN THE WINDOW MAKES NO NETWORK CALL (BACKOFF HOLDS).
+			expect(await flushOutbox('u1')).toBe(0);
+			expect(apiFetch).toHaveBeenCalledTimes(1);
+			// AFTER THE WINDOW ELAPSES, THE OP IS REPLAYED AND FLUSHED.
+			vi.setSystemTime(Date.now() + 61_000);
+			apiFetch.mockResolvedValue({ ok: true, status: 200 });
+			expect(await flushOutbox('u1')).toBe(1);
+			expect(await pendingCount('u1')).toBe(0);
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 });
 

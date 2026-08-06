@@ -53,6 +53,7 @@ export default defineConfig({
 				'src/lib/server/charset.ts',
 				'src/lib/server/ingest/**',
 				'src/lib/offline/db.ts',
+				'src/lib/offline/covers.ts',
 				'src/lib/offline/gate.ts',
 				'src/lib/offline/outbox-core.ts',
 				'src/lib/offline/outbox.ts',

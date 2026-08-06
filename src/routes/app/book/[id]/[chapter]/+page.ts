@@ -32,7 +32,12 @@ export const load: PageLoad = async ({ params, fetch }) => {
 		// NETWORK TypeError (WHICH RENDERS AS A GENERIC 500 PAGE).
 		if (e instanceof Error && 'status' in e) throw e;
 		const cached = await readCachedChapter(params.chapter);
-		if (cached) return { view: cached as ChapterView };
+		if (cached) {
+			// fromCache LETS THE READER QUEUE A resume OP — THE resume=1 SIDE EFFECT CAN'T RUN OFFLINE, SO
+			// THE OUTBOX REPLAYS IT ON RECONNECT (OTHERWISE THE SERVER'S RESUME POINTER STAYS AT THE LAST
+			// ONLINE-OPENED CHAPTER).
+			return { view: cached as ChapterView, fromCache: true };
+		}
 		throw error(503, "This chapter isn't saved on this device — open it once while online to read it offline.");
 	}
 };
