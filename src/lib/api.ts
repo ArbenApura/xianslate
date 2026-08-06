@@ -5,6 +5,7 @@ import { onAuthStateChanged, type User } from 'firebase/auth';
 import { browser } from '$app/environment';
 // IMPORTED MODULES
 import { firebaseAuth } from '$lib/firebase';
+import { markOffline, markOnline } from '$lib/offline/network';
 
 // -- CONSTANTS -- //
 
@@ -62,11 +63,19 @@ export async function authHeaders(): Promise<Record<string, string>> {
 
 // THE ONE CLIENT ENTRY POINT FOR /api CALLS — SAME-ORIGIN fetch ON WEB (THE httpOnly SESSION COOKIE RIDES
 // ALONG AUTOMATICALLY); ABSOLUTE + Bearer ON THE CAPACITOR SPA. STREAMING RESPONSES (THE TRANSLATE SSE)
-// PASS STRAIGHT THROUGH.
+// PASS STRAIGHT THROUGH. EVERY RESOLVED RESPONSE (EVEN AN HTTP ERROR BODY) MARKS THE NETWORK UP; A
+// NETWORK-TYPE THROW (DNS/TLS/REFUSED) MARKS IT DOWN — THE AUTHORITATIVE OFFLINE SIGNAL FOR THE WEBVIEW.
 export async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
 	const headers = new Headers(init.headers);
 	for (const [name, value] of Object.entries(await authHeaders())) headers.set(name, value);
-	return fetch(apiUrl(path), { ...init, headers });
+	try {
+		const res = await fetch(apiUrl(path), { ...init, headers });
+		markOnline();
+		return res;
+	} catch (e) {
+		markOffline();
+		throw e;
+	}
 }
 
 // CONVENIENCE WRAPPER OVER apiFetch FOR JSON ENDPOINTS — PARSES THE BODY, AND ON A NON-OK RESPONSE THROWS AN

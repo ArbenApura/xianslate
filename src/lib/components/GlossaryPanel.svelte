@@ -12,6 +12,13 @@
 	import { chapterLabel } from '$lib/chapter-label';
 	import { DEFAULT_SOURCE_LANG, DEFAULT_TARGET_LANG } from '$lib/languages';
 	import { settings, THEME_CLASS } from '$lib/stores/settings';
+	import { get } from 'svelte/store';
+	import { currentUser } from '$lib/stores/auth';
+	import { isOnline } from '$lib/offline/network';
+	import { enqueueWrite } from '$lib/offline/outbox';
+	import { requireOnline } from '$lib/offline/gate';
+	import { filterOfflineRows, mergeOfflineRows, pageOfflineRows } from '$lib/offline/outbox-core';
+	import { glossaryGet, glossaryKey, glossaryPut } from '$lib/offline/db';
 	// IMPORTED DEP-COMPONENTS
 	import ChevronLeft from 'lucide-svelte/icons/chevron-left';
 	import ChevronRight from 'lucide-svelte/icons/chevron-right';
@@ -169,6 +176,14 @@
 
 	// -- FUNCTIONS -- //
 
+	// A FIXED WINDOW OF CACHED ROWS IS SERVED OFFLINE: THE API IS PAGINATED + SEARCHABLE, AND ONLY THE
+	// PAGES THE USER ACTUALLY VISITED ARE IN THE CACHE — SO OFFLINE THE PANEL SHOWS THE CACHED ROWS WITH A
+	// CLIENT-SIDE SEARCH FALLBACK (SHARES THE LOADING/PAGINATION UX, JUST FROM THE LOCAL COPY).
+	const OFFLINE_CACHE_PAGES = 5;
+	// THE PER-(scope, pair, book) CACHE KEY PREFIX — PAGE-SPECIFIC KEYS APPEND `:p<N>`.
+	const cachePrefix = () => glossaryKey(scope, sourceLang, targetLang, bookId ?? undefined);
+	let offlineRows: unknown[] = []; // MERGED CACHED ROWS FOR THIS SCOPE/PAIR
+
 	async function load() {
 		const token = ++loadToken;
 		loading = true;
@@ -196,12 +211,43 @@
 				firstChapterTitleTarget: r.firstChapterTitleTarget,
 			}));
 			total = data.total ?? 0;
+			// CACHE-AS-YOU-BROWSE: STORE THIS PAGE SO OFFLINE READS HAVE DATA (PER scope/pair/book, BOUNDED).
+			const uid = get(currentUser)?.id;
+			if (uid) {
+				await glossaryPut(`${cachePrefix()}:p${page}`, uid, {
+					rows,
+					total,
+					page,
+					pageSize,
+					q: query,
+				});
+				// MERGE INTO THE WINDOW — REPLACE THE SAME PAGE'S OLD ROWS, KEEP OTHER PAGES.
+				offlineRows = mergeOfflineRows(offlineRows as Entry[], rows, OFFLINE_CACHE_PAGES * pageSize);
+			}
 		} catch {
-			if (token === loadToken) toast.error('Could not load the glossary.');
+			if (token !== loadToken) return;
+			// OFFLINE (OR THE PROBE FAILED): SERVE THE CACHED WINDOW WITH A CLIENT-SIDE SEARCH — ONLY TOAST
+			// WHEN NOTHING IS CACHED AT ALL.
+			const filtered = filterOfflineRows(offlineRows as Entry[], query);
+			rows = pageOfflineRows(filtered, page, pageSize);
+			total = filtered.length;
+			if (offlineRows.length === 0 && isOnline()) toast.error('Could not load the glossary.');
 		} finally {
 			if (token === loadToken) loading = false;
 		}
 	}
+
+	// HYDRATE THE OFFLINE WINDOW FROM IndexedDB ON MOUNT (BEST-EFFORT — ONLINE READS REFRESH IT LATER).
+	onMount(async () => {
+		const uid = get(currentUser)?.id;
+		if (!uid) return;
+		const pages: Entry[] = [];
+		for (let p = 1; p <= OFFLINE_CACHE_PAGES; p++) {
+			const row = await glossaryGet(`${cachePrefix()}:p${p}`);
+			if (row?.rows?.length) pages.push(...(row.rows as Entry[]));
+		}
+		if (pages.length) offlineRows = [...new Map(pages.map((r) => [r.id, r])).values()];
+	});
 
 	function onSearch() {
 		clearTimeout(debounce);
@@ -290,13 +336,39 @@
 		formOpen = false;
 	}
 
-	// CREATE (add) OR UPDATE (edit) THE TERM FROM THE DIALOG FIELDS.
+	// CREATE (add) OR UPDATE (edit) THE TERM FROM THE DIALOG FIELDS. OFFLINE THE WRITE IS QUEUED AND THE
+	// LIST IS REFRESHED LOCALLY — THE SYNC ENGINE REPLAYS THE QUEUED WRITE LATER.
 	async function submitForm() {
 		if (!fSource.trim() || !fTarget.trim()) {
 			toast.error('Both source and target are required.');
 			return;
 		}
 		busy = true;
+		const uid = get(currentUser)?.id;
+		if (uid && !isOnline()) {
+			const fields = {
+				source: fSource,
+				target: fTarget,
+				gender: fGender,
+				context: fContext.trim() || null,
+				category: fCategory,
+				pinned: fPinned,
+				aliases: splitAliases(fAliases),
+			};
+			const ok = await enqueueWrite(
+				uid,
+				'glossaryUpsert',
+				formMode === 'add'
+					? { body: { scope, bookId, sourceLang, targetLang, ...fields } }
+					: { id: formId, patch: fields },
+			);
+			if (ok) {
+				formOpen = false;
+				toast.success(formMode === 'add' ? 'Term added (offline — will sync).' : 'Term saved (offline — will sync).');
+				busy = false;
+				return;
+			}
+		}
 		try {
 			const fields = {
 				source: fSource,
@@ -331,10 +403,22 @@
 		}
 	}
 
-	// DELETE THE TERM BEING EDITED.
+	// DELETE THE TERM BEING EDITED. OFFLINE THE DELETE IS QUEUED AND THE LIST UPDATED LOCALLY.
 	async function deleteCurrent() {
 		if (formId === null) return;
 		busy = true;
+		const uid = get(currentUser)?.id;
+		if (uid && !isOnline()) {
+			const ok = await enqueueWrite(uid, 'glossaryDelete', { id: formId });
+			if (ok) {
+				formOpen = false;
+				offlineRows = offlineRows.filter((r) => (r as Entry).id !== formId);
+				rows = rows.filter((r) => r.id !== formId);
+				toast.success('Term deleted (offline — will sync).');
+				busy = false;
+				return;
+			}
+		}
 		try {
 			const res = await apiFetch(`/api/glossary/${formId}`, { method: 'DELETE' });
 			if (!res.ok) throw new Error('Delete failed');
@@ -350,6 +434,7 @@
 
 	// AI-FILL THE DIALOG'S TARGET RENDERING FROM ITS SOURCE TERM.
 	async function translateTarget() {
+		if (!requireOnline('Translating')) return;
 		const source = fSource.trim();
 		if (!source) {
 			toast.error('Add the source term first.');
@@ -381,6 +466,7 @@
 	}
 
 	async function onImport(ev: Event) {
+		if (!requireOnline('Importing')) return;
 		const file = (ev.currentTarget as HTMLInputElement).files?.[0];
 		if (!file) return;
 		busy = true;

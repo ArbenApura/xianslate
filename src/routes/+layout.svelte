@@ -12,13 +12,17 @@
 	import { Capacitor } from '@capacitor/core';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
-	import { authReady, currentUser, refreshUser, seedUser } from '$lib/stores/auth';
+	import { authReady, currentUser, hydrateSession, refreshUser, seedUser } from '$lib/stores/auth';
 	import { initNativeRuntime } from '$lib/native';
+	import { initNetworkListeners, online } from '$lib/offline/network';
+	import { syncNow } from '$lib/offline/sync';
 	import { settings, THEME_CLASS } from '$lib/stores/settings';
 	import { cn } from '$lib/utils/cn';
 	import { onMount } from 'svelte';
 	// IMPORTED DEP-COMPONENTS
 	import { Toaster } from 'svelte-sonner';
+	// IMPORTED COMPONENTS
+	import OfflineBanner from '$lib/components/OfflineBanner.svelte';
 
 	// -- REQUIRED PROPS -- //
 
@@ -67,15 +71,34 @@
 	// -- LIFECYCLES -- //
 
 	onMount(() => {
+		// NETWORK-AWARENESS FIRST SO EVERYTHING ELSE KNOWS WHETHER /api IS REACHABLE.
+		initNetworkListeners();
+		// WHEN THE NETWORK COMES BACK, FLUSH THE QUEUED WRITES + REVALIDATE CACHES (DEBOUNCED INSIDE).
+		const unsubOnline = online.subscribe((up) => {
+			if (up) void syncNow();
+		});
 		// CONFIRM / FRESHEN THE SESSION FROM /api/me. SKIP ONLY WHEN THE SERVER ALREADY SAID "SIGNED OUT".
-		if (data.user === undefined || data.user) refreshUser();
+		// ON THE CAPACITOR SPA data.user IS undefined (NO SSR): HYDRATE THE STORE FROM THE LOCAL SESSION
+		// CACHE FIRST SO AN OFFLINE COLD START RENDERS THE APP INSTEAD OF BOUNCING TO /login — THE PROBE
+		// BELOW THEN REFRESHES (OR EXPLICITLY SIGNS OUT) WHEN THE NETWORK RETURNS.
+		if (data.user === undefined) {
+			void hydrateSession().finally(() => refreshUser().then(() => syncNow()));
+		} else if (data.user) {
+			refreshUser().then(() => syncNow());
+		}
 		// CAPACITOR NATIVE: BACK BUTTON, LIFECYCLE, KEYBOARD, STATUS BAR (NO-OP ON WEB).
 		initNativeRuntime();
+		return () => {
+			unsubOnline();
+		};
 	});
 </script>
 
 <!-- GLOBAL TOAST HOST -->
 <Toaster richColors closeButton position="bottom-right" />
+
+<!-- OFFLINE BANNER — SHOWN ONLY WHILE THE NETWORK IS DOWN (NATIVE + WEB ALIKE) -->
+<OfflineBanner />
 
 <!-- THEMED APP ROOT — ONE THEME APPLIES TO EVERY PAGE (LIBRARY, READER, GLOSSARY) -->
 <div class={cn('min-h-screen', rootClass)}>

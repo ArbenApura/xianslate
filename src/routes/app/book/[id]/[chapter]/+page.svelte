@@ -15,6 +15,11 @@
 	import { afterNavigate, goto } from '$app/navigation';
 	import { cjkStack, latinStack } from '$lib/fonts';
 	import { getLanguage, isMonolingual } from '$lib/languages';
+	import { cacheChapter, readCachedChapter } from '$lib/offline/chapters';
+	import { enqueueWrite } from '$lib/offline/outbox';
+	import { isOnline } from '$lib/offline/network';
+	import { requireOnline } from '$lib/offline/gate';
+	import { get } from 'svelte/store';
 	import {
 		settings,
 		THEME_BAR,
@@ -592,9 +597,15 @@
 	async function getChapterView(uuid: string, signal?: AbortSignal): Promise<ChapterView | null> {
 		try {
 			const r = await apiFetch(`/api/chapter?id=${uuid}`, { signal });
-			return r.ok ? await r.json() : null;
+			if (!r.ok) return null;
+			const v: ChapterView = await r.json();
+			// CACHE-AS-YOU-OPEN — NEIGHBORS TOUCHED HERE BECOME READABLE OFFLINE TOO.
+			cacheChapter(v.uuid, get(currentUser)?.id, v);
+			return v;
 		} catch {
-			return null;
+			// OFFLINE → THE CACHED COPY (IF ANY) STILL LETS PREV/NEXT MOVE WITHIN THE DOWNLOADED SHELF.
+			const cached = await readCachedChapter(uuid);
+			return cached ? (cached as ChapterView) : null;
 		}
 	}
 
@@ -670,6 +681,8 @@
 				}
 				cur = nextV;
 			}
+		} catch {
+			// OFFLINE / TRANSIENT FAILURE — BACKGROUND WARM-UP IS BEST-EFFORT; THE NEXT SCROLL RETRIES.
 		} finally {
 			prefetching = false;
 		}
@@ -680,7 +693,7 @@
 		prefetchedFrom = uuid;
 		clearTimeout(prefetchTimer);
 		// SMALL DELAY SO THE CURRENT CHAPTER'S OWN FETCH/TRANSLATE GETS PRIORITY FIRST
-		prefetchTimer = setTimeout(() => runPrefetch(uuid), 1200);
+		prefetchTimer = setTimeout(() => void runPrefetch(uuid), 1200);
 	}
 
 	// TRANSLATE THE BOOK TITLE (NOVEL NAME) FOR THE TOPBAR + SIDEBAR THE SAME WAY THE LIBRARY DOES. THE POST IS
@@ -727,6 +740,8 @@
 		// `monolingual`): syncFromData() SETS view AND CALLS translate() SYNCHRONOUSLY, BEFORE THE REACTIVE
 		// PASS REFRESHES `monolingual` — SO ON A WARM CROSS-BOOK NAVIGATION THE DERIVED VALUE IS STILL STALE.
 		if (!view || translating || isMonolingual(view.targetLang)) return;
+		// TRANSLATION RUNS SERVER-SIDE (DeepSeek) — IT CANNOT WORK OFFLINE. GATE IT CLEARLY.
+		if (!requireOnline('Translating')) return;
 		// SUPERSEDE ANY PRIOR STREAM AND BIND THIS RUN TO ITS OWN ABORT CONTROLLER
 		inflight?.abort();
 		const ctrl = new AbortController();
@@ -828,6 +843,7 @@
 	// terms found). THE SERVER COMPLETES + SAVES EVEN IF THE READER NAVIGATES AWAY; extractToken DROPS STALE UI.
 	async function extractGlossary() {
 		if (!view || extracting) return;
+		if (!requireOnline('Extracting glossary terms')) return;
 		const token = ++extractToken;
 		const chapterId = view.id;
 		extracting = true;
@@ -1055,14 +1071,23 @@
 			body: JSON.stringify({ progress: chapterMax }),
 			keepalive: true,
 		}).catch(() => {
-			// BEST-EFFORT — A FAILED PROGRESS WRITE IS HARMLESS (THE NEXT SCROLL RETRIES)
+			// OFFLINE / FAILED → QUEUE IT SO THE PROGRESS ISN'T LOST; THE SYNC ENGINE REPLAYS IT LATER.
+			const uid = get(currentUser)?.id;
+			if (uid && view) void enqueueWrite(uid, 'progress', { uuid: view.uuid, progress: chapterMax });
 		});
 	}
 
-	// FLUSH THE FINAL MAX FOR A CHAPTER WHEN LEAVING IT — sendBeacon SURVIVES NAVIGATION / TAB CLOSE.
+	// FLUSH THE FINAL MAX FOR A CHAPTER WHEN LEAVING IT. ONLINE → sendBeacon SURVIVES NAVIGATION / TAB
+	// CLOSE; OFFLINE → THE OUTBOX KEEPS IT (sendBeacon HAS NO BEARER HEADER AND DIES CROSS-ORIGIN ON
+	// THE NATIVE BUILD ANYWAY, SO THE QUEUE IS THE ONLY RELIABLE OFFLINE PATH).
 	function flushProgress(uuid: string, p: number) {
 		if (!browser || p <= lastSentProgress + 0.001) return;
 		lastSentProgress = p;
+		const uid = get(currentUser)?.id;
+		if (uid && !isOnline()) {
+			void enqueueWrite(uid, 'progress', { uuid, progress: p });
+			return;
+		}
 		try {
 			const blob = new Blob([JSON.stringify({ progress: p })], { type: 'application/json' });
 			navigator.sendBeacon(`/api/chapters/${uuid}/progress`, blob);
@@ -1080,6 +1105,22 @@
 		chapterMax = value;
 		lastSentProgress = value;
 		view.readProgress = value;
+		// OFFLINE → QUEUE THE WRITE AND LET THE SYNC ENGINE REPLAY IT; THE UI IS ALREADY OPTIMISTIC.
+		const uid = get(currentUser)?.id;
+		if (uid && !isOnline()) {
+			const ok = await enqueueWrite(uid, 'read', {
+				bookId: view.bookId,
+				uuid: view.uuid,
+				scope: 'this',
+				read,
+			});
+			if (ok) {
+				toast.success(
+					read ? 'Marked as read (offline — will sync)' : 'Marked as unread (offline — will sync)',
+				);
+				return;
+			}
+		}
 		try {
 			const res = await apiFetch(`/api/books/${view.bookId}/read`, {
 				method: 'POST',

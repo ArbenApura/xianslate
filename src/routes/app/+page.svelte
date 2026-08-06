@@ -15,6 +15,9 @@
 	import { AUTO_SOURCE, isMonolingual } from '$lib/languages';
 	import { authReady, currentUser } from '$lib/stores/auth';
 	import { settings, type Theme } from '$lib/stores/settings';
+	import { enqueueWrite } from '$lib/offline/outbox';
+	import { isOnline } from '$lib/offline/network';
+	import { requireOnline } from '$lib/offline/gate';
 	import { ripple } from '$lib/actions/ripple';
 	import { cn } from '$lib/utils/cn';
 	// IMPORTED DEP-COMPONENTS
@@ -47,6 +50,7 @@
 	import EmptyState from '$lib/components/ui/EmptyState.svelte';
 	import LanguagePicker from '$lib/components/ui/LanguagePicker.svelte';
 	import Modal from '$lib/components/ui/Modal.svelte';
+	import OfflineCover from '$lib/components/ui/OfflineCover.svelte';
 	import Select from '$lib/components/ui/Select.svelte';
 	import TextField from '$lib/components/ui/TextField.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
@@ -347,7 +351,14 @@
 			if (!res.ok) throw new Error('Could not load your library.');
 			booksList = await res.json();
 		} catch {
-			toast.error('Could not load your library.');
+			// OFFLINE (OR THE PROBE FAILED): THE MOUNT-TIME localStorage CACHE ALREADY PAINTED A SHELF —
+			// REVALIDATION FAILING IS EXPECTED, NOT AN ERROR. SHOW A DIFFERENT MESSAGE ONLY WHEN THERE IS
+			// NOTHING CACHED TO SHOW.
+			if (!isOnline() && booksList.length === 0) {
+				toast.error('You’re offline and no cached library is available yet.');
+			} else if (isOnline()) {
+				toast.error('Could not load your library.');
+			}
 		} finally {
 			loading = false;
 		}
@@ -432,6 +443,7 @@
 	async function addEmptyBook() {
 		const title = emptyTitle.trim();
 		if (!title || busyAction) return;
+		if (!requireOnline('Creating a book')) return;
 		busyAction = 'empty';
 		try {
 			const res = await apiFetch('/api/books', {
@@ -457,6 +469,7 @@
 
 	async function addByUrl() {
 		if (!urlInput.trim() || busyAction) return;
+		if (!requireOnline('Adding a book by URL')) return;
 		busyAction = 'url';
 		try {
 			const res = await apiFetch('/api/fetch', {
@@ -482,6 +495,7 @@
 	}
 
 	async function importFile(kind: 'epub' | 'txt', file: File) {
+		if (!requireOnline('Importing a file')) return;
 		busyAction = 'import';
 		const tid = toast.loading(`Importing ${file.name}…`);
 		try {
@@ -543,6 +557,7 @@
 	// (RE)FETCH A BOOK COVER FROM ITS SOURCE PAGE, THEN UPDATE THE CARD IN PLACE (NO RELOAD). A CACHE-BUST
 	// SUFFIX FORCES THE <img> TO RELOAD EVEN WHEN THE COVER URL IS UNCHANGED (E.G. THE SITE SWAPPED THE ART).
 	async function fetchCover(b: BookSummary) {
+		if (!requireOnline('Fetching a cover')) return;
 		const tid = toast.loading(b.coverUrl ? 'Refetching cover…' : 'Fetching cover…');
 		try {
 			const res = await apiFetch(`/api/books/${b.id}/cover`, { method: 'POST' });
@@ -564,6 +579,16 @@
 		const b = pendingDelete;
 		pendingDelete = null;
 		if (!b) return;
+		const uid = get(currentUser)?.id;
+		// OFFLINE → QUEUE THE DELETE AND REMOVE THE CARD LOCALLY (THE QUEUE FLUSHES THE DELETE LATER).
+		if (uid && !isOnline()) {
+			const ok = await enqueueWrite(uid, 'bookDelete', { bookId: b.id });
+			if (ok) {
+				booksList = booksList.filter((x) => x.id !== b.id);
+				toast.success('Book deleted (offline — will sync).');
+				return;
+			}
+		}
 		try {
 			await apiFetch(`/api/books/${b.id}`, { method: 'DELETE' });
 			booksList = booksList.filter((x) => x.id !== b.id);
@@ -573,8 +598,19 @@
 		}
 	}
 
-	// PATCH A BOOK'S FIELDS AND UPDATE THE CARD IN PLACE (NO RELOAD). RETURNS true ON SUCCESS.
+	// PATCH A BOOK'S FIELDS AND UPDATE THE CARD IN PLACE (NO RELOAD). RETURNS true ON SUCCESS. OFFLINE
+	// THE PATCH IS QUEUED AND APPLIED LOCALLY — THE SYNC ENGINE REPLAYS IT AGAINST THE SERVER LATER.
 	async function patchBook(b: BookSummary, body: Record<string, unknown>, okMsg?: string): Promise<boolean> {
+		const uid = get(currentUser)?.id;
+		if (uid && !isOnline()) {
+			const ok = await enqueueWrite(uid, 'bookPatch', { bookId: b.id, patch: body });
+			if (ok) {
+				// OPTIMISTIC LOCAL APPLY — MATCHES WHAT THE SERVER WOULD RETURN (PATCH MERGES KNOWN FIELDS).
+				booksList = booksList.map((x) => (x.id === b.id ? { ...x, ...body } : x));
+				if (okMsg) toast.success(`${okMsg} (offline — will sync)`);
+				return true;
+			}
+		}
 		try {
 			const res = await apiFetch(`/api/books/${b.id}`, {
 				method: 'PATCH',
@@ -614,6 +650,7 @@
 	// DOWNLOAD THE WHOLE BOOK IN THE CHOSEN FORMAT THROUGH /api (SO THE SESSION COOKIE RIDES ALONG — NOT A
 	// BARE <a href>); THE BLOB IS THEN SAVED VIA A TRANSIENT OBJECT URL.
 	async function exportBook(b: BookSummary, format: 'txt' | 'md' | 'json') {
+		if (!requireOnline('Exporting')) return;
 		const tid = toast.loading('Preparing export…');
 		try {
 			const res = await apiFetch(`/api/books/${b.id}/export?format=${format}`);
@@ -894,13 +931,13 @@
 						)}
 					>
 						<span class="absolute left-0 top-0 h-full w-1.5 bg-black/25"></span>
-						<!-- FETCHED BOOK COVER — OVERLAYS THE GRADIENT FALLBACK; HIDES ITSELF IF IT FAILS TO LOAD -->
+						<!-- FETCHED BOOK COVER — OVERLAYS THE GRADIENT FALLBACK; HIDES ITSELF IF IT FAILS TO LOAD.
+						     OfflineCover SERVES THE BLOB-CACHED COPY WHEN THE NETWORK IS GONE. -->
 						{#if continueBook.coverUrl}
-							<img
+							<OfflineCover
 								src={continueBook.coverUrl}
 								alt=""
 								class="absolute inset-0 h-full w-full object-cover"
-								on:error={hideImg}
 							/>
 						{:else}
 							<!-- BOUND-BOOK FALLBACK — MATCHES THE SHELF CARDS (GOLD FRAME + CREAM SERIF TITLE) -->
@@ -1122,14 +1159,14 @@
 								<!-- SPINE -->
 								<span class="absolute left-0 top-0 h-full w-2 bg-black/25"></span>
 								{#if b.coverUrl}
-									<!-- FETCHED COVER — FULL-BLEED OVER THE GRADIENT; HIDES ITSELF IF IT FAILS TO LOAD -->
-									<img
+									<!-- FETCHED COVER — FULL-BLEED OVER THE GRADIENT; HIDES ITSELF IF IT FAILS TO LOAD.
+									     OfflineCover SERVES THE BLOB-CACHED COPY WHEN THE NETWORK IS GONE. -->
+									<OfflineCover
 										src={b.coverUrl}
 										alt=""
 										loading="lazy"
 										decoding="async"
 										class="absolute inset-0 h-full w-full object-cover"
-										on:error={hideImg}
 									/>
 									<!-- BOTTOM SCRIM KEEPS THE TITLE READABLE OVER ANY COVER — linear-gradient CAN'T BE A TAILWIND CLASS -->
 									<span

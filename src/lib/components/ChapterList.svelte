@@ -4,8 +4,11 @@
 	// IMPORTED MODULES
 	import { apiFetch } from '$lib/api';
 	import { chapterLabel, stripChapterPrefix } from '$lib/chapter-label';
+	import { cacheToc, prefetchUntranslatedSources, readCachedToc } from '$lib/offline/chapters';
 	import { cn } from '$lib/utils/cn';
 	import { ripple } from '$lib/actions/ripple';
+	import { get } from 'svelte/store';
+	import { currentUser } from '$lib/stores/auth';
 	// IMPORTED DEP-COMPONENTS
 	import Check from 'lucide-svelte/icons/check';
 	import Loader2 from 'lucide-svelte/icons/loader-2';
@@ -71,9 +74,26 @@
 		try {
 			const res = await apiFetch(`/api/books/${bookId}`);
 			const data = await res.json();
-			return data.chapters ?? [];
+			const chapters = data.chapters ?? [];
+			// REFRESH THE OFFLINE TOC CACHE (SAME STORE AS THE MANAGE PAGE / RESUME REDIRECT) SO THE CONTENTS
+			// DIALOG AND SIDEBAR KEEP WORKING OFFLINE. /api/books/:id DOESN'T RETURN resumeUuid — PRESERVE THE
+			// CACHED ONE, ELSE A CLOBBERED null WOULD BREAK OFFLINE RESUME.
+			void (async () => {
+				const prev = await readCachedToc(bookId);
+				cacheToc(bookId, get(currentUser)?.id, {
+					book: data.book,
+					resumeUuid: prev?.resumeUuid ?? null,
+					chapters,
+				});
+			})();
+			// SOURCE OF UNTRANSLATED CHAPTERS READS OFFLINE TOO — SILENTLY DOWNLOAD THEM (FIRE-AND-FORGET).
+			void prefetchUntranslatedSources(bookId);
+			return chapters;
 		} catch {
-			return null;
+			// OFFLINE → THE CACHED TOC LETS THE CONTENTS DIALOG / SIDEBAR RENDER (SAME READ-THROUGH FALLBACK
+			// AS THE MANAGE PAGE). NO CACHED COPY → null (CALLER SHOWS THE EMPTY LIST).
+			const cached = await readCachedToc(bookId);
+			return cached ? (cached.chapters as TocItem[]) : null;
 		}
 	}
 

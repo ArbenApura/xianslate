@@ -12,7 +12,14 @@ import { apiUrl, authHeaders } from '$lib/api';
 // SUPPLY IT THERE. WEB SSR RESOLVES THE RELATIVE URL VIA THE SVELTEKIT LOAD fetch; THE NATIVE SPA GETS
 // THE ABSOLUTE PUBLIC_API_BASE URL + A Bearer FIREBASE ID TOKEN (authHeaders).
 export const load: PageLoad = async ({ fetch }) => {
-	const res = await fetch(apiUrl('/api/me/usage'), { headers: await authHeaders() });
+	let res: Response;
+	try {
+		res = await fetch(apiUrl('/api/me/usage'), { headers: await authHeaders() });
+	} catch {
+		// NETWORK-TYPE FAILURE (OFFLINE / DNS) — A CLEAR MESSAGE INSTEAD OF THE RAW TypeError,
+		// WHICH WOULD RENDER AS A GENERIC 500 PAGE.
+		throw error(503, "You're offline — usage data needs an internet connection.");
+	}
 	if (!res.ok) throw error(res.status, 'Could not load usage.');
 	const data = (await res.json()) as { usage: AccountUsage };
 	return { usage: data.usage };

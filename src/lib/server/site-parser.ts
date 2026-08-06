@@ -27,6 +27,10 @@ export type SelectorMap = {
 	prev?: NavRule;
 	next?: NavRule;
 	index?: NavRule;
+	// THE BOOK/SERIES NAME'S CSS SELECTOR (LEARNED PER-SITE, LIKE title) — THE DETERMINISTIC BREADCRUMB /
+	// KEYWORDS / og:title SIGNALS HAVE NO KNOWN SHAPE ON A GIVEN LAYOUT, SO THE MODEL MAPS WHERE THE BOOK
+	// NAME LIVES ON THIS SPECIFIC SITE (A BREADCRUMB BOOK LINK, A BOOK-NAME ELEMENT, …).
+	bookTitle?: string;
 	// author.sel = ELEMENT TEXT; author.scriptRegex = GROUP 1 OF A REGEX RUN OVER THE RAW HTML (LEGACY
 	// SITES EMBED THE AUTHOR IN AN INLINE SCRIPT RATHER THAN VISIBLE MARKUP).
 	author?: { sel?: string; scriptRegex?: string };
@@ -87,16 +91,17 @@ const NAV_LINE =
 const CHROME_START =
 	/^(您的浏览器|您的瀏覽器|由于您的|請開啟|请开启|javascript|登录|登錄|注册|註冊|排行榜|首页|首頁|加入收藏|手机版|手機版)/i;
 
-export const MAP_SYSTEM = `You are mapping a web-novel CHAPTER page so a scraper can extract it. The page may be in any language (Chinese, Japanese, Korean, English, …) — rely on STRUCTURE and the previews, not on the language. The page may be a JS-rendered SPA (e.g. a Korean reader) whose navigation isn't ordinary links.
-You are given up to four lists derived from the page: TITLE CANDIDATES, CONTENT CANDIDATES (each with its text length and a short preview of its text), NAV LINKS, and — when present — NAV CONTROLS (JS/SPA navigation held in a hidden input, data-* attribute, or onclick).
+export const MAP_SYSTEM = `You are mapping a web-novel CHAPTER page so a scraper can extract it (the chapter heading, the prose, the navigation, and the BOOK/series name). The page may be in any language (Chinese, Japanese, Korean, English, …) — rely on STRUCTURE and the previews, not on the language. The page may be a JS-rendered SPA (e.g. a Korean reader) whose navigation isn't ordinary links.
+You are given up to five lists derived from the page: TITLE CANDIDATES, BOOK TITLE CANDIDATES, CONTENT CANDIDATES (each with its text length and a short preview of its text), NAV LINKS, and — when present — NAV CONTROLS (JS/SPA navigation held in a hidden input, data-* attribute, or onclick).
 
 Return ONLY a JSON object, no markdown and no prose:
-{"title":"<css>","body":"<css>","prev":{"sel":"<css>","text":["..."],"attr":"<attr>"},"next":{"sel":"<css>","text":["..."],"attr":"<attr>"},"index":{"sel":"<css>","text":["..."],"attr":"<attr>"},"author":{"sel":"<css>"},"idUrlPattern":"<regex or empty>"}
+{"title":"<css>","body":"<css>","prev":{"sel":"<css>","text":["..."],"attr":"<attr>"},"next":{"sel":"<css>","text":["..."],"attr":"<attr>"},"index":{"sel":"<css>","text":["..."],"attr":"<attr>"},"bookTitle":"<css>","author":{"sel":"<css>"},"idUrlPattern":"<regex or empty>"}
 
 Rules:
 - Choose selectors from the candidate lists. Selectors may use ONLY tag names, .class, #id and spaces (descendant combinator). NO :pseudo-classes and NO [attribute] selectors.
 - "body": choose the ONE CONTENT CANDIDATE whose preview reads as the actual chapter STORY TEXT — never a menu, sidebar, comment list, announcement, or the whole page. Prefer the TIGHTEST block that still holds the prose. A candidate marked "(loose-text fallback)" means the page puts the chapter loosely in the body with no wrapper — choose it (it will be "body") ONLY when no other candidate's preview is the story prose.
 - "title": the chapter's heading from TITLE CANDIDATES — the one naming THIS chapter (often contains a chapter number/word like 第…章/章/卷/话/회/chapter), NOT the book's overall title. NEVER answer "title".
+- "bookTitle": the BOOK/SERIES name (the whole novel) as it appears on this page — usually the breadcrumb book-link text or a prominent book-name element near the top (a BOOK TITLE CANDIDATE). NEVER the site name/logo/brand, NEVER the author's name, and NEVER this chapter's heading. Give a SPECIFIC selector (tag#id / tag.class / a descendant path), not a bare tag like "a" or "div". Omit the field when the page shows no clear book name.
 - "prev","next","index": previous-chapter, next-chapter, and table-of-contents/book-index links. Match the label in ANY language: previous = 上一章/上一頁/上一页/前一章 · 前へ/前章 · 이전/이전화 · prev/previous/back; next = 下一章/下一頁/下一页/后一章 · 次へ/次章 · 다음/다음화 · next/forward; index = 目录/目錄/章节目录/返回目录 · 目次/一覧 · 목차/목록 · index/contents/toc. From NAV LINKS, put the matched label(s) in "text"; add "sel" ONLY when a SPECIFIC selector exists — one carrying a #id or .class (e.g. "a.next"). NEVER give a bare tag like "a"/"div"/"li" as a nav "sel": it matches the FIRST such element on the page (a header link or a href="#" toggle), not the neighbour — when unsure, omit "sel" and rely on "text". "index" must be the book's table-of-contents / detail page (often the breadcrumb book-title link), NOT an in-page "#" dropdown toggle. From NAV CONTROLS (a JS/SPA site with no link for that direction), copy its selector into "sel" AND set "attr" to the named attribute (e.g. "value", "onclick", a data-* name) so the scraper reads the URL from there. OMIT any direction that is genuinely absent (e.g. no previous on chapter 1).
 - "author": a TITLE CANDIDATE selector whose text is the author's name, if any; otherwise omit the field.
 - "idUrlPattern": a regex with EXACTLY TWO capture groups (book id, then chapter id) matching the chapter URL, or "" if the URL has no such ids. Backslashes MUST be JSON-escaped, e.g. "novelid=(\\\\d+)&chapterid=(\\\\d+)".`;
@@ -542,9 +547,28 @@ export function applyAdapter(root: HTMLElement, html: string, m: SelectorMap, ur
 		author = null;
 	}
 
-	// BOOK TITLE FROM THE BREADCRUMB ANCHOR THAT LINKS TO THE INDEX (BUT ISN'T THE "目錄" LABEL ITSELF).
+	// BOOK TITLE, IN PRIORITY ORDER: (1) THE AI-LEARNED PER-SITE SELECTOR — THE LEARNED MAP KNOWS THIS
+	// SITE'S LAYOUT (BREADCRUMB BOOK LINK, BOOK-NAME ELEMENT), WHERE THE DETERMINISTIC SIGNALS BELOW HAVE NO
+	// KNOWN SHAPE. VALIDATED AGAINST THE OBVIOUS FAILURES (A NAV/CONTROL LABEL, A CHAPTER-MARKED STRING, THE
+	// SITE NAME, THE CHAPTER HEADING); IF IT RESOLVES TO JUNK, FALL THROUGH TO THE DETERMINISTIC CHAIN.
 	let bookTitle: string | null = null;
-	if (indexUrl) {
+	if (m.bookTitle) {
+		const meta = metaMap(html);
+		const siteName = (meta['og:site_name'] || meta['application-name'] || '').trim();
+		const t = cleanBookTitle(decodeEntities(pickText(root, m.bookTitle)), '');
+		if (
+			t &&
+			t.length <= 120 &&
+			t !== title &&
+			!NAV_NAV.test(t) &&
+			!NAV_LINE.test(t) &&
+			(!siteName || t !== siteName)
+		) {
+			bookTitle = t;
+		}
+	}
+	// (2) THE BREADCRUMB ANCHOR THAT LINKS TO THE INDEX (BUT ISN'T THE "目錄" LABEL ITSELF).
+	if (!bookTitle && indexUrl) {
 		const skip = new Set(m.index?.text ?? []);
 		for (const a of root.querySelectorAll('a')) {
 			const t = a.text.trim();
@@ -561,7 +585,7 @@ export function applyAdapter(root: HTMLElement, html: string, m: SelectorMap, ur
 		if (novelNo && /^\d+$/.test(novelNo)) indexUrl = `https://novelpia.com/novel/${novelNo}`;
 		const og = (metaMap(html)['og:title'] ?? '').trim();
 		const t = og.replace(/^노벨피아\s*-\s*[^-]+-\s*/, '').trim();
-		if (t && t.length <= 120 && t !== og) bookTitle = t;
+		if (t && t.length <= 120 && t !== og && !bookTitle) bookTitle = t;
 	}
 	// METADATA-DERIVED FALLBACK: THE BOOK NAME ALMOST ALWAYS LEADS THE NUMBERED CHAPTER MARKER IN THE PAGE'S
 	// OWN og:title / <title> ("书名_第X章 章节名_站名" → "书名"). WITHOUT THIS, A CHAPTER PAGE WITH NO
@@ -733,6 +757,40 @@ export function buildSkeleton(root: HTMLElement): string {
 	const navLines: string[] = [];
 	const navSeen = new Set<string>();
 	const anchors = root.querySelectorAll('a');
+
+	// BOOK TITLE CANDIDATES: SHORT NON-NAV ANCHOR TEXTS (BREADCRUMB BOOK LINKS) + ELEMENTS WHOSE id/class HINT
+	// AT THE BOOK/SERIES NAME. THIS IS THE MODEL'S "bookTitle" SOURCE — THE BOOK NAME IS *NOT* THE CHAPTER
+	// HEADING, AND MANY SITES ONLY CARRY IT IN A BREADCRUMB OR A DEDICATED BOOK-NAME ELEMENT. ONLY ELEMENTS
+	// WITH A SPECIFIC (tag#id / tag.class) SELECTOR ARE OFFERED — A BARE TAG WOULD LET THE MODEL POINT AT THE
+	// FIRST <a> ON THE PAGE (A LOGO / MENU LINK).
+	const bookCands: string[] = [];
+	const bookSeen = new Set<string>();
+	const pushBook = (sel: string, text: string): void => {
+		const t = clean(text);
+		if (!t || t.length < 2 || t.length > 60) return;
+		if (NAV_NAV.test(t) || NAV_LINE.test(t)) return; // A MENU / CONTROL LABEL, NOT THE BOOK NAME
+		if (BOOK_CUT_CHAPTER.test(t)) return; // A CHAPTER HEADING, NOT THE BOOK NAME
+		const key = `${sel}|${t}`;
+		if (bookSeen.has(key)) return;
+		bookSeen.add(key);
+		bookCands.push(`  ${sel}  "${t.slice(0, 60)}"`);
+	};
+	for (const el of all) {
+		if (bookCands.length >= 12) break;
+		const tag = el.rawTagName?.toLowerCase() ?? '';
+		if (tag === 'script' || tag === 'style') continue;
+		const hint = `${el.getAttribute('id') ?? ''} ${el.getAttribute('class') ?? ''}`.toLowerCase();
+		if (!/book|novel|name|logo|series|title|作品|书名|小说/.test(hint)) continue;
+		const own = ownSelector(el);
+		if (!own) continue;
+		pushBook(own, el.text);
+	}
+	for (const a of anchors) {
+		if (bookCands.length >= 12) break;
+		const own = ownSelector(a);
+		if (!own) continue;
+		pushBook(own, a.text);
+	}
 	const pushNav = (a: HTMLElement): void => {
 		const t = clean(a.text);
 		const href = a.getAttribute('href');
@@ -797,6 +855,13 @@ export function buildSkeleton(root: HTMLElement): string {
 		'TITLE CANDIDATES (selector  "text"):',
 		...titleLines,
 		'',
+		...(bookCands.length
+			? [
+					'BOOK TITLE CANDIDATES (selector  "text") — the BOOK/SERIES name, NOT the chapter heading:',
+					...bookCands,
+					'',
+				]
+			: []),
 		'CONTENT CANDIDATES (selector | chars | preview) — the chapter BODY is the one whose preview is narrative prose, not a menu/comments:',
 		...top.map((c) => `  ${c.sel} | ${c.len} | "${c.preview}"`),
 		'',
@@ -955,19 +1020,37 @@ function cleanBookTitle(raw: string, site: string): string {
 	return t.length >= 2 && t.length <= 120 ? t : '';
 }
 
-// DETERMINISTIC BOOK-TITLE EXTRACTION FROM A CHAPTER PAGE'S OWN METADATA — og:title (FALLBACK: THE DOCUMENT
-// <title>), SITE-NAME STRIPPED AND CUT AT THE FIRST NUMBERED CHAPTER/VOLUME MARKER ("书名_第X章 章节名_站名"
-// → "书名"). USED BY applyAdapter AND THE parseChapter DENSITY FALLBACK SO THE FIRST FETCH OF A NEW BOOK IS
-// NAMED AFTER THE BOOK, NOT ITS FIRST CHAPTER — THE BREADCRUMB-TO-INDEX ANCHOR (applyAdapter'S PRIMARY
-// SIGNAL) IS MISSING ON MOST SITES, AND WITHOUT THIS ingestWebChapter NAMES THE BOOK AFTER parsed.titleSource.
-// `chapterTitle` IS EXCLUDED SO A PAGE WHOSE METADATA *IS* THE CHAPTER HEADING (NO BOOK NAME ANYWHERE)
-// YIELDS null, PRESERVING THE OLD FALLBACK RATHER THAN NAMING THE BOOK AFTER A CHAPTER.
+// THE BOOK NAME, WHEN A PAGE'S <meta name="keywords"> CARRIES IT — CHINESE NOVEL SITES OVERWHELMINGLY WRAP
+// IT IN 《》 (e.g. "《规则怪谈：开局女诡校花和我告白》最新章节,《...》全文阅读"). SITES WITH NO og: TAGS AND A
+// CHAPTER-FIRST <title> (qimao: "第1章 …书名最新章节…" — THE CHAPTER MARKER AT POSITION 0, SO THE MARKER-CUT
+// HELPER FINDS NO BOOK NAME) WOULD OTHERWISE YIELD NOTHING. ONLY A 《...》-WRAPPED CANDIDATE IS TRUSTED — A
+// BARE "书名最新章节" STRING IS TOO EASILY AMBIGUOUS.
+function bookTitleFromKeywords(html: string): string | null {
+	for (const m of html.matchAll(/<meta[^>]+name=["']keywords["'][^>]*>/gi)) {
+		const content = m[0].match(/content\s*=\s*["']([^"']*)["']/i)?.[1];
+		if (!content) continue;
+		const b = content.match(/《([^《》\n]{2,120})》/);
+		if (b) return b[1].trim();
+	}
+	return null;
+}
+
+// DETERMINISTIC BOOK-TITLE EXTRACTION FROM A CHAPTER PAGE'S OWN METADATA — og:title FIRST, THEN A
+// 《书名》-WRAPPED NAME IN <meta name="keywords">, THEN THE DOCUMENT <title> (SITE-NAME STRIPPED AND CUT AT
+// THE FIRST NUMBERED CHAPTER/VOLUME MARKER — "书名_第X章 章节名_站名" → "书名"). USED BY applyAdapter AND
+// THE parseChapter DENSITY FALLBACK SO THE FIRST FETCH OF A NEW BOOK IS NAMED AFTER THE BOOK, NOT ITS FIRST
+// CHAPTER — THE BREADCRUMB-TO-INDEX ANCHOR (applyAdapter'S PRIMARY SIGNAL) IS MISSING ON MOST SITES, AND
+// WITHOUT THIS ingestWebChapter NAMES THE BOOK AFTER parsed.titleSource. `chapterTitle` IS EXCLUDED SO A
+// PAGE WHOSE METADATA *IS* THE CHAPTER HEADING (NO BOOK NAME ANYWHERE) YIELDS null, PRESERVING THE OLD
+// FALLBACK RATHER THAN NAMING THE BOOK AFTER A CHAPTER.
 export function extractBookTitleFromChapterPage(html: string, chapterTitle: string): string | null {
 	const meta = metaMap(html);
 	const site = (meta['og:site_name'] || meta['application-name'] || '').trim();
-	const raw = meta['og:title'] || meta['twitter:title'] || html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || '';
-	const t = cleanBookTitle(decodeEntities(raw), site);
-	return t && t !== chapterTitle ? t : null;
+	let t = cleanBookTitle(meta['og:title'] || meta['twitter:title'] || '', site);
+	if (!t) t = cleanBookTitle(bookTitleFromKeywords(html) ?? '', site);
+	if (!t) t = cleanBookTitle(html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? '', site);
+	const clean = decodeEntities(t);
+	return clean && clean !== chapterTitle ? clean : null;
 }
 
 // EXTRACT THE BOOK'S OWN TITLE FROM ITS INDEX/BOOK PAGE — og:title (THE CLEAN BOOK NAME, WITHOUT THE
@@ -980,7 +1063,10 @@ export function extractBookTitle(html: string): string | null {
 	const meta = metaMap(html);
 	const site = (meta['og:site_name'] || meta['application-name'] || '').trim();
 	let t = cleanBookTitle(meta['og:title'] || meta['twitter:title'] || '', site);
-	// <title> IS ONLY CONSULTED WHEN og:title IS ABSENT — SAFE NOW THAT cleanBookTitle CUTS THE BOILERPLATE
+	// <meta name="keywords"> 《书名》 (INDEX PAGES CARRY "《书名》最新章节" THE SAME WAY) — RESCUES SITES
+	// WITHOUT og: TAGS.
+	if (!t) t = cleanBookTitle(bookTitleFromKeywords(html) ?? '', site);
+	// <title> IS ONLY CONSULTED WHEN THE ABOVE ARE ABSENT — SAFE NOW THAT cleanBookTitle CUTS THE BOILERPLATE
 	// THAT ONCE MADE IT TOO POLLUTED TO TRUST.
 	if (!t) {
 		const titleTag = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1];
@@ -1093,8 +1179,19 @@ function safeNav(rule: NavRule | undefined): NavRule | undefined {
 // MAP AND WHEN READING A STORED ONE, SO ALREADY-PERSISTED OVERFIT MAPS SELF-CORRECT ON THE NEXT FETCH.
 export function sanitizeMap(m: SelectorMap): SelectorMap {
 	// title/body MUST STAY SELECTORS; IF SANITIZE EMPTIES THEM, KEEP THE RAW VALUE — applyAdapter REJECTS A
-	// TRULY-BROKEN ONE AND TRIGGERS A RE-LEARN RATHER THAN US SILENTLY GUESSING.
-	const out: SelectorMap = { title: safeSelector(m.title) ?? m.title, body: safeSelector(m.body) ?? m.body };
+	// TRULY-BROKEN ONE AND TRIGGERS A RE-LEARN RATHER THAN US SILENTLY GUESSING. (bookTitle BELOW IS DROPPED
+	// INSTEAD OF KEPT — IT'S OPTIONAL, SO A BROKEN ONE JUST FALLS BACK TO THE DETERMINISTIC CHAIN.)
+	const out: SelectorMap = {
+		title: safeSelector(m.title) ?? m.title,
+		body: safeSelector(m.body) ?? m.body,
+	};
+	// bookTitle IS OPTIONAL — DROP AN UNSAFE SELECTOR OUTRIGHT (UNLIKE title/body, WHICH MUST SURVIVE SO THE
+	// CALLER CAN DETECT THE BREAK AND RE-LEARN). A BROKEN bookTitle SHOULD JUST FALL BACK TO THE DETERMINISTIC
+	// CHAIN, NOT RISK HALF-MATCHING SOMETHING VIA A PARTIALLY-PARSED SELECTOR.
+	if (m.bookTitle) {
+		const bt = safeSelector(m.bookTitle);
+		if (bt) out.bookTitle = bt;
+	}
 	const prev = safeNav(m.prev);
 	if (prev) out.prev = prev;
 	const next = safeNav(m.next);
@@ -1119,6 +1216,7 @@ export function coerceMap(text: string): SelectorMap {
 		prev?: unknown;
 		next?: unknown;
 		index?: unknown;
+		bookTitle?: unknown;
 		author?: unknown;
 		idUrlPattern?: unknown;
 	};
@@ -1137,6 +1235,8 @@ export function coerceMap(text: string): SelectorMap {
 	if (next) m.next = next;
 	const index = coerceNav(o.index);
 	if (index) m.index = index;
+	const bookTitle = typeof o.bookTitle === 'string' ? o.bookTitle.trim() : '';
+	if (bookTitle) m.bookTitle = bookTitle;
 	const authorSel = (o.author as { sel?: unknown } | undefined)?.sel;
 	if (typeof authorSel === 'string' && authorSel.trim()) m.author = { sel: authorSel.trim() };
 	if (typeof o.idUrlPattern === 'string' && o.idUrlPattern.trim()) m.idUrlPattern = o.idUrlPattern.trim();

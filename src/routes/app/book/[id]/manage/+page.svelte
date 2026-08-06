@@ -13,6 +13,11 @@
 	import { settings, THEME_PANEL, TRANSLATION_MODELS } from '$lib/stores/settings';
 	import { cn } from '$lib/utils/cn';
 	import { ripple } from '$lib/actions/ripple';
+	import { get } from 'svelte/store';
+	import { currentUser } from '$lib/stores/auth';
+	import { enqueueWrite } from '$lib/offline/outbox';
+	import { isOnline } from '$lib/offline/network';
+	import { requireOnline } from '$lib/offline/gate';
 	// IMPORTED DEP-COMPONENTS
 	import ArrowLeft from 'lucide-svelte/icons/arrow-left';
 	import BarChart3 from 'lucide-svelte/icons/bar-chart-3';
@@ -195,6 +200,7 @@
 
 	async function addManual() {
 		if (!pasteTitle.trim() || !pasteContent.trim() || busy) return;
+		if (!requireOnline('Adding a chapter')) return;
 		busy = true;
 		try {
 			const res = await apiFetch(`/api/books/${book.id}/chapters`, {
@@ -221,6 +227,7 @@
 
 	async function addFromUrl() {
 		if (!urlInput.trim() || busy) return;
+		if (!requireOnline('Adding a chapter by URL')) return;
 		busy = true;
 		const tid = toast.loading('Fetching chapter…');
 		try {
@@ -242,6 +249,7 @@
 	}
 
 	async function importFile(kind: 'epub' | 'txt', file: File) {
+		if (!requireOnline('Importing a file')) return;
 		busy = true;
 		const tid = toast.loading(`Importing ${file.name}…`);
 		try {
@@ -364,6 +372,21 @@
 		}
 		// NOTHING CHANGED — JUST CLOSE
 		if (titleSource === it.titleSource && titleTarget === (it.titleTarget ?? '')) return cancelEdit();
+		const uid = get(currentUser)?.id;
+		if (uid && !isOnline()) {
+			const ok = await enqueueWrite(uid, 'chapterPatch', {
+				uuid: it.uuid,
+				patch: { titleSource, titleTarget: titleTarget || null },
+			});
+			if (ok) {
+				items = items.map((x) =>
+					x.uuid === it.uuid ? { ...x, titleSource, titleTarget: titleTarget || null } : x,
+				);
+				cancelEdit();
+				toast.success('Chapter title saved (offline — will sync).');
+				return;
+			}
+		}
 		try {
 			const res = await apiFetch(`/api/chapters/${it.uuid}`, {
 				method: 'PATCH',
@@ -391,6 +414,7 @@
 
 	// AI-FILL A TARGET FIELD (TITLE OR AUTHOR) FROM ITS SOURCE VALUE — GLOSSARY-AWARE FOR THIS BOOK.
 	async function translateBookField(field: 'title' | 'author') {
+		if (!requireOnline('Translating')) return;
 		const source = (field === 'title' ? bTitle : bAuthor).trim();
 		if (!source) return;
 		if (field === 'title') translatingBookTitle = true;
@@ -420,16 +444,28 @@
 			return;
 		}
 		savingBook = true;
+		const uid = get(currentUser)?.id;
+		const fields = {
+			title,
+			titleTarget: bTitleTarget.trim() || null,
+			author: bAuthor.trim() || null,
+			authorTarget: bAuthorTarget.trim() || null,
+		};
+		if (uid && !isOnline()) {
+			const ok = await enqueueWrite(uid, 'bookPatch', { bookId: book.id, patch: fields });
+			if (ok) {
+				book = { ...book, ...fields };
+				editBookOpen = false;
+				toast.success('Book details saved (offline — will sync).');
+				savingBook = false;
+				return;
+			}
+		}
 		try {
 			const res = await apiFetch(`/api/books/${book.id}`, {
 				method: 'PATCH',
 				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({
-					title,
-					titleTarget: bTitleTarget.trim() || null,
-					author: bAuthor.trim() || null,
-					authorTarget: bAuthorTarget.trim() || null,
-				}),
+				body: JSON.stringify(fields),
 			});
 			const d = await res.json().catch(() => ({}));
 			if (!res.ok) throw new Error(d.message ?? 'Could not save.');
@@ -453,6 +489,15 @@
 		const it = pendingDelete;
 		pendingDelete = null;
 		if (!it) return;
+		const uid = get(currentUser)?.id;
+		if (uid && !isOnline()) {
+			const ok = await enqueueWrite(uid, 'chapterDelete', { uuid: it.uuid });
+			if (ok) {
+				items = items.filter((x) => x.uuid !== it.uuid).map((x, i) => ({ ...x, seq: i }));
+				toast.success('Chapter deleted (offline — will sync).');
+				return;
+			}
+		}
 		try {
 			const res = await apiFetch(`/api/chapters/${it.uuid}`, { method: 'DELETE' });
 			if (!res.ok) throw new Error();
@@ -466,6 +511,17 @@
 	async function commitOrder(next: Item[]) {
 		const prev = items;
 		items = next.map((it, i) => ({ ...it, seq: i }));
+		const uid = get(currentUser)?.id;
+		if (uid && !isOnline()) {
+			const ok = await enqueueWrite(uid, 'reorder', {
+				bookId: book.id,
+				order: next.map((i) => i.uuid),
+			});
+			if (ok) {
+				toast.success('Chapter order saved (offline — will sync).');
+				return;
+			}
+		}
 		try {
 			const res = await apiFetch(`/api/books/${book.id}/chapters`, {
 				method: 'PATCH',

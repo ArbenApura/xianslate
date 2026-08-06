@@ -12,6 +12,7 @@ import { browser } from '$app/environment';
 import { get } from 'svelte/store';
 import { refreshUser } from '$lib/stores/auth';
 import { isDarkTheme, settings, THEME_BG, type Theme } from '$lib/stores/settings';
+import { syncNow } from '$lib/offline/sync';
 import { tts } from '$lib/tts/engine';
 
 // -- STATES -- //
@@ -44,9 +45,13 @@ export function initNativeRuntime(): void {
 	}).catch(() => {});
 
 	// LIFECYCLE: PAUSE TTS WHEN THE APP GOES TO THE BACKGROUND (THE WEBVIEW KEEPS RUNNING, SO THE SENTENCE
-	// WOULD OTHERWISE KEEP SPEAKING); FRESHEN THE SESSION WHEN IT RETURNS TO THE FOREGROUND.
+	// WOULD OTHERWISE KEEP SPEAKING); FRESHEN THE SESSION WHEN IT RETURNS TO THE FOREGROUND, AND FLUSH ANY
+	// WRITES QUEUED WHILE OFFLINE (OR AHEAD OF AN IMPENDING NETWORK DROP).
 	App.addListener('pause', () => tts.pause()).catch(() => {});
-	App.addListener('resume', () => refreshUser()).catch(() => {});
+	App.addListener('resume', () => {
+		refreshUser();
+		void syncNow();
+	}).catch(() => {});
 
 	// KEYBOARD: NATIVE RESIZE MODE SO DIALOG INPUTS AREN'T COVERED BY THE ON-SCREEN KEYBOARD.
 	Keyboard.setResizeMode({ mode: KeyboardResize.Native }).catch(() => {});

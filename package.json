@@ -19,7 +19,8 @@
 		"db:generate": "drizzle-kit generate",
 		"db:migrate": "node --env-file-if-exists=.env src/lib/server/db/migrate.ts",
 		"db:push": "drizzle-kit push",
-		"db:studio": "drizzle-kit studio"
+		"db:studio": "drizzle-kit studio",
+		"test": "node --test tests/*.test.ts"
 	},
 	"devDependencies": {
 		"@capacitor/assets": "^3.0.5",

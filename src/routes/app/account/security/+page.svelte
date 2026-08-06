@@ -14,6 +14,8 @@
 	import { authErrorMessage } from '$lib/auth-client';
 	import { currentUser, signOutEverywhere } from '$lib/stores/auth';
 	import { firebaseAuth } from '$lib/firebase';
+	import { clearUserData } from '$lib/offline/db';
+	import { persistSessionUser } from '$lib/offline/session';
 	import { cn } from '$lib/utils/cn';
 	// IMPORTED DEP-COMPONENTS
 	import BadgeCheck from 'lucide-svelte/icons/badge-check';
@@ -47,6 +49,7 @@
 
 	// CLIENT STORE IS AUTHORITATIVE; $page.data.user IS THE SSR SEED FOR FIRST PAINT.
 	$: user = ($currentUser ?? $page.data.user ?? null) as SessionUser | null;
+	$: uid = user?.id ?? null;
 	$: providerLabel = providerLabelOf(fbUser);
 
 	// -- FUNCTIONS -- //
@@ -103,6 +106,8 @@
 				// IGNORE — THE SERVER-SIDE ACCOUNT IS ALREADY GONE.
 			}
 			currentUser.set(null);
+			// WIPE THE DELETED ACCOUNT'S OFFLINE CACHE + PENDING QUEUE (ITS SERVER DATA IS CASCADED AWAY).
+			if (uid) void clearUserData(uid).finally(() => persistSessionUser(null));
 			toast.success('Your account has been deleted.');
 			await goto('/');
 		} catch {
