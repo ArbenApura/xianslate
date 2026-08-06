@@ -15,6 +15,8 @@ jobs:
           node-version: 24
           cache: yarn
       - run: yarn install --frozen-lockfile
+      - name: Generate .svelte-kit (tsconfig + types)
+        run: npx svelte-kit sync
       - name: Unit tests + coverage gate
         run: yarn test:coverage
       - name: svelte-check

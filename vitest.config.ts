@@ -21,10 +21,8 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
 	plugins: [
 		svelte({
-			// generate IS SUPPORTED AT RUNTIME BUT OMITTED FROM THE PLUGIN'S TYPES — CAST THE OPTION NARROWLY.
-			compilerOptions: { generate: 'dom' } as unknown as NonNullable<
-				Parameters<typeof svelte>[0]
-			>['compilerOptions'],
+			// generate IS CONTROLLED BY THE PLUGIN ITSELF (DOM EXCEPT IN SSR) — SETTING IT IS IGNORED
+			// AND WARNED ABOUT. hot:false KEEPS THE DEV SERVER OUT OF THE TEST PIPELINE.
 			hot: false,
 		}),
 	],
