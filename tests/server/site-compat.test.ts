@@ -38,6 +38,21 @@ const SHUBAOW_MAP: SelectorMap = {
 	next: { sel: 'a[href^="/book/"]' },
 };
 
+// JAPANESE SITES — THE SELECTORS THE APP'S AI LEARNS FOR EACH (VERIFIED AGAINST LIVE PAGES):
+// syosetu (小説家になろう): h1.p-novel__title / div.js-novel-text / a[rel=next]
+// kakuyomu (カクヨム):      .widget-episodeTitle / div.widget-episodeBody / the "次のエピソード" anchor
+const SYOSETU_MAP: SelectorMap = {
+	title: 'h1.p-novel__title',
+	body: 'div.js-novel-text',
+	next: { sel: 'a[rel=next]' },
+};
+
+const KAKUYOMU_MAP: SelectorMap = {
+	title: '.widget-episodeTitle',
+	body: 'div.widget-episodeBody',
+	next: { text: ['次のエピソード'] },
+};
+
 describe('site compatibility — qimao.com (SSR, UTF-8)', () => {
 	it('applyAdapter with the learned map extracts title, body, and the next chapter link', () => {
 		const root = parse(page('qimao-chapter.html'));
@@ -77,6 +92,46 @@ describe('site compatibility — shubaow.net (SSR, GBK-encoded)', () => {
 		expect(decoded).toContain('第247章');
 		// NO U+FFFD REPLACEMENT CHARS — THE SIGNATURE OF A WRONG DECODE
 		expect(decoded).not.toContain('\uFFFD');
+	});
+});
+
+describe('site compatibility — syosetu.com (JP, 小説家になろう)', () => {
+	it('applyAdapter with the learned map extracts the episode title, prose, and next-chapter link', () => {
+		const root = parse(page('syosetu-chapter.html'));
+		const parsed = applyAdapter(root, '', SYOSETU_MAP, 'https://ncode.syosetu.com/n2267be/1/');
+		expect(parsed).not.toBeNull();
+		expect(parsed!.titleSource).toContain('プロローグ');
+		expect(parsed!.contentSource.length).toBeGreaterThanOrEqual(MIN_BODY_CHARS);
+		expect(parsed!.nextUrl).toBe('https://ncode.syosetu.com/n2267be/2/');
+	});
+
+	it('the zero-cost fallback extracts real prose (no AI needed)', () => {
+		const root = parse(page('syosetu-chapter.html'));
+		const candidate = findBestContentHtml(root);
+		expect(candidate).not.toBeNull();
+		expect(extractProse(candidate!).length).toBeGreaterThanOrEqual(MIN_BODY_CHARS);
+	});
+});
+
+describe('site compatibility — kakuyomu.jp (JP, カクヨム)', () => {
+	it('applyAdapter extracts the EPISODE title (not the book h1), prose, and the 次のエピソード link', () => {
+		const root = parse(page('kakuyomu-chapter.html'));
+		const parsed = applyAdapter(root, '', KAKUYOMU_MAP, 'https://kakuyomu.jp/works/16816927861337057957/episodes/16817330655646256273');
+		expect(parsed).not.toBeNull();
+		// KAKUYOMU's <h1> IS THE BOOK TITLE — THE EPISODE TITLE LIVES IN .widget-episodeTitle
+		expect(parsed!.titleSource).toContain('Web版と書籍版');
+		expect(parsed!.titleSource).not.toContain('山暮らし');
+		expect(parsed!.contentSource.length).toBeGreaterThanOrEqual(MIN_BODY_CHARS);
+		// THE NEXT LINK IS THE "次のエピソード" ANCHOR — NOT THE TWITTER SHARE BUTTON (WHOSE URL CONTAINS
+		// "episodes" AND WOULD MATCH A NAIVE a[href*=episodes] RULE — THE TEXT-BASED RULE MUST WIN).
+		expect(parsed!.nextUrl).toMatch(/kakuyomu\.jp\/works\/\d+\/episodes\/\d+$/);
+	});
+
+	it('the zero-cost fallback extracts real prose', () => {
+		const root = parse(page('kakuyomu-chapter.html'));
+		const candidate = findBestContentHtml(root);
+		expect(candidate).not.toBeNull();
+		expect(extractProse(candidate!).length).toBeGreaterThanOrEqual(MIN_BODY_CHARS);
 	});
 });
 
