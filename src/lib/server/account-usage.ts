@@ -13,7 +13,7 @@ import type {
 	AccountUsage,
 } from '$lib/types';
 // IMPORTED DEP-MODULES
-import { and, eq, ne, or, sql } from 'drizzle-orm';
+import { and, eq, isNull, ne, or, sql } from 'drizzle-orm';
 // IMPORTED MODULES
 import { db } from './db';
 import { aiUsage, books, chapters, fetchUsage, translations } from './db/schema';
@@ -156,7 +156,8 @@ export async function getAccountUsage(userId: string): Promise<AccountUsage> {
 			.innerJoin(books, eq(chapters.bookId, books.id))
 			.where(eq(books.userId, userId))
 			.groupBy(translations.model),
-		// PER-MODEL AI CALLS — PIPELINE (VIA THE CHAPTER CHAIN) + MAP (VIA userId), UNIONED AND GROUPED.
+		// PER-MODEL AI CALLS — PIPELINE (VIA THE CHAPTER CHAIN) + STANDALONE (VIA userId, NO CHAPTER/BROOK
+		// JOIN — TITLE BACKFILLS, GLOBAL GLOSSARY TERMS, MAP LEARNS), UNIONED AND GROUPED.
 		db
 			.select({
 				model: aiUsage.model,
@@ -171,9 +172,11 @@ export async function getAccountUsage(userId: string): Promise<AccountUsage> {
 			.leftJoin(books, eq(chapters.bookId, books.id))
 			.where(
 				or(
-					// MAP ROWS — ATTRIBUTED VIA THE NEW ai_usage.userId (NO CHAPTER/BOOK JOIN TO RIDE).
-					and(eq(aiUsage.userId, userId), eq(aiUsage.kind, 'map')),
-					// PIPELINE ROWS — INHERIT OWNERSHIP THROUGH THE chapter → book CHAIN (userId IS NULL).
+					// STANDALONE ROWS (chapterId NULL) — ATTRIBUTED VIA THE STAMPED ai_usage.userId SO NO SPEND
+					// IS INVISIBLE (BEFORE THE STAMP, TITLE BACKFILLS + GLOBAL TERMS COUNTED FOR NOBODY).
+					and(eq(aiUsage.userId, userId), isNull(aiUsage.chapterId)),
+					// CHAPTER-ATTRIBUTED ROWS — INHERIT OWNERSHIP THROUGH THE chapter → book CHAIN (COVERS
+					// PRE-STAMP ROWS WHOSE userId IS NULL TOO).
 					and(ne(aiUsage.kind, 'map'), eq(books.userId, userId)),
 				),
 			)

@@ -5,11 +5,14 @@ import { error, json } from '@sveltejs/kit';
 // IMPORTED MODULES
 import { requireUser } from '$lib/server/auth/user';
 import { assertBookOwner, refetchCover } from '$lib/server/books';
+import { assertWithinQuota } from '$lib/server/spend-guard';
 
 // (RE)FETCH THE BOOK COVER FROM ITS WEB SOURCE PAGE. RETURNS { coverUrl } (null IF NONE FOUND). USED BY
 // THE LIBRARY "Fetch cover" / "Refetch cover" ACTION.
 export const POST: RequestHandler = async ({ params, locals }) => {
 	const user = requireUser(locals);
+	// BUDGET/RATE GUARD — A COVER REFETCH IS A PAID WEB REQUEST + POSSIBLY AN AI COVER PICK.
+	await assertWithinQuota(user.id);
 	await assertBookOwner(user.id, params.id);
 	const res = await refetchCover(params.id);
 	if (res.reason === 'not_found') throw error(404, 'Book not found.');

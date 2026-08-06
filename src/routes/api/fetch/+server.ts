@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { requireUser } from '$lib/server/auth/user';
 import { ingestWebChapter } from '$lib/server/books';
 import { isFetchError } from '$lib/server/fetch-error';
+import { assertWithinQuota } from '$lib/server/spend-guard';
 
 // -- CONSTANTS -- //
 
@@ -26,6 +27,8 @@ const Body = z.object({
 
 export const POST: RequestHandler = async ({ request, locals }) => {
 	const user = requireUser(locals);
+	// BUDGET/RATE GUARD — A FETCH MAY BILL A ZYTE REQUEST AND TRIGGER SITE-SELECTOR LEARNING.
+	await assertWithinQuota(user.id);
 	const parsed = Body.safeParse(await request.json().catch(() => null));
 	if (!parsed.success) throw error(400, 'A valid chapter URL is required.');
 	// A FETCH MAY TRIGGER (BILLED) SITE-SELECTOR LEARNING + AUTO-TRANSLATE DOWNSTREAM.

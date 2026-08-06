@@ -190,7 +190,7 @@ async function run(job: Job, force: boolean, autoExtract: boolean) {
 						console.error(`[translate] failed to persist leak repair for chapter ${chapter.id}:`, e);
 					}
 					emit(job, { type: 'delta', text: clean });
-					await recordAiUsage('repair', rep.usage, chapter.id);
+					await recordAiUsage('repair', rep.usage, chapter.id, job.userId);
 					emit(job, { type: 'done', cached: false, matched: terms.length, usage: rep.usage });
 					job.status = 'done';
 					return;
@@ -214,7 +214,7 @@ async function run(job: Job, force: boolean, autoExtract: boolean) {
 					} catch (e) {
 						console.error(`[translate] failed to persist alignment repair for chapter ${chapter.id}:`, e);
 					}
-					await recordAiUsage('repair', re.usage, chapter.id);
+					await recordAiUsage('repair', re.usage, chapter.id, job.userId);
 					emit(job, { type: 'delta', text: aligned });
 					emit(job, { type: 'done', cached: false, matched: terms.length, usage: re.usage });
 					job.status = 'done';
@@ -260,7 +260,7 @@ async function run(job: Job, force: boolean, autoExtract: boolean) {
 						);
 						// LEDGER THE EXTRACTION SPEND AND FOLD IT INTO THIS CHAPTER'S REPORTED COST.
 						extractUsage = exUsage;
-						await recordAiUsage('extract', exUsage, chapter.id);
+						await recordAiUsage('extract', exUsage, chapter.id, job.userId);
 						// ADDITIVE ONLY — NEVER OVERWRITE A TERM ALREADY IN THE GLOSSARY (KEEPS NAMES CONSISTENT). THE
 						// CHAPTER id STAMPS first_chapter_id (FIRST APPEARANCE) ON THE FRESH TERMS.
 						const res = await addNewTerms(chapter.bookId, drafts, chapter.id);
@@ -292,7 +292,7 @@ async function run(job: Job, force: boolean, autoExtract: boolean) {
 				const r = await translateTitle(chapter.titleSource, titleTerms, pair, job.controller.signal, job.model);
 				titleTarget = r.text || chapter.titleSource;
 				titleUsage = r.usage;
-				await recordAiUsage('title', r.usage, chapter.id);
+				await recordAiUsage('title', r.usage, chapter.id, job.userId);
 				await db.update(chapters).set({ titleTarget }).where(eq(chapters.id, chapter.id));
 			} catch {
 				titleTarget = chapter.titleSource;

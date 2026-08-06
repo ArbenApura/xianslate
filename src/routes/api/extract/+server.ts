@@ -13,6 +13,7 @@ import { resolveModel } from '$lib/server/deepseek';
 import { addNewTerms, bookPair, extractTerms, getEffectiveGlossary } from '$lib/server/glossary';
 import { matchTerms, sourcesPresentIn } from '$lib/server/glossary-match';
 import { recordAiUsage } from '$lib/server/site-stats';
+import { assertWithinQuota } from '$lib/server/spend-guard';
 import { stripLeadingTitle } from '$lib/chapter-label';
 
 // -- CONSTANTS -- //
@@ -59,6 +60,8 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 // DISCONNECTS MID-SCAN — THE work IS DRIVEN BY THE STREAM's start(), NOT THE CLIENT CONNECTION.
 export const POST: RequestHandler = async ({ request, locals }) => {
 	const user = requireUser(locals);
+	// BUDGET/RATE GUARD — A MANUAL RE-RUN BILLS THE WHOLE CHAPTER'S EXTRACTION.
+	await assertWithinQuota(user.id);
 	const parsed = Body.safeParse(await request.json().catch(() => null));
 	if (!parsed.success) throw error(400, 'A numeric chapterId is required.');
 	// OWNERSHIP IS CHECKED BEFORE THE STREAM OPENS, SO A 404 IS A NORMAL (NON-SSE) RESPONSE.
@@ -96,7 +99,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 					model,
 				);
 				// THE MANUAL "Extract terms" ACTION BILLS A FULL CHAPTER READ TOO — LEDGER IT (kind='extract').
-				await recordAiUsage('extract', usage, chapter.id);
+				await recordAiUsage('extract', usage, chapter.id, user.id);
 				// ADDITIVE ONLY — SKIP TERMS ALREADY IN THE GLOSSARY (BOOK OR GLOBAL); NEVER OVERWRITE THEM. THE
 				// CHAPTER id STAMPS first_chapter_id (FIRST APPEARANCE) ON THE FRESH TERMS.
 				const { added } = await addNewTerms(chapter.bookId, terms, chapter.id);

@@ -65,17 +65,25 @@ export async function recordMapUsage(host: string, usage: TranslationUsage, user
 	}
 }
 
-// LEDGER ONE NON-TRANSLATION-CACHE MODEL CALL (kind = 'extract' | 'title' | 'term' | 'repair'). THESE ARE
-// PER-CHAPTER PIPELINE EXPENSES THAT DON'T LAND IN THE translations CACHE ROW, SO WITHOUT THIS THEY WERE
+// LEDGER ONE NON-TRANSLATION-CACHE MODEL CALL (kind = 'extract' | 'title' | 'term' | 'repair' | 'map'). THESE
+// ARE PER-CHAPTER PIPELINE EXPENSES THAT DON'T LAND IN THE translations CACHE ROW, SO WITHOUT THIS THEY WERE
 // SPENT BUT NEVER COUNTED. PASS chapterId FOR CHAPTER-SCOPED CALLS SO THE STATS DIALOG CAN ATTRIBUTE THEM
-// (NULL FOR BOOK/TEXT-LEVEL CALLS LIKE A TITLE BACKFILL). A ZERO-COST / NO-OP CALL (CACHED TITLE REUSE,
-// NO-RESIDUE REPAIR) IS SKIPPED SO THE LEDGER STAYS MEANINGFUL.
-export async function recordAiUsage(kind: string, usage: TranslationUsage, chapterId?: number | null): Promise<void> {
+// (NULL FOR BOOK/TEXT-LEVEL CALLS LIKE A TITLE BACKFILL OR A GLOBAL GLOSSARY TERM). THE CALLER'S userId IS
+// STAMPED ON EVERY ROW SO NO SPEND IS EVER UNATTRIBUTABLE — STANDALONE ROWS (chapterId NULL) ARE COUNTED PER
+// ACCOUNT VIA THIS COLUMN (account-usage.ts). A ZERO-COST / NO-OP CALL (CACHED TITLE REUSE, NO-RESIDUE
+// REPAIR) IS SKIPPED SO THE LEDGER STAYS MEANINGFUL.
+export async function recordAiUsage(
+	kind: string,
+	usage: TranslationUsage,
+	chapterId?: number | null,
+	userId?: string | null,
+): Promise<void> {
 	if (!usage || (usage.promptTokens === 0 && usage.completionTokens === 0 && usage.costUsd === 0)) return;
 	try {
 		await db.insert(aiUsage).values({
 			kind,
 			chapterId: chapterId ?? null,
+			userId: userId || null,
 			model: usage.model,
 			promptTokens: usage.promptTokens,
 			cachedTokens: usage.cachedTokens,

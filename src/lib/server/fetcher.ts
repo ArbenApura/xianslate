@@ -5,6 +5,9 @@ import { env } from '$env/dynamic/private';
 // IMPORTED DEP-MODULES
 import { execFile } from 'node:child_process';
 import { lookup } from 'node:dns/promises';
+import { request as httpRequest } from 'node:http';
+import { request as httpsRequest } from 'node:https';
+import type { LookupFunction } from 'node:net';
 import { existsSync } from 'node:fs';
 import { promisify } from 'node:util';
 import PQueue from 'p-queue';
@@ -210,38 +213,74 @@ function decodeHtmlBytes(bytes: Uint8Array, contentType: string | null, hints: s
 	return decodeTextBytes(bytes, true, hints);
 }
 
-// READ A RESPONSE BODY WITH A HARD BYTE CEILING, STREAMING SO WE NEVER BUFFER MORE THAN MAX_BODY_BYTES BEFORE
-// BAILING. RETURNS THE RAW BYTES (CHARSET DETECTION RUNS ON THEM). THROWS A TYPED too_large ON OVERFLOW.
-async function readBodyCapped(res: Response, host: string): Promise<Uint8Array> {
-	const tooLarge = () =>
-		new FetchError('too_large', 'That page is too large for us to open. Try a direct chapter link.', host);
-	const reader = res.body?.getReader();
-	// NO STREAM (SHOULDN'T HAPPEN FOR A 200 BODY) → FALL BACK TO arrayBuffer WITH A POST-HOC SIZE CHECK.
-	if (!reader) {
-		const buf = new Uint8Array(await res.arrayBuffer());
-		if (buf.length > MAX_BODY_BYTES) throw tooLarge();
-		return buf;
-	}
-	const chunks: Uint8Array[] = [];
-	let total = 0;
-	for (;;) {
-		const { done, value } = await reader.read();
-		if (done) break;
-		if (!value) continue;
-		total += value.length;
-		if (total > MAX_BODY_BYTES) {
-			await reader.cancel().catch(() => {});
-			throw tooLarge();
-		}
-		chunks.push(value);
-	}
-	const out = new Uint8Array(total);
-	let offset = 0;
-	for (const c of chunks) {
-		out.set(c, offset);
-		offset += c.length;
-	}
-	return out;
+// PERFORM THE ACTUAL DIRECT-PATH REQUEST WITH THE *EXACT IP assertPublicUrl VALIDATED* — THE CORE OF THE
+// SSRF PIN. node's fetch/undici RE-RESOLVES THE HOSTNAME ITSELF (A SECOND, INDEPENDENT DNS LOOKUP THE
+// ATTACKER COULD FLIP TO A PRIVATE/METADATA ADDRESS BETWEEN OUR CHECK AND THE CONNECT — THE DNS-REBINDING
+// TOCTOU). http(s).request's `lookup` OPTION OVERRIDES RESOLUTION, SO THE CONNECTION IS PINNED TO THE
+// ADDRESS WE ALREADY CHECKED (THE SAME PIN THE curl FALLBACK APPLIES VIA --resolve). TLS STILL VALIDATES
+// THE REAL HOSTNAME (SNI + cert), AND REDIRECTS STAY MANUAL — EVERY HOP RE-RUNS assertPublicUrl.
+//
+// THE BODY IS STREAMED WITH A HARD BYTE CEILING (MAX_BODY_BYTES) SO WE NEVER BUFFER AN UNBOUNDED PAGE;
+// AN OVERFLOW REJECTS WITH A TYPED too_large (THE CALLER DOES NOT RETRY IT VIA curl).
+async function pinnedRequest(
+	url: URL,
+	pin: { address: string; family: number },
+	headers: Record<string, string>,
+	signal?: AbortSignal,
+): Promise<{ status: number; location: string | null; contentType: string | null; body: Uint8Array }> {
+	const mod = url.protocol === 'https:' ? httpsRequest : httpRequest;
+	return new Promise((resolve, reject) => {
+		const tooLarge = () =>
+			new FetchError('too_large', 'That page is too large for us to open. Try a direct chapter link.', url.hostname);
+		const req = mod(
+			{
+				hostname: url.hostname,
+				port: url.port ? Number(url.port) : url.protocol === 'https:' ? 443 : 80,
+				path: `${url.pathname}${url.search}`,
+				method: 'GET',
+				headers,
+				signal,
+				// NODE CALLS THE CUSTOM lookup WITH { all: true } BY DEFAULT — RETURN THE ARRAY FORM THEN,
+				// THE SINGLE-ADDRESS FORM OTHERWISE (node:net VALIDATES THE RESULT BY opts.all).
+				lookup: ((_host: string, opts: object, cb: Parameters<LookupFunction>[2]) => {
+					if ((opts as { all?: boolean }).all) {
+						cb(null, [{ address: pin.address, family: pin.family }]);
+					} else {
+						cb(null, pin.address, pin.family);
+					}
+				}) as LookupFunction,
+			},
+			(res) => {
+				const chunks: Uint8Array[] = [];
+				let total = 0;
+				res.on('data', (c: Buffer) => {
+					total += c.length;
+					if (total > MAX_BODY_BYTES) {
+						req.destroy(tooLarge());
+						return;
+					}
+					chunks.push(new Uint8Array(c));
+				});
+				res.on('end', () => {
+					const body = new Uint8Array(total);
+					let offset = 0;
+					for (const c of chunks) {
+						body.set(c, offset);
+						offset += c.length;
+					}
+					resolve({
+						status: res.statusCode ?? 0,
+						location: (res.headers.location ?? null) as string | null,
+						contentType: (res.headers['content-type'] ?? null) as string | null,
+						body,
+					});
+				});
+				res.on('error', (e) => reject(e));
+			},
+		);
+		req.on('error', (e) => reject(e));
+		req.end();
+	});
 }
 
 // CURL FALLBACK — PROVEN TO PASS THE SITE'S BOT CHECK ON THIS HOST. `pin` IS THE PRE-VALIDATED IP.
@@ -403,31 +442,25 @@ async function directFetchHtml(url: string, acceptLanguage: string, hints: strin
 	let current = url;
 	for (let hop = 0; hop < MAX_REDIRECTS; hop++) {
 		const pin = await assertPublicUrl(current);
-		let res: Response;
+		let res: { status: number; location: string | null; contentType: string | null; body: Uint8Array };
 		try {
-			res = await fetch(current, {
-				headers,
-				redirect: 'manual', // WE RESOLVE REDIRECTS OURSELVES AND RE-VALIDATE EACH TARGET
-				signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-			});
-		} catch {
-			// NETWORK ERROR / TIMEOUT → TRY THE curl FALLBACK ON THIS VALIDATED, PINNED URL
+			res = await pinnedRequest(new URL(current), pin, headers, AbortSignal.timeout(FETCH_TIMEOUT_MS));
+		} catch (e) {
+			// A TYPED FetchError (too_large) IS FINAL — DON'T RE-FETCH THE SAME HUGE PAGE VIA curl. ANY
+			// OTHER FAILURE (DNS/TLS/TIMEOUT/REFUSED) → TRY THE curl FALLBACK ON THIS VALIDATED, PINNED URL.
+			if (e instanceof FetchError) throw e;
 			return await curlFetch(pin.url, pin, acceptLanguage, hints);
 		}
 		if (res.status >= 300 && res.status < 400) {
-			const loc = res.headers.get('location');
+			const loc = res.location;
 			if (!loc)
 				throw new FetchError('http_error', 'This page didn’t load correctly. Please try again in a moment.');
 			current = new URL(loc, current).href; // LOOP RE-VALIDATES IT
 			continue;
 		}
-		if (res.ok)
+		if (res.status >= 200 && res.status < 300)
 			return {
-				html: decodeHtmlBytes(
-					await readBodyCapped(res, pin.url.hostname),
-					res.headers.get('content-type'),
-					hints,
-				),
+				html: decodeHtmlBytes(res.body, res.contentType, hints),
 				provider: 'direct',
 				costUsd: 0,
 			};

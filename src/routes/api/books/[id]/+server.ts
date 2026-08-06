@@ -94,7 +94,7 @@ export const POST: RequestHandler = async ({ params, locals }) => {
 		if (!titleTarget) {
 			const terms = await matchTerms(book.id, book.title);
 			const { text, usage } = await translateTitle(book.title, terms, pair);
-			await recordAiUsage('title', usage);
+			await recordAiUsage('title', usage, undefined, user.id);
 			titleTarget = text || book.title;
 			set.titleTarget = titleTarget;
 		}
@@ -102,7 +102,7 @@ export const POST: RequestHandler = async ({ params, locals }) => {
 			// AUTHOR IS A PERSON NAME → RENDER INTO THE TARGET LANGUAGE VIA THE TERM TRANSLATOR, GLOSSARY-AWARE
 			const terms = await matchTerms(book.id, book.author);
 			const { text, usage } = await translateTerm(book.author, pair, terms);
-			await recordAiUsage('term', usage);
+			await recordAiUsage('term', usage, undefined, user.id);
 			authorTarget = text || book.author;
 			set.authorTarget = authorTarget;
 		}

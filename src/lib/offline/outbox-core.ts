@@ -7,11 +7,18 @@ export type OutboxStatus = 'success' | 'retry' | 'drop';
 //   - success  → REMOVE THE OP AND MOVE ON
 //   - retry    → KEEP THE OP, STOP THE FLUSH (NETWORK GONE / 5xx / UNKNOWN — TRY AGAIN ON NEXT ONLINE)
 //   - drop     → REMOVE THE OP (PERMANENT 4xx — THE ROW IS GONE OR THE REQUEST IS MEANINGLESS NOW)
+//
+// NOT EVERY 4xx IS PERMANENT: 401 (FIREBASE SESSION RESTORE STILL IN FLIGHT AT BOOT — authHeaders() HAS NO
+// BEARER YET), 408 (REQUEST TIMEOUT), 425 (TOO EARLY) AND 429 (RATE LIMIT) ARE TRANSIENT — DROPPING THEM
+// WOULD SILENTLY LOSE THE USER'S QUEUED OFFLINE WRITES. ONLY STATUSES THAT MEAN "THIS REQUEST WILL NEVER
+// SUCCEED" (404/410/422 + THE 400-CLASS VALIDATION FAILURES) ARE PERMANENT.
+const TRANSIENT_4XX = new Set([401, 408, 425, 429]);
+
 export function classifyOutcome(e: unknown): OutboxStatus {
 	if (!(e instanceof Error)) return 'retry';
 	const status = (e as Error & { status?: number }).status;
 	if (typeof status === 'number') {
-		if (status >= 400 && status < 500) return 'drop';
+		if (status >= 400 && status < 500) return TRANSIENT_4XX.has(status) ? 'retry' : 'drop';
 		return 'retry'; // 5xx OR ANY 2xx-3xx RANGE WE NEVER THROW — RETRY TO BE SAFE
 	}
 	return 'retry'; // NETWORK-TYPE THROW (NO STATUS) — OFFLINE, RETRY LATER

@@ -11,12 +11,14 @@ import { resolveModel } from '$lib/server/deepseek';
 import { bookPair } from '$lib/server/glossary';
 import { matchTerms } from '$lib/server/glossary-match';
 import { recordAiUsage } from '$lib/server/site-stats';
+import { assertWithinQuota } from '$lib/server/spend-guard';
 import { translateTerm, translateTitle } from '$lib/server/translate';
 
 // -- CONSTANTS -- //
 
 const Body = z.object({
-	text: z.string().trim().min(1),
+	// A TITLE/TERM IS A SHORT STRING — CAP IT SO ONE REQUEST CAN'T BILL UNBOUNDED TOKENS.
+	text: z.string().trim().min(1).max(2000, 'Text is too long (max 2000 characters).'),
 	// 'title' = A CHAPTER TITLE (GLOSSARY-AWARE); 'term' = A SINGLE GLOSSARY ENTRY
 	kind: z.enum(['title', 'term']).default('title'),
 	// SCOPES GLOSSARY MATCHING FOR 'title' SO NAMES IN THE TITLE STAY CONSISTENT WITH THE BOOK
@@ -37,6 +39,8 @@ const Body = z.object({
 // ONE-OFF SHORT-STRING TRANSLATION (TITLE OR GLOSSARY TERM) — USED BY THE INLINE "Translate" HELPERS.
 export const POST: RequestHandler = async ({ request, locals }) => {
 	const user = requireUser(locals);
+	// BUDGET/RATE GUARD — EVERY CALL HERE MAY BILL A MODEL RUN.
+	await assertWithinQuota(user.id);
 	const parsed = Body.safeParse(await request.json().catch(() => null));
 	if (!parsed.success) throw error(400, 'Text is required.');
 	const { text, kind, bookId, chapterId, fresh } = parsed.data;
@@ -67,13 +71,13 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			const ctx = fresh ? terms.filter((t) => t.source !== text) : terms;
 			const r = await translateTerm(text, pair, ctx, undefined, model);
 			// LEDGER THE ONE-OFF TERM TRANSLATION SPEND (kind='term'), ATTRIBUTED TO THE CHAPTER WHEN ONE IS GIVEN.
-			await recordAiUsage('term', r.usage, chapterId);
+			await recordAiUsage('term', r.usage, chapterId, user.id);
 			return json({ text: r.text });
 		}
 		// TITLE: FEED ANY GLOSSARY TERMS THAT APPEAR IN THE TITLE SO NAMES RENDER CONSISTENTLY
 		const r = await translateTitle(text, terms, pair, undefined, model);
 		// LEDGER THE ONE-OFF TITLE TRANSLATION SPEND (kind='title'), ATTRIBUTED TO THE CHAPTER WHEN ONE IS GIVEN.
-		await recordAiUsage('title', r.usage, chapterId);
+		await recordAiUsage('title', r.usage, chapterId, user.id);
 		return json({ text: r.text });
 	} catch (e) {
 		throw error(502, e instanceof Error ? e.message : 'Translation failed.');

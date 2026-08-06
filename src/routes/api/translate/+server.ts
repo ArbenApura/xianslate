@@ -9,6 +9,7 @@ import type { TranslationEvent } from '$lib/server/translation-service';
 import { requireUser } from '$lib/server/auth/user';
 import { assertChapterOwner } from '$lib/server/books';
 import { resolveModel } from '$lib/server/deepseek';
+import { assertWithinQuota } from '$lib/server/spend-guard';
 import { ensureTranslationJob, subscribe } from '$lib/server/translation-service';
 
 // -- CONSTANTS -- //
@@ -26,6 +27,8 @@ const Body = z.object({
 
 export const POST: RequestHandler = async ({ request, locals }) => {
 	const user = requireUser(locals);
+	// BUDGET/RATE GUARD — A force RE-RUN BILLS THE WHOLE PIPELINE, SO CAP PER-USER SPEND BEFORE ANY WORK.
+	await assertWithinQuota(user.id);
 	const parsed = Body.safeParse(await request.json().catch(() => null));
 	if (!parsed.success) throw error(400, 'A numeric chapterId is required.');
 

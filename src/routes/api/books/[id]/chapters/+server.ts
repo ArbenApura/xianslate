@@ -16,8 +16,9 @@ import { isFetchError } from '$lib/server/fetch-error';
 const AddBody = z.discriminatedUnion('kind', [
 	z.object({
 		kind: z.literal('manual'),
-		titleSource: z.string().trim().min(1),
-		contentSource: z.string().trim().min(1),
+		// CAP THE PASTED CHAPTER SO A SINGLE REQUEST CAN'T BILL UNBOUNDED EXTRACTION/TRANSLATION TOKENS.
+		titleSource: z.string().trim().min(1).max(500, 'Title is too long.'),
+		contentSource: z.string().trim().min(1).max(2_000_000, 'Chapter text is too long (max 2MB).'),
 	}),
 	z.object({ kind: z.literal('url'), url: z.string().url() }),
 ]);

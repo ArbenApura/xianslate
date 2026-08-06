@@ -520,6 +520,12 @@ export async function addNewTerms(
 // EXTRACT GLOSSARY TERM DRAFTS FROM A CHAPTER VIA DEEPSEEK (WHOLE CHAPTER, ROBUST, DEDUPED).
 // `known` = THE BOOK'S EXISTING EFFECTIVE GLOSSARY; THE TERMS AMONG IT THAT APPEAR IN EACH CHUNK ARE
 // FED TO THE MODEL AS AN "ESTABLISHED GLOSSARY" SO NEW TERMS ARE TRANSLATED CONSISTENTLY WITH THEM.
+//
+// COST GUARD: THE NUMBER OF CHUNKS IS *CAPPED* — EACH CHUNK IS A BILLED DEEPSEEK CALL, SO AN ABSURDLY LONG
+// CHAPTER (UP TO THE 25MB INGEST LIMIT WOULD MEAN ~2,800 CALLS) MUST NOT RUN UNBOUNDED. ANY CHAPTER BEYOND
+// THE CAP IS EXTRACTED UP TO THE CAP AND THE REMAINDER IS SKIPPED (EXTRACTION IS BEST-EFFORT — A CHAPTER
+// PAST ~1.8MB OF SOURCE TEXT IS PATHOLOGICAL FOR A NOVEL CHAPTER ANYWAY).
+export const MAX_EXTRACT_CHUNKS = 200;
 export async function extractTerms(
 	contentSource: string,
 	pair: LangPair,
@@ -530,10 +536,13 @@ export async function extractTerms(
 	model: string = MODEL,
 ): Promise<{ terms: TermDraft[]; usage: TranslationUsage }> {
 	if (!hasApiKey()) throw new Error('DEEPSEEK_API_KEY is not configured.');
+	// A STANDARD AbortError (Node's DOMException IS GLOBAL HERE, BUT AN Error WITH name 'AbortError' WORKS
+	// EVERYWHERE AND THE CALLER ONLY TESTS signal.aborted / name).
+	const abortErr = () => Object.assign(new Error('Extraction aborted'), { name: 'AbortError' });
 	const src = getLanguage(pair.sourceLang);
 	const tgt = getLanguage(pair.targetLang);
 	const system = extractSystem(src, tgt);
-	const chunks = chunkForExtraction(contentSource);
+	const chunks = chunkForExtraction(contentSource).slice(0, MAX_EXTRACT_CHUNKS);
 	const bySource = new Map<string, TermDraft>();
 	// SUM THE TOKENS/COST OF EVERY EXTRACTION CHUNK SO THIS PASS'S SPEND CAN BE BILLED — IT READS THE WHOLE
 	// CHAPTER THROUGH THE MODEL ONCE AND WAS PREVIOUSLY DISCARDED, SILENTLY UNDER-REPORTING TOTAL COST.
@@ -542,6 +551,9 @@ export async function extractTerms(
 	onProgress?.(0, chunks.length, 0);
 
 	for (let i = 0; i < chunks.length; i++) {
+		// A SUPERSEDED JOB (FORCE RE-RUN ABORTED THE PREVIOUS CONTROLLER) MUST STOP IMMEDIATELY — KEEPING GOING
+		// WOULD BILL THE CHUNKS AND PERSIST TERMS/EXTRACTEDAt *AFTER* THE NEW JOB TOOK OVER (DOUBLE-BILLING).
+		if (signal?.aborted) throw abortErr();
 		const chunk = chunks[i];
 		// CONNECTED CONTEXT = THE DB GLOSSARY *PLUS* TERMS ALREADY EXTRACTED IN EARLIER CHUNKS OF THIS RUN.
 		// KEEPS LATER CHUNKS CONSISTENT WITH EARLIER ONES AND GIVES THE MODEL CANONICAL RENDERINGS TO REUSE.
@@ -615,9 +627,11 @@ export async function extractTerms(
 			// FOLD THIS CHUNK'S TOKENS INTO THE RUN TOTAL (DEDUPING IS LOCAL/FREE — ONLY THE API CALL BILLS).
 			usage = addUsage(usage, computeUsage(usageRaw, model));
 			text = acc || '{}';
-		} catch {
-			// ONE CHUNK FAILING MUST NOT LOSE THE TERMS FROM THE REST OF THE CHAPTER — text STAYS '{}'
-			// (NO TERMS FROM THIS CHUNK) AND WE STILL REPORT PROGRESS BELOW.
+		} catch (e) {
+			// AN ABORT IS NOT A CHUNK FAILURE — PROPAGATE IT SO THE WHOLE RUN STOPS AND THE CALLER SKIPS ITS
+			// BILLING/TERM WRITES (A SUPERSEDED RUN MUST NOT BILL THE REMAINING CHUNKS). ANY OTHER FAILURE IS
+			// CHUNK-LOCAL: text STAYS '{}' (NO TERMS FROM THIS CHUNK) AND WE STILL REPORT PROGRESS BELOW.
+			if (signal?.aborted) throw e;
 			text = '{}';
 		}
 		for (const item of parseTermObjects(text)) {

@@ -13,14 +13,26 @@ import {
 
 // -- classifyOutcome -- //
 
-test('classifyOutcome: a 4xx status is a permanent drop', () => {
+test('classifyOutcome: a permanent 4xx status is dropped', () => {
 	const err = new Error('gone') as Error & { status: number };
 	err.status = 404;
 	assert.equal(classifyOutcome(err), 'drop');
 	err.status = 409;
 	assert.equal(classifyOutcome(err), 'drop');
-	err.status = 401;
+	err.status = 410;
 	assert.equal(classifyOutcome(err), 'drop');
+	err.status = 422;
+	assert.equal(classifyOutcome(err), 'drop');
+});
+
+test('classifyOutcome: transient 4xx statuses (401/408/425/429) are retried, not dropped', () => {
+	// DROPPING THESE WOULD SILENTLY LOSE QUEUED OFFLINE WRITES — e.g. THE BOOT FLUSH HITTING 401 BEFORE THE
+	// FIREBASE SESSION RESTORE FINISHES (authHeaders() HAS NO BEARER YET), OR 429 RATE LIMITS.
+	for (const s of [401, 408, 425, 429]) {
+		const err = new Error(`status ${s}`) as Error & { status: number };
+		err.status = s;
+		assert.equal(classifyOutcome(err), 'retry', `${s} must retry`);
+	}
 });
 
 test('classifyOutcome: a network-type throw (no status) retries', () => {

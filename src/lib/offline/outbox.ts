@@ -135,10 +135,12 @@ export async function flushOutbox(userId: string): Promise<number> {
 				await outboxRemove(op.id ?? 0);
 				flushed++;
 			} catch (e) {
-				// PERMANENT 4xx (BOOK/TERM DELETED ELSEWHERE, ETC.) → DROP SO IT CAN'T POISON THE QUEUE.
-				// ANYTHING ELSE (NETWORK, 5xx) → KEEP FOR THE NEXT ONLINE EVENT.
+				// PERMANENT 4xx (BOOK/TERM DELETED ELSEWHERE, ETC.) → DROP IT AND KEEP FLUSHING (A DROPPED OP
+				// MUST NOT BLOCK THE OPS AFTER IT — THE MODULE CONTRACT AT THE TOP OF THIS FUNCTION).
+				// ANYTHING ELSE (NETWORK, 5xx, TRANSIENT 4xx) → KEEP IT AND STOP: THE NEXT ONLINE EVENT RETRIES.
 				if (classifyOutcome(e) === 'drop') {
 					await outboxRemove(op.id ?? 0);
+					continue;
 				}
 				break;
 			}

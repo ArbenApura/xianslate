@@ -6,6 +6,7 @@ import { z } from 'zod';
 // IMPORTED MODULES
 import { requireUser } from '$lib/server/auth/user';
 import { getOwnedChapterByUuid, refreshChapterNav } from '$lib/server/books';
+import { assertWithinQuota } from '$lib/server/spend-guard';
 
 // -- CONSTANTS -- //
 
@@ -17,6 +18,8 @@ const Body = z.object({ uuid: z.string().min(1) });
 // ONCE A NEWER ONE EXISTS, OR A PREVIOUSLY MIS-SCRAPED LINK). RETURNS THE UPDATED CHAPTER VIEW.
 export const POST: RequestHandler = async ({ request, locals }) => {
 	const user = requireUser(locals);
+	// BUDGET/RATE GUARD — REFRESH RE-READS THE LIVE PAGE (PAID FETCH + RE-LEARN POSSIBLE).
+	await assertWithinQuota(user.id);
 	const parsed = Body.safeParse(await request.json().catch(() => null));
 	if (!parsed.success) throw error(400, 'A chapter uuid is required.');
 	// OWNERSHIP: ONLY REFRESH A CHAPTER IN THE CALLER'S LIBRARY.

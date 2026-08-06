@@ -1038,7 +1038,10 @@
 		// HOW MUCH OF THE CHAPTER HAS NOW BEEN SEEN: THE FRACTION FROM THE TOP DOWN TO THE VIEWPORT'S BOTTOM.
 		// REACHES 1 AT THE END (AND IMMEDIATELY FOR A CHAPTER THAT FITS ON ONE SCREEN). MONOTONIC — ONLY GROWS.
 		const seen = h.scrollHeight > 0 ? Math.min(1, (y + h.clientHeight) / h.scrollHeight) : 0;
-		if (!restoringScroll && seen > chapterMax) {
+		// WHILE TRANSLATING THE CHAPTER IS SHORTER THAN IT WILL BE (DELTAS STREAM IN AND GROW THE PAGE) — A
+		// SCROLL TO THE *TEMP* BOTTOM WOULD CLAMP seen TO 1 AND MARK THE CHAPTER "READ" WHEN ONLY A FRACTION
+		// WAS EVER SHOWN. DEFER ALL PROGRESS ADVANCEMENT UNTIL THE STREAM SETTLES (translating === false).
+		if (!restoringScroll && !translating && seen > chapterMax) {
 			chapterMax = seen;
 			scheduleProgressSave();
 		}

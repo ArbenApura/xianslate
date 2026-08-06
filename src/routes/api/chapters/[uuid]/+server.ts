@@ -14,10 +14,10 @@ import type { RequestHandler } from './$types';
 
 const PatchBody = z
 	.object({
-		titleSource: z.string().trim().min(1).optional(),
+		titleSource: z.string().trim().min(1).max(500, 'Title is too long.').optional(),
 		// EDITABLE TARGET-LANGUAGE TITLE — EMPTY/null CLEARS IT (FALLS BACK TO THE SOURCE TITLE IN THE READER)
-		titleTarget: z.string().trim().nullable().optional(),
-		contentSource: z.string().trim().min(1).optional(),
+		titleTarget: z.string().trim().max(500, 'Title is too long.').nullable().optional(),
+		contentSource: z.string().trim().min(1).max(2_000_000, 'Chapter text is too long (max 2MB).').optional(),
 	})
 	.refine(
 		(b) => b.titleSource !== undefined || b.titleTarget !== undefined || b.contentSource !== undefined,
