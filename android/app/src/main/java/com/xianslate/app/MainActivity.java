@@ -1,4 +1,4 @@
-package dev.xianslate.app;
+package com.xianslate.app;
 
 import android.os.Bundle;
 import android.view.View;

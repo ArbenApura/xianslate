@@ -1,10 +1,26 @@
 apply plugin: 'com.android.application'
 
 android {
-    namespace = "dev.xianslate.app"
+    namespace = "com.xianslate.app"
     compileSdk = rootProject.ext.compileSdkVersion
+    // LOCAL SIGNING CREDENTIALS FROM android/app/keystore.properties (GITIGNORED) — NEVER HARD-CODE
+    // PASSWORDS IN THIS FILE. THE BLOCK NO-OPS WHEN THE FILE IS MISSING (DEBUG BUILDS / CI WITHOUT THE
+    // KEYSTORE STILL WORK; RELEASE IS THEN UNSIGNED, AS BEFORE).
+    def keystoreFile = file('keystore.properties')
+    signingConfigs {
+        if (keystoreFile.exists()) {
+            def keystoreProps = new Properties()
+            keystoreFile.withInputStream { keystoreProps.load(it) }
+            release {
+                storeFile file(keystoreProps['storeFile'])
+                storePassword keystoreProps['storePassword']
+                keyAlias keystoreProps['keyAlias']
+                keyPassword keystoreProps['keyPassword']
+            }
+        }
+    }
     defaultConfig {
-        applicationId "dev.xianslate.app"
+        applicationId "com.xianslate.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
@@ -18,6 +34,10 @@ android {
     }
     buildTypes {
         release {
+            // SIGN WITH THE RELEASE KEYSTORE WHEN keystore.properties EXISTS (SEE signingConfigs ABOVE).
+            if (keystoreFile.exists()) {
+                signingConfig signingConfigs.release
+            }
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }

@@ -228,7 +228,7 @@ yarn cap:ios
 
 ### Firebase console setup (one-time, per platform)
 
--   **Android**: add an Android app (package `dev.xianslate.app`) and register the debug keystore **SHA-1**
+-   **Android**: add an Android app (package `com.xianslate.app`) and register the debug keystore **SHA-1**
     fingerprint (`keytool -list -v -keystore ~/.android/debug.keystore -alias androiddebugkey -storepass android`)
     so native **Google sign-in** works. Email/password needs nothing extra.
 -   **iOS**: drop `GoogleService-Info.plist` into `ios/App/App/` when you build on a Mac.

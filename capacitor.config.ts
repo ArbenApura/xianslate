@@ -4,7 +4,7 @@ import type { CapacitorConfig } from '@capacitor/cli';
 // WHICH TALKS TO THE DEPLOYED API CROSS-ORIGIN (PUBLIC_API_BASE). webDir MUST MATCH THE ADAPTER-STATIC
 // OUTPUT DIR IN vite.config.ts.
 const config: CapacitorConfig = {
-	appId: 'dev.xianslate.app',
+	appId: 'com.xianslate.app',
 	appName: 'Xianslate',
 	webDir: 'build-capacitor',
 	// ANDROID SERVES THE SPA AT https://localhost (iOS WKWebView USES capacitor://localhost BY DEFAULT) —

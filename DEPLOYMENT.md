@@ -113,7 +113,7 @@ already in the code:
     a gitignored `.env.capacitor` (e.g. `PUBLIC_API_BASE=https://xianslate.fly.dev`) — **not** in `.env`, which
     would redirect local web dev at the live API. Then `yarn build:capacitor && npx cap sync` and build the
     native project (`android/` is committed; `ios/` is generated on a Mac).
--   **Firebase console**: add the Android app (package `dev.xianslate.app`) and its debug-keystore SHA-1 for
+-   **Firebase console**: add the Android app (package `com.xianslate.app`) and its debug-keystore SHA-1 for
     native Google sign-in; iOS needs `GoogleService-Info.plist`.
 
 Full build/run instructions: README → _Mobile apps (Capacitor)_.

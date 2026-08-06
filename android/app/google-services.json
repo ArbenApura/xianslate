@@ -7,12 +7,57 @@
   "client": [
     {
       "client_info": {
+        "mobilesdk_app_id": "1:89536685652:android:1b0c5e94933d9e8dbdefc1",
+        "android_client_info": {
+          "package_name": "com.xianslate.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "89536685652-1bhe7hk8g2f3qk94pncqaur9id7j4sc8.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyByn8Awm2JjPA015eBxluxeM1hNlDIz4yI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "89536685652-1bhe7hk8g2f3qk94pncqaur9id7j4sc8.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
         "mobilesdk_app_id": "1:89536685652:android:8c7edc7d5744733ebdefc1",
         "android_client_info": {
           "package_name": "dev.xianslate.app"
         }
       },
       "oauth_client": [
+        {
+          "client_id": "89536685652-lrdspk8blijnsoaghpt239ihdh9f3h0q.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "dev.xianslate.app",
+            "certificate_hash": "42071f5e437ae3abf54f4f80537f364d4780f7f8"
+          }
+        },
+        {
+          "client_id": "89536685652-qdok65jc6f66fesv34076n4g3jjgfloq.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "dev.xianslate.app",
+            "certificate_hash": "424976d5da7fd33b1ef33f38aca3ac000ba4a4f3"
+          }
+        },
         {
           "client_id": "89536685652-1bhe7hk8g2f3qk94pncqaur9id7j4sc8.apps.googleusercontent.com",
           "client_type": 3
