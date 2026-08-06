@@ -46,8 +46,34 @@ export const MIN_BODY_CHARS = 200;
 // SIZE OF THE PAGE DIGEST FED TO THE MODEL. STRUCTURE + SHORT PREVIEWS, NOT FULL PROSE.
 const DIGEST_BUDGET = 12_000;
 
-// SELECTORS A TITLE MAY NOT BE — TOO BROAD OR THE DOCUMENT <title>.
-const TITLE_BAD = new Set(['html', 'body', 'head', 'title', '*', ':root', 'main', 'article']);
+// SELECTORS A TITLE MAY NOT BE — TOO BROAD OR THE DOCUMENT <title>. BARE STRUCTURAL/LINK/INLINE TAGS
+// (NO #id/.class) ARE ALSO BLOCKED: querySelector RESOLVES THE *FIRST* MATCH IN DOCUMENT ORDER, WHICH FOR
+// a/div/span/… IS ALWAYS A HEADER/WRAPPER/MENU ELEMENT — NEVER THE CHAPTER HEADING (THE LEARNED MAP THAT
+// TRIGGERED THIS WAS "title": "a", WHICH PICKED THE HEADER "返回" BACK BUTTON). HEADINGS (h1–h6) STAY
+// ALLOWED — A BARE h1 IS A LEGITIMATE TITLE SELECTOR. SPECIFIC SELECTORS (a.novel-title, #title) PASS:
+// allParts REJECTS ONLY WHEN *EVERY* COMMA-PART IS A BAD BARE TAG.
+const TITLE_BAD = new Set([
+	'html',
+	'body',
+	'head',
+	'title',
+	'*',
+	':root',
+	'main',
+	'article',
+	'a',
+	'div',
+	'span',
+	'li',
+	'ul',
+	'ol',
+	'button',
+	'p',
+	'section',
+	'nav',
+	'header',
+	'footer',
+]);
 
 // SELECTORS A BODY MAY NOT BE. NOTE body/main ARE ALLOWED: SOME SITES PUT THE PROSE LOOSE IN <body>
 // WITH NO WRAPPER, AND WE EXTRACT IT VIA CHROME-STRIPPING READABILITY (SEE extractProse).
@@ -79,13 +105,13 @@ const SKIP_TAGS = new Set([...CHROME_TAGS, 'html', 'body', 'head', 'figure', 'ul
 // LABELS THAT IDENTIFY REAL CHAPTER NAVIGATION — PRIORITISED IN THE DIGEST AHEAD OF SITE-MENU LINKS,
 // AND USED TO RECOGNISE MENU ITEMS THAT SHOULD NOT BE OFFERED AS TITLE CANDIDATES.
 const NAV_NAV =
-	/(上一[章页頁节節]|下一[章页頁节節]|前一[章页頁]|后一[章页頁]|上一篇|下一篇|返回?目[录錄]|章节?目[录錄]|返回书[页頁]|目[录錄]|前へ|次へ|目次|이전|다음|목차|prev|next|index|contents|table of contents|toc)/i;
+	/(上一[章页頁节節]|下一[章页頁节節]|前一[章页頁]|后一[章页頁]|上一篇|下一篇|返回?目[录錄]|章节?目[录錄]|返回书[页頁]|返回|后退|目[录錄]|前へ|次へ|目次|이전|다음|목차|prev|next|index|contents|table of contents|toc)/i;
 
 // A SHORT STANDALONE LINE THAT IS REALLY A NAV/CONTROL LABEL, NOT PROSE — DROPPED FROM THE BODY TEXT.
 // THE 소설…/커버…/로딩… ALTERNATIVES ARE KOREAN-READER CHROME (A "loading novel content" PLACEHOLDER, A
 // COVER COLLAPSE/EXPAND TOGGLE, EPISODE NAV) THAT LEAK INTO THE SCRAPED BODY OF JS-RENDERED KOREAN SITES.
 const NAV_LINE =
-	/^(字体|大|中|小|换手|關燈|关灯|开灯|上一[章页頁节節]|下一[章页頁节節]|前一[章页頁]|后一[章页頁]|返回目[录錄]|返回書?[页頁]|返回顶部|回到顶部|目[录錄]|章节目[录錄]|存书签|加入书[签籤架]|推荐本?[书書]|收藏本?[书書]|手机阅读|手機閱讀|章节错误.*|.*点此举报.*|第\(\d+\/\d+\)页|上一篇|下一篇|prev(ious)?|next|index|contents?|table of contents|toc|報錯|报错|分享|收藏|書架|书架|目錄|繁體|簡體|简体|繁体|소설\s*내용을\s*불러오고\s*있습니다\.?|커버\s*접기|커버\s*펼치기|이전\s*화(\s*보기)?|다음\s*화(\s*보기)?|목록(\s*보기)?|목차|로딩\s*중\.*|\d{1,4}\s*\/\s*\d{1,4})$/i;
+	/^(字体|大|中|小|换手|關燈|关灯|开灯|上一[章页頁节節]|下一[章页頁节節]|前一[章页頁]|后一[章页頁]|返回目[录錄]|返回書?[页頁]|返回顶部|回到顶部|返回|后退|目[录錄]|章节目[录錄]|存书签|加入书[签籤架]|推荐本?[书書]|收藏本?[书書]|手机阅读|手機閱讀|章节错误.*|.*点此举报.*|第\(\d+\/\d+\)页|上一篇|下一篇|prev(ious)?|back|next|index|contents?|table of contents|toc|報錯|报错|分享|收藏|書架|书架|目錄|繁體|簡體|简体|繁体|소설\s*내용을\s*불러오고\s*있습니다\.?|커버\s*접기|커버\s*펼치기|이전\s*화(\s*보기)?|다음\s*화(\s*보기)?|목록(\s*보기)?|목차|로딩\s*중\.*|\d{1,4}\s*\/\s*\d{1,4})$/i;
 
 // A BODY WHOSE TEXT *STARTS* LIKE THIS IS CHROME (A NO-JS NOTICE, MENU, OR LOGIN WALL), NOT A CHAPTER.
 const CHROME_START =
@@ -394,7 +420,7 @@ const NAV_ATTRS = ['href', 'value', 'data-url', 'data-href', 'data-link', 'conte
 
 // DIRECTION KEYWORDS FOR id/name/class/rel HINTS. LATIN TOKENS ARE BOUNDED BY START/END OR A SEPARATOR
 // (so "feedback" ISN'T A PREV AND "context" ISN'T A NEXT); CJK/KOREAN LABELS STAND ALONE.
-const FALLBACK_PREV = /(?:^|[\s_\-/])(?:prev|previous|back|before)(?:[\s_\-/]|$)|上一|前一|이전/i;
+const FALLBACK_PREV = /(?:^|[\s_\-/])(?:prev|previous|back|before)(?:[\s_\-/]|$)|上一|前一|返回|后退|이전/i;
 const FALLBACK_NEXT = /(?:^|[\s_\-/])(?:next|forward|after)(?:[\s_\-/]|$)|下一|后一|다음/i;
 const FALLBACK_INDEX = /(?:^|[\s_\-/])(?:index|contents|catalog|toc|booklist)(?:[\s_\-/]|$)|目[录錄]|목록|목차/i;
 
@@ -437,7 +463,7 @@ export function fallbackNav(root: HTMLElement, base: string, dir: 'prev' | 'next
 	const avoid = dir === 'prev' ? FALLBACK_NEXT : dir === 'next' ? FALLBACK_PREV : null;
 	const rel = dir === 'prev' ? /^(?:prev|previous)$/i : dir === 'next' ? /^next$/i : /^(?:up|index|contents)$/i;
 	// DIRECTION-SPECIFIC ANCHOR-TEXT MATCHERS (SAME MULTI-LANGUAGE SCOPE AS NAV_NAV).
-	const textPrev = /^(?:前[へ章]|上一[章页頁]|前一[章页頁]|이전화?(?:\s*보기)?|prev(?:ious)?|back)$/i;
+	const textPrev = /^(?:前[へ章]|上一[章页頁]|前一[章页頁]|返回|后退|이전화?(?:\s*보기)?|prev(?:ious)?|back)$/i;
 	const textNext = /^(?:次[へ章]|下一[章页頁]|后一[章页頁]|다음화?(?:\s*보기)?|next|forward)$/i;
 	const textIndex = /^(?:目[次录錄]|章节目[录錄]|목[록차](?:\s*보기)?|index|contents?|toc|一覧|table of contents)$/i;
 	const textWant = dir === 'prev' ? textPrev : dir === 'next' ? textNext : textIndex;
@@ -494,7 +520,11 @@ export function applyAdapter(root: HTMLElement, html: string, m: SelectorMap, ur
 	if (allParts(m.body, BODY_BAD) || allParts(m.title, TITLE_BAD)) return null;
 
 	const title = pickText(root, m.title);
-	if (!title || title.length > 200) return null;
+	// A TITLE THAT IS ITSELF A NAV/CONTROL LABEL (E.G. THE HEADER "返回" BACK BUTTON, OR EXACTLY "back") IS
+	// NEVER THE CHAPTER HEADING — REJECT SO A MAP RESOLVING TO CHROME TRIGGERS A RE-LEARN (SELF-HEAL). THE
+	// ANCHORED NAV_LINE ONLY REJECTS TITLES THAT ARE *EXACTLY* A CONTROL LABEL — A REAL TITLE CONTAINING
+	// "next"/"back" AS A WORD ("The Next Chapter") STILL PASSES.
+	if (!title || title.length > 200 || NAV_LINE.test(title)) return null;
 
 	// RESOLVE NAV / META *BEFORE* EXTRACTION (extractProse RE-PARSES A FRAGMENT, SO root IS UNTOUCHED). FALL
 	// BACK TO THE SPA HEURISTIC (HIDDEN-INPUT / data-* / onclick / <link rel>) WHEN THE LEARNED <a href> RULE
