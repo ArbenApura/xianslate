@@ -33,6 +33,10 @@ Try it out: <https://xianslate.fly.dev/>
     line-height, letter/paragraph spacing, measure width, alignment/indent; layout modes
     **side-by-side / interleaved / English-only / Chinese-only**; keyboard shortcuts; **TTS**
     (sentence/word highlighting); fully **mobile-responsive**.
+-   **Offline reading** (mobile): chapters, TOCs, and covers you open are cached on-device (IndexedDB) and
+    readable with no network — translations, TTS, and scroll restore included; the library shelf, manage
+    page, and contents dialog work offline too. Progress, read/unread, edits, and glossary changes made
+    offline are queued and **sync automatically** when you reconnect.
 -   **Chapter analytics**: per-chapter token/cost breakdown, translation run history, glossary coverage.
 
 ## Tech stack
@@ -183,6 +187,7 @@ Translate (DeepSeek, streamed)
   └─ [stable system prompt][matched glossary][chapter] ─► target language
   └─ memoized by sha256(content + glossary + model + prompt)
 Reader (Svelte) ─ themes/typography/layout, TTS, mobile-responsive
+Offline (mobile) ─ IndexedDB cache + outbox sync queue (replays writes on reconnect)
 ```
 
 ## API (internal)
@@ -200,8 +205,9 @@ existing book) · `GET/POST/DELETE /api/books[/:id]` (`POST /api/books` creates 
 
 Android (and iOS, built from a Mac) runs the app as a **static SPA** served by the deployed API. The native
 WebView has no Node server, so the app talks **cross-origin** to the live backend (`https://xianslate.fly.dev`
-by default) — the server allows CORS for the two WebView origins, `capacitor://localhost` (Android) and
-`https://localhost` (iOS), and authenticates the app via the same Firebase account: the native client sends a
+by default) — the server allows CORS for the two WebView origins, `https://localhost` (Android —
+`androidScheme: 'https'` in capacitor.config.ts) and `capacitor://localhost` (iOS), and authenticates the
+app via the same Firebase account: the native client sends a
 fresh Firebase **ID token** as an `Authorization: Bearer` header on every `/api` call, while the web app keeps
 the httpOnly session cookie (the server accepts both — cookie wins when both are present).
 
@@ -226,11 +232,41 @@ yarn cap:android                # opens Android Studio
 yarn cap:ios
 ```
 
+### Release build (signed APK)
+
+```bash
+# 1. One-time: create the release keystore (your app's signing identity — back it up):
+#    keytool -genkeypair -v -keystore android/app/xianslate-release.jks -alias xianslate \
+#      -keyalg RSA -keysize 4096 -validity 10000 -storepass <PASSWORD> -keypass <PASSWORD> \
+#      -dname "CN=Xianslate, OU=Mobile, O=Xianslate, L=<City>, ST=<Province>, C=PH"
+
+# 2. Credentials file for Gradle — android/app/keystore.properties (gitignored):
+#    storeFile=xianslate-release.jks
+#    storePassword=<PASSWORD>
+#    keyAlias=xianslate
+#    keyPassword=<PASSWORD>
+
+# 3. Build the signed release APK (re-run yarn build:capacitor + npx cap sync first if web assets changed):
+cd android && ./gradlew assembleRelease
+# → android/app/build/outputs/apk/release/com.xianslate.app.apk
+```
+
+Signing is wired in `android/app/build.gradle` (reads `keystore.properties`; no-op when absent, so debug/CI
+builds still work). **Never commit the `.jks` or `keystore.properties`** — both are gitignored. A backup copy
+of the credentials lives at `keystore-credentials.txt` (gitignored). Distribute the APK via a
+[GitHub Release](https://github.com/ArbenApura/xianslate/releases) (bump `versionCode`/`versionName` in
+`android/app/build.gradle` before each release).
+
 ### Firebase console setup (one-time, per platform)
 
--   **Android**: add an Android app (package `com.xianslate.app`) and register the debug keystore **SHA-1**
-    fingerprint (`keytool -list -v -keystore ~/.android/debug.keystore -alias androiddebugkey -storepass android`)
-    so native **Google sign-in** works. Email/password needs nothing extra.
+<!-- prettier-ignore -->
+-   **Android**: add an Android app (package `com.xianslate.app`) and register **both** fingerprints on it:
+    the debug-keystore **SHA-1** (`keytool -list -v -keystore ~/.android/debug.keystore -alias
+    androiddebugkey -storepass android`) so dev builds can Google sign-in, and the **release-keystore SHA-1**
+    (`keytool -list -v -keystore android/app/xianslate-release.jks -alias xianslate -storepass <PASSWORD>`)
+    so the signed release APK can too. After adding/changing fingerprints, **re-download
+    `google-services.json`** from the console into `android/app/` (it carries the OAuth clients Google
+    Sign-In resolves per package + fingerprint). Email/password needs nothing extra.
 -   **iOS**: drop `GoogleService-Info.plist` into `ios/App/App/` when you build on a Mac.
 
 ### Native behaviour notes

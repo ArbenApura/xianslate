@@ -32,9 +32,10 @@ const DARK = ['dark', 'oled', 'contrast'];
 
 // -- CONSTANTS -- //
 
-// CORS ORIGINS OF THE CAPACITOR NATIVE APPS (ANDROID WebView = capacitor://localhost, iOS WKWebView =
-// https://localhost). THE MOBILE APP IS A STATIC SPA THAT CALLS THIS SAME SERVER CROSS-ORIGIN. THE WEB
-// APP IS SAME-ORIGIN, SO IT NEVER MATCHES AND IS COMPLETELY UNTOUCHED.
+// CORS ORIGINS OF THE CAPACITOR NATIVE APPS (ANDROID WebView = https://localhost — androidScheme https in
+// capacitor.config.ts — iOS WKWebView = capacitor://localhost). THE MOBILE APP IS A STATIC SPA THAT CALLS
+// THIS SAME SERVER CROSS-ORIGIN. THE WEB APP IS SAME-ORIGIN, SO IT NEVER MATCHES AND IS COMPLETELY
+// UNTOUCHED.
 const CAPACITOR_ORIGINS = new Set(['capacitor://localhost', 'https://localhost']);
 
 function corsHeaders(origin: string): Record<string, string> {

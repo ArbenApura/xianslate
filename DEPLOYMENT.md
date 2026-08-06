@@ -106,15 +106,24 @@ Deploying the API/web is **unchanged** (one instance, same secrets); the only se
 already in the code:
 
 -   **CORS**: `src/hooks.server.ts` answers preflights and stamps `Access-Control-Allow-*` for the two WebView
-    origins `capacitor://localhost` (Android) and `https://localhost` (iOS). No credentials flag — the app
+    origins `https://localhost` (Android — `androidScheme: 'https'` in capacitor.config.ts) and
+    `capacitor://localhost` (iOS). No credentials flag — the app
     authenticates with a **Bearer Firebase ID token** (accepted by `hooks.server.ts` alongside the web session
     cookie).
 -   **`PUBLIC_API_BASE`**: the mobile build bakes the live API origin into its bundle at build time. Set it in
     a gitignored `.env.capacitor` (e.g. `PUBLIC_API_BASE=https://xianslate.fly.dev`) — **not** in `.env`, which
     would redirect local web dev at the live API. Then `yarn build:capacitor && npx cap sync` and build the
     native project (`android/` is committed; `ios/` is generated on a Mac).
--   **Firebase console**: add the Android app (package `com.xianslate.app`) and its debug-keystore SHA-1 for
-    native Google sign-in; iOS needs `GoogleService-Info.plist`.
+-   **Firebase console**: add the Android app (package `com.xianslate.app`) and register **both** fingerprints
+    on it — the debug-keystore SHA-1 (dev sign-in) and the release-keystore SHA-1 (signed-APK sign-in). After
+    registering, **re-download `google-services.json`** into `android/app/` (the OAuth clients Google Sign-In
+    resolves are per package + fingerprint). iOS needs `GoogleService-Info.plist`.
+-   **Release signing + distribution**: `android/app/build.gradle` signs `release` builds from the gitignored
+    `android/app/keystore.properties` (storeFile/passwords; no-op when absent so debug/CI still build).
+    Generate `android/app/xianslate-release.jks` once (`keytool`, 4096-bit RSA, 10,000-day validity) and back
+    it up — losing it blocks updates to installed apps. Build with
+    `cd android && ./gradlew assembleRelease` → `android/app/build/outputs/apk/release/com.xianslate.app.apk`,
+    then attach the APK to a GitHub Release (bump `versionCode`/`versionName` in `build.gradle` per release).
 
 Full build/run instructions: README → _Mobile apps (Capacitor)_.
 
