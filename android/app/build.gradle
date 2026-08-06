@@ -42,6 +42,15 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
     }
+    // NAME THE RELEASE APK "com.xianslate.app.apk" (THE GITHUB RELEASE ARTIFACT). DEBUG KEEPS A
+    // VARIANT-TAGGED NAME SO THE TWO VARIANTS' OUTPUTS NEVER COLLIDE IN THE SAME DIRECTORY.
+    applicationVariants.all { variant ->
+        variant.outputs.all { output ->
+            output.outputFileName = variant.buildType.name == 'release'
+                ? "com.xianslate.app.apk"
+                : "xianslate-${variant.buildType.name}.apk"
+        }
+    }
 }
 
 repositories {
