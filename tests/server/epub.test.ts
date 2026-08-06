@@ -4,6 +4,8 @@
 // (THE DOUBLE-DECODE CORRUPTION); (b) THE ZIP-BOMB GUARDS REJECT OVERSIZED ENTRIES/TOTALS; (c) A LONG
 // SINGLE-DOCUMENT EPUB WITH REPEATING HEADINGS SPLITS INTO CHAPTERS; (d) TITLE/CHAPTER-HEADING EXTRACTION.
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { zipSync } from 'fflate';
 import { importEpub } from '$lib/server/ingest/epub';
 
@@ -133,5 +135,179 @@ describe('importEpub — whole-book-in-one-file split', () => {
 			'F',
 		);
 		expect(book.chapters).toHaveLength(1);
+	});
+});
+
+// -- VARIANT 1: NCX-BASED EPUB (SPINE toc="ncx" + toc.ncx PRESENT) -- //
+
+describe('importEpub — NCX-based structure', () => {
+	it('imports spine chapters in order when the OPF declares an NCX TOC', () => {
+		const ncx = `<?xml version="1.0" encoding="utf-8"?>
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
+  <navMap>
+    <navPoint id="n1"><navLabel><text>第1章 起点</text></navLabel><content src="text/ch1.xhtml"/></navPoint>
+  </navMap>
+</ncx>`;
+		const opfNcx = `<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="id">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>NCX书</dc:title></metadata>
+  <manifest>
+    <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+    <item id="m1" href="text/ch1.xhtml" media-type="application/xhtml+xml"/>
+    <item id="m2" href="text/ch2.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine toc="ncx"><itemref idref="m1"/><itemref idref="m2"/></spine>
+</package>`;
+		const book = importEpub(
+			buildEpub({
+				'mimetype': 'application/epub+zip',
+				'META-INF/container.xml': CONTAINER.replace('OEBPS/content.opf', 'OEBPS/content.opf'),
+				'OEBPS/content.opf': opfNcx,
+				'OEBPS/toc.ncx': ncx,
+				'OEBPS/text/ch1.xhtml': xhtml('第1章 起点', '<p>甲。</p>'),
+				'OEBPS/text/ch2.xhtml': xhtml('第2章 死亡', '<p>乙。</p>'),
+			}),
+			'F',
+		);
+		expect(book.title).toBe('NCX书');
+		expect(book.chapters.map((c) => c.titleSource)).toEqual(['第1章 起点', '第2章 死亡']);
+	});
+});
+
+// -- VARIANT 2: NESTED DIRECTORIES + PERCENT-ENCODED MANIFEST HREFS -- //
+
+describe('importEpub — paths in the manifest', () => {
+	it('resolves relative hrefs against the OPF directory', () => {
+		const nestedOpf = opf(['c1']).replace('href="c1.xhtml"', 'href="text/ch1.xhtml"');
+		const book = importEpub(
+			buildEpub({
+				'mimetype': 'application/epub+zip',
+				'META-INF/container.xml': CONTAINER,
+				'OEBPS/content.opf': nestedOpf,
+				'OEBPS/text/ch1.xhtml': xhtml('第1章 嵌套', '<p>内容。</p>'),
+			}),
+			'F',
+		);
+		expect(book.chapters[0].titleSource).toBe('第1章 嵌套');
+	});
+
+	it('falls back to a percent-decoded name for space-encoded hrefs (ch%201.xhtml)', () => {
+		const escOpf = opf(['c1']).replace('href="c1.xhtml"', 'href="text/ch%201.xhtml"');
+		const book = importEpub(
+			buildEpub({
+				'mimetype': 'application/epub+zip',
+				'META-INF/container.xml': CONTAINER,
+				'OEBPS/content.opf': escOpf,
+				'OEBPS/text/ch 1.xhtml': xhtml('第1章 空格', '<p>内容。</p>'),
+			}),
+			'F',
+		);
+		expect(book.chapters[0].titleSource).toBe('第1章 空格');
+	});
+});
+
+// -- VARIANT 3: NO OPF — BARE ZIP OF (X)HTML FILES (PATH 3 FALLBACK) -- //
+
+describe('importEpub — bare zip without container.xml/OPF', () => {
+	it('orders readable XHTML docs naturally and titles them from the filename', () => {
+		const book = importEpub(
+			buildEpub({
+				'chapter10.xhtml': xhtml('第10章', '<p>十。</p>'),
+				'chapter2.xhtml': xhtml('第2章', '<p>二。</p>'),
+				'chapter1.xhtml': xhtml('第1章', '<p>一。</p>'),
+				'cover.jpg': new Uint8Array([1, 2, 3]), // NON-TEXT ENTRIES ARE IGNORED
+			}),
+			'F',
+		);
+		// NATURAL SORT: chapter1 < chapter2 < chapter10
+		expect(book.chapters.map((c) => c.titleSource)).toEqual(['第1章', '第2章', '第10章']);
+	});
+
+	it('an epub whose OPF yields nothing falls through to the bare-zip path', () => {
+		// VALID container.xml BUT AN OPF WITH AN EMPTY SPINE → PATH 3 TAKES OVER
+		const emptyOpf = `<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="id">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>T</dc:title></metadata>
+  <manifest><item id="m1" href="ch1.xhtml" media-type="application/xhtml+xml"/></manifest>
+  <spine></spine>
+</package>`;
+		const book = importEpub(
+			buildEpub({
+				'mimetype': 'application/epub+zip',
+				'META-INF/container.xml': CONTAINER,
+				'OEBPS/content.opf': emptyOpf,
+				'OEBPS/ch1.xhtml': xhtml('第1章 回退', '<p>回退路径。</p>'),
+			}),
+			'F',
+		);
+		expect(book.chapters.length).toBeGreaterThanOrEqual(1);
+	});
+});
+
+// -- VARIANT 4: ENTITIES + LEGACY CHARSETS + EDGE DOCS -- //
+
+describe('importEpub — entities and encodings', () => {
+	it('decodes named, decimal, and hex entities in the prose', () => {
+		const book = importEpub(
+			buildEpub({
+				'mimetype': 'application/epub+zip',
+				'META-INF/container.xml': CONTAINER,
+				'OEBPS/content.opf': opf(['c1']),
+				'OEBPS/c1.xhtml': xhtml('第1章', '<p>破折号&mdash;省略&hellip;&#x4E00;&#19968;空格&nbsp;。</p>'),
+			}),
+			'F',
+		);
+		const content = book.chapters[0].contentSource;
+		expect(content).toContain('—');
+		expect(content).toContain('…');
+		expect(content).toContain('一'); // BOTH &#x4E00; AND &#19968; ARE "一"
+		expect(content).toContain(' ');
+	});
+
+	it('decodes a GBK-encoded XHTML entry (non-UTF-8 legacy charset)', () => {
+		const gbkFragment = readFileSync(fileURLToPath(new URL('../fixtures/pages/shubaow-gbk-slice.bin', import.meta.url)));
+		const book = importEpub(
+			buildEpub({
+				'mimetype': 'application/epub+zip',
+				'META-INF/container.xml': CONTAINER,
+				'OEBPS/content.opf': opf(['c1']),
+				'OEBPS/c1.xhtml': gbkFragment, // RAW GBK BYTES — NO UTF-8 VALID
+			}),
+			'F',
+		);
+		// THE GBK FRAGMENT CONTAINS THE CHAPTER TITLE TEXT — MUST COME OUT AS REAL CHINESE, NOT MOJIBAKE.
+		expect(book.chapters.length).toBeGreaterThanOrEqual(1);
+		const all = book.chapters.map((c) => c.contentSource + c.titleSource).join('');
+		expect(all).toContain('宣姬戚容');
+		expect(all).not.toContain('\uFFFD');
+	});
+});
+
+describe('importEpub — edge documents', () => {
+	it('an image-only doc produces no chapter and does not break the rest', () => {
+		const book = importEpub(
+			buildEpub({
+				'mimetype': 'application/epub+zip',
+				'META-INF/container.xml': CONTAINER,
+				'OEBPS/content.opf': opf(['c1', 'c2']),
+				'OEBPS/c1.xhtml': '<html><body><img src="x.jpg"/></body></html>',
+				'OEBPS/c2.xhtml': xhtml('第2章', '<p>正文。</p>'),
+			}),
+			'F',
+		);
+		expect(book.chapters.map((c) => c.titleSource)).toEqual(['第2章']);
+	});
+
+	it('a doc with no heading uses the <title> tag as its chapter title', () => {
+		const book = importEpub(
+			buildEpub({
+				'mimetype': 'application/epub+zip',
+				'META-INF/container.xml': CONTAINER,
+				'OEBPS/content.opf': opf(['c1']),
+				'OEBPS/c1.xhtml': '<html><head><title>无标题章</title></head><body><p>只有段落。</p></body></html>',
+			}),
+			'F',
+		);
+		expect(book.chapters[0].titleSource).toBe('无标题章');
 	});
 });

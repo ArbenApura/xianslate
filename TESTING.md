@@ -46,8 +46,9 @@ import rewrite of the DOM-compiled module breaks the dev-runtime scheduler). Con
 | Glossary matching | `tests/server/glossary-match.test.ts` | **coverage-aware longest match (齊天 regression)**; true-fragment drop; word boundaries; aliases; `sourcesPresentIn` |
 | Glossary chunking | `tests/server/glossary.test.ts` | paragraph-aligned splitter; `MAX_EXTRACT_CHUNKS` cost cap |
 | Web/novel parsing | `tests/site-parser.test.ts` | adapter selectors, nav guards, title sanity, `sanitizeMap` fixpoint |
+| Real-site compatibility | `tests/server/site-compat.test.ts` + `tests/fixtures/pages/` | saved chapter pages from **qimao.com** (SSR, UTF-8, AI-learned map + fallback) and **shubaow.net** (SSR, **GBK** — decoder + fallback); a JS-rendered SPA shell must yield nothing (routes to the AI learner). Probe results: those two were the sites reachable from the dev network; uukanshu/xbiquge/ranwen returned 000, 69shu 403 (anti-bot — the app's Zyte path handles these, but they can't be fetched directly for fixtures) |
 | TXT import | `tests/server/ingest-txt.test.ts` | heading split (zh/ja/ko/en), **fallback title for heading-less files** (a fix this caught), empty rejection |
-| EPUB import | `tests/server/epub.test.ts` | real mini-EPUBs: title/author/chapters, zip-bomb guard, single-doc heading split, **no double-decode of `&amp;#65;`** (a real bug this caught) |
+| EPUB import | `tests/server/epub.test.ts` | real mini-EPUBs (built with fflate): title/author/chapters, **NCX-based structure, nested dirs + percent-encoded hrefs, bare-zip-without-OPF fallback, named/hex entities, a GBK-encoded XHTML entry, image-only docs, `<title>`-tag chapter titles**, zip-bomb guard, single-doc heading split, **no double-decode of `&amp;#65;`** (a real bug this caught) |
 | Component a11y/interaction | `tests/ui/modal.test.ts`, `tests/ui/tocdrawer.test.ts` | dialog accessible names (**Modal `aria-labelledby` fix**), Escape/backdrop close, conditional render |
 | Invariants (property) | `tests/property.test.ts` | classifyOutcome totality/permanence; merge window; **UTC day-partition math**; `computeSeen` bounds/monotonicity; `sanitizeMap` fixpoint |
 

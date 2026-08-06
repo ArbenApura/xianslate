@@ -50,6 +50,7 @@ export default defineConfig({
 				'src/lib/server/glossary-match.ts',
 				'src/lib/server/fetcher.ts',
 				'src/lib/server/site-parser.ts',
+				'src/lib/server/charset.ts',
 				'src/lib/server/ingest/**',
 				'src/lib/offline/db.ts',
 				'src/lib/offline/gate.ts',
