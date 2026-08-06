@@ -36,3 +36,4 @@ tools/run-cover-test.mjs
 
 # NPM LOCKFILE — PROJECT USES YARN
 package-lock.json
+coverage

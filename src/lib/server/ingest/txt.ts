@@ -64,10 +64,14 @@ export function importTxt(text: string, fallbackTitle: string): ImportedBook {
 	}
 
 	// RE-NUMBER CHAPTERS THAT HAD NO REAL HEADING (THEY OTHERWISE ALL CARRY THE SAME fallbackTitle, WHICH
-	// READS AS DUPLICATES IN THE TOC). CHAPTERS OPENED BY A REAL HEADING KEEP THEIR HEADING TEXT.
-	chapters.forEach((c, i) => {
-		if (!pending[i]?.hadHeading) c.titleSource = `Chapter ${i + 1}`;
-	});
+	// READS AS DUPLICATES IN THE TOC). CHAPTERS OPENED BY A REAL HEADING KEEP THEIR HEADING TEXT. BUT A FILE
+	// WITH *NO* HEADINGS AT ALL MUST KEEP ITS SINGLE fallbackTitle-TITLED CHAPTER — RENUMBERING IT TO
+	// "Chapter 1" WOULD THROW AWAY THE FILE-NAME TITLE THE CALLER PASSED (A TEST PINNED THIS).
+	if (pending.some((p) => p.hadHeading)) {
+		chapters.forEach((c, i) => {
+			if (!pending[i]?.hadHeading) c.titleSource = `Chapter ${i + 1}`;
+		});
+	}
 
 	return { sourceType: 'txt', title: fallbackTitle, author: null, chapters };
 }

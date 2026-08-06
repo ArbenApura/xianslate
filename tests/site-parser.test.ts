@@ -9,7 +9,7 @@
 //   2. A TITLE WHOSE TEXT IS EXACTLY A NAV LABEL (返回 / back / …) IS REJECTED EVEN WITH A SPECIFIC SELECTOR.
 //   3. REAL HEADINGS (INCLUDING ONES CONTAINING nav WORDS) STILL PARSE, AND 返回-LABELED LINKS ARE NAV.
 
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { parse } from 'node-html-parser';
 import { applyAdapter, fallbackNav } from '../src/lib/server/site-parser.ts';

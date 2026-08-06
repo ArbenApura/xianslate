@@ -130,11 +130,13 @@ function isPrivateV4(ip: string): boolean {
 		(a === 100 && b >= 64 && b <= 127) || // carrier-grade NAT
 		(a === 169 && b === 254) || // link-local (incl. cloud metadata 169.254.169.254)
 		(a === 172 && b >= 16 && b <= 31) || // private
-		(a === 192 && b === 168) // private
+		(a === 192 && b === 168) || // private
+		a >= 224 // multicast (224/4), reserved (240/4), broadcast (255)
 	);
 }
 
-function isPrivateIp(ip: string): boolean {
+// EXPORTED FOR UNIT TESTS (tests/server/fetcher.test.ts) — THE SSRF GUARD'S PRIVATE-ADDRESS MATRIX.
+export function isPrivateIp(ip: string): boolean {
 	const v = ip.toLowerCase();
 	if (v === '::1' || v === '::') return true; // loopback / unspecified
 	if (v.startsWith('::ffff:')) return isPrivateV4(v.slice(7)); // IPv4-mapped IPv6
@@ -146,7 +148,8 @@ function isPrivateIp(ip: string): boolean {
 // RESOLVE THE HOST, REJECT IF ANY ADDRESS IS PRIVATE/INTERNAL, AND RETURN THE VALIDATED ADDRESS SO THE
 // CALLER CAN *PIN* IT FOR THE ACTUAL FETCH (CLOSES THE DNS-REBINDING TOCTOU: WE FETCH THE EXACT IP WE
 // CHECKED, NOT A SECOND RESOLUTION THE ATTACKER COULD FLIP TO A PRIVATE HOST).
-async function assertPublicUrl(raw: string): Promise<{ url: URL; address: string; family: number }> {
+// EXPORTED FOR UNIT TESTS (tests/server/fetcher.test.ts) — THE RESOLVE-AND-REJECT CORE OF THE SSRF GUARD.
+export async function assertPublicUrl(raw: string): Promise<{ url: URL; address: string; family: number }> {
 	let u: URL;
 	try {
 		u = new URL(raw);

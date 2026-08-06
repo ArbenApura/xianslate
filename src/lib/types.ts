@@ -259,6 +259,21 @@ export interface AccountBookItem {
 }
 
 /** FULL PER-ACCOUNT USAGE BEHIND THE ACCOUNT > USAGE SECTION (SEE $lib/server/account-usage) */
+export interface AccountQuota {
+	// USD A USER MAY SPEND PER UTC DAY (env AI_DAILY_BUDGET_USD — 0 DISABLES THE BUDGET).
+	dailyBudgetUsd: number;
+	// ACTUAL LEDGER SPEND IN THE CURRENT UTC DAY.
+	dailySpentUsd: number;
+	// WHEN THE BUDGET RESETS (THE NEXT UTC MIDNIGHT, MS EPOCH) — SHOWN AS "Resets at 00:00 UTC".
+	resetsAt: number;
+	// BILLED REQUESTS ALLOWED PER 60s (env AI_RPM_LIMIT).
+	rpmLimit: number;
+	// BILLED REQUESTS STARTED IN THE CURRENT 60s WINDOW (IN-MEMORY, RESETS ON SERVER RESTART).
+	rpmUsed: number;
+	// TRUE WHEN EITHER LIMIT IS REACHED — THE BILLED ENDPOINTS RETURN 429 RIGHT NOW.
+	blocked: boolean;
+}
+
 export interface AccountUsage {
 	// ALL-IN TOTALS — BODY + PIPELINE + MAP + FETCH.
 	totalCostUsd: number;

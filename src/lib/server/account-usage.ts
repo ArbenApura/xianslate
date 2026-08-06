@@ -52,7 +52,10 @@ export async function getAccountUsage(userId: string): Promise<AccountUsage> {
 			.innerJoin(books, eq(chapters.bookId, books.id))
 			.where(eq(books.userId, userId)),
 		// PIPELINE SPEND — PER-CHAPTER ai_usage EXCLUDING 'map' (THE GLOBAL KIND, WHICH GETS ITS OWN
-		// userId-ATTRIBUTED BUCKET BELOW), GROUPED BY KIND FOR A PER-STAGE BREAKDOWN.
+		// userId-ATTRIBUTED BUCKET BELOW) PLUS STANDALONE NON-CHAPTER CALLS (TITLE/AUTHOR BACKFILLS FROM THE
+		// MANAGE PAGE, GLOBAL GLOSSARY TERMS) ATTRIBUTED VIA THE STAMPED ai_usage.userId — GROUPED BY KIND FOR
+		// A PER-STAGE BREAKDOWN. WITHOUT THE STANDALONE BRANCH, THOSE ROWS WOULD ONLY SHOW UP IN THE
+		// PER-MODEL SECTION AND THE HEADLINE TOTALS WOULD UNDERSHOOT (THE MISMATCH THIS FIX CLOSES).
 		db
 			.select({
 				kind: aiUsage.kind,
@@ -63,9 +66,18 @@ export async function getAccountUsage(userId: string): Promise<AccountUsage> {
 				costUsd: sql<number>`coalesce(sum(${aiUsage.costUsd}),0)`,
 			})
 			.from(aiUsage)
-			.innerJoin(chapters, eq(aiUsage.chapterId, chapters.id))
-			.innerJoin(books, eq(chapters.bookId, books.id))
-			.where(and(eq(books.userId, userId), ne(aiUsage.kind, 'map')))
+			.leftJoin(chapters, eq(aiUsage.chapterId, chapters.id))
+			.leftJoin(books, eq(chapters.bookId, books.id))
+			.where(
+				or(
+					// STANDALONE ROWS (chapterId NULL) — ATTRIBUTED VIA THE STAMPED userId, EXCLUDING 'map'
+					// (MAP GETS ITS OWN BUCKET BELOW — WITHOUT THE EXCLUSION A STAMPED MAP ROW WOULD BE
+					// COUNTED IN BOTH PLACES). PRE-STAMP LEGACY ROWS HAVE NO userId AND STAY EXCLUDED.
+					and(eq(aiUsage.userId, userId), isNull(aiUsage.chapterId), ne(aiUsage.kind, 'map')),
+					// CHAPTER-ATTRIBUTED ROWS — INHERIT OWNERSHIP THROUGH THE chapter → book CHAIN.
+					and(ne(aiUsage.kind, 'map'), eq(books.userId, userId)),
+				),
+			)
 			.groupBy(aiUsage.kind),
 		// MAP SPEND — SITE-MAPPING / COVER-LEARNING, ATTRIBUTED VIA THE NEW ai_usage.userId COLUMN.
 		db

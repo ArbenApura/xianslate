@@ -2,7 +2,7 @@
 // NO FRAMEWORK, NO IndexedDB, NO NETWORK: THE IO-BOUND HALVES (db.ts/outbox.ts/sync.ts) ARE BROWSER-ONLY
 // AND ARE COVERED BY THE EMULATOR MATRIX; THIS SUITE PINS DOWN THE DECISION LOGIC THAT MUST NOT DRIFT.
 
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import {
 	classifyOutcome,
@@ -111,4 +111,47 @@ test('pageOfflineRows: 1-based pagination slices like the server', () => {
 	assert.equal(pageOfflineRows(rows, 2, 10)[0].id, 10);
 	assert.equal(pageOfflineRows(rows, 3, 10).length, 5);
 	assert.equal(pageOfflineRows(rows, 99, 10).length, 0);
+});
+
+// -- classifyOutcome: FULL STATUS MATRIX (5xx, 3xx, 2xx, EDGE CASES) -- //
+
+test('classifyOutcome: 5xx always retries', () => {
+	for (const s of [500, 502, 503, 504, 599]) {
+		assert.equal(classifyOutcome(Object.assign(new Error('x'), { status: s })), 'retry', `status ${s}`);
+	}
+});
+
+test('classifyOutcome: 3xx/2xx retry (defensive — callers never throw these)', () => {
+	for (const s of [200, 301, 304, 399]) {
+		assert.equal(classifyOutcome(Object.assign(new Error('x'), { status: s })), 'retry', `status ${s}`);
+	}
+});
+
+test('classifyOutcome: non-Error throws and status-less errors retry (offline/network)', () => {
+	assert.equal(classifyOutcome('string throw'), 'retry');
+	assert.equal(classifyOutcome(null), 'retry');
+	assert.equal(classifyOutcome(new Error('NetworkError')), 'retry');
+	assert.equal(classifyOutcome(Object.assign(new Error('x'), { status: NaN })), 'retry');
+});
+
+test('classifyOutcome: 0 (fetch abort/no response) retries', () => {
+	assert.equal(classifyOutcome(Object.assign(new Error('x'), { status: 0 })), 'retry');
+});
+
+// -- mergeOfflineRows -- //
+
+test('mergeOfflineRows: dedupes by id (existing position kept), later rows win, window capped', () => {
+	// EXISTING ROWS KEEP THEIR POSITION (byId INSERTION ORDER); INCOMING NEW ROWS APPEND.
+	const merged = mergeOfflineRows([{ id: 1 }, { id: 3 }], [{ id: 2 }, { id: 3, updated: true }], 10);
+	assert.deepEqual(merged, [{ id: 1 }, { id: 3, updated: true }, { id: 2 }]);
+});
+
+test('mergeOfflineRows: caps the merged window at max (oldest dropped)', () => {
+	const merged = mergeOfflineRows(
+		[{ id: 1 }, { id: 2 }, { id: 3 }],
+		[{ id: 4 }, { id: 5 }],
+		3,
+	);
+	assert.equal(merged.length, 3);
+	assert.deepEqual(merged.map((r) => r.id), [1, 2, 3]);
 });

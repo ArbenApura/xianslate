@@ -1,7 +1,7 @@
 // IMPORTED DEP-TYPES
 import type { PageLoad } from './$types';
 // IMPORTED TYPES
-import type { AccountUsage } from '$lib/types';
+import type { AccountQuota, AccountUsage } from '$lib/types';
 // IMPORTED DEP-MODULES
 import { error } from '@sveltejs/kit';
 // IMPORTED MODULES
@@ -10,7 +10,9 @@ import { apiUrl, authHeaders } from '$lib/api';
 // USAGE DATA NOW COMES FROM /api/me/usage (A UNIVERSAL LOAD) SO THE PAGE WORKS IDENTICALLY UNDER WEB SSR
 // AND THE CAPACITOR STATIC SPA — THE SPA RUNS NO SERVER LOADS, SO THE OLD +page.server.ts COULD NOT
 // SUPPLY IT THERE. WEB SSR RESOLVES THE RELATIVE URL VIA THE SVELTEKIT LOAD fetch; THE NATIVE SPA GETS
-// THE ABSOLUTE PUBLIC_API_BASE URL + A Bearer FIREBASE ID TOKEN (authHeaders).
+// THE ABSOLUTE PUBLIC_API_BASE URL + A Bearer FIREBASE ID TOKEN (authHeaders). THE SAME RESPONSE CARRIES
+// THE LIVE QUOTA STATE (THE SPEND/RATE GUARD) SO THE PAGE SHOWS THE 24h BUDGET + PER-MINUTE METER WITHOUT
+// A SECOND REQUEST.
 export const load: PageLoad = async ({ fetch }) => {
 	let res: Response;
 	try {
@@ -21,6 +23,6 @@ export const load: PageLoad = async ({ fetch }) => {
 		throw error(503, "You're offline — usage data needs an internet connection.");
 	}
 	if (!res.ok) throw error(res.status, 'Could not load usage.');
-	const data = (await res.json()) as { usage: AccountUsage };
-	return { usage: data.usage };
+	const data = (await res.json()) as { usage: AccountUsage; quota: AccountQuota };
+	return { usage: data.usage, quota: data.quota };
 };

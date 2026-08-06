@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: yarn
+      - run: yarn install --frozen-lockfile
+      - name: Unit tests + coverage gate
+        run: yarn test:coverage
+      - name: svelte-check
+        run: yarn run check
+      - name: Lint
+        run: npx eslint src tests
+      - name: Type-check
+        run: npx tsc --noEmit

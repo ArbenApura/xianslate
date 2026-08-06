@@ -1,3 +1,8 @@
+<script context="module" lang="ts">
+	// MODULE-LEVEL SEQUENCE FOR UNIQUE aria-labelledby IDs (SEE titleId BELOW).
+	let modalTitleSeq = 0;
+</script>
+
 <script lang="ts">
 	// IMPORTED DEP-MODULES
 	import { createEventDispatcher } from 'svelte';
@@ -23,6 +28,8 @@
 	// -- CONSTANTS -- //
 
 	const dispatch = createEventDispatcher();
+	// UNIQUE ID PER INSTANCE SO aria-labelledby CAN TARGET THE TITLE (THE DIALOG NEEDS AN ACCESSIBLE NAME).
+	const titleId = `modal-title-${++modalTitleSeq}`;
 	const SIZES: Record<string, string> = {
 		sm: 'sm:max-w-sm',
 		md: 'sm:max-w-lg',
@@ -52,6 +59,7 @@
 		class="fixed inset-0 z-50 flex items-end justify-center sm:items-center"
 		role="dialog"
 		aria-modal="true"
+		aria-labelledby={title ? titleId : undefined}
 	>
 		<!-- BACKDROP OVERLAY — NO RIPPLE (A FULL-SCREEN DISMISS SHOULDN'T FLASH A RIPPLE ON CLICK) -->
 		<button
@@ -82,7 +90,7 @@
 				<header
 					class={cn('flex shrink-0 items-center justify-between gap-3 border-b px-5 py-3.5', panelBorder)}
 				>
-					<h2 class="text-base font-semibold">{title}</h2>
+					<h2 id={titleId} class="text-base font-semibold">{title}</h2>
 					<slot name="header" />
 					<!-- CLOSE BUTTON — TRANSLUCENT HOVER READS ON EVERY THEME PANEL -->
 					<button

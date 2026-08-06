@@ -58,12 +58,15 @@ function decodeEntities(s: string): string {
 		.replace(/&rsquo;/g, '’')
 		.replace(/&ldquo;/g, '“')
 		.replace(/&rdquo;/g, '”')
-		.replace(/&amp;/g, '&')
 		.replace(/&lt;/g, '<')
 		.replace(/&gt;/g, '>')
 		.replace(/&quot;/g, '"')
+		// NUMERIC REFERENCES MUST DECODE BEFORE &amp; — A LITERAL `&amp;#65;` (THE AUTHOR WROTE "&#65;" AS TEXT)
+		// OTHERWISE BECOMES `&#65;` VIA &amp;→& AND THEN DECODES AGAIN INTO "A" IN THE SAME PASS (A TEST PINNED
+		// THE CORRUPTION). &amp; LAST: IT MAY ONLY UNWRAP ONE LEVEL OF REAL ESCAPING.
 		.replace(/&#(\d+);/g, (_, d) => fromCodePointSafe(Number(d)))
-		.replace(/&#x([0-9a-fA-F]+);/g, (_, h) => fromCodePointSafe(parseInt(h, 16)));
+		.replace(/&#x([0-9a-fA-F]+);/g, (_, h) => fromCodePointSafe(parseInt(h, 16)))
+		.replace(/&amp;/g, '&');
 }
 
 // THE INNER HTML OF <body> (OR THE WHOLE STRING IF THERE'S NO BODY TAG).

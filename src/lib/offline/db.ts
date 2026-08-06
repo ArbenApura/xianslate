@@ -76,6 +76,13 @@ const STORES = ['meta', 'toc', 'chapters', 'glossary', 'covers'] as const;
 
 let dbPromise: Promise<IDBDatabase | null> | null = null;
 
+// TEST-ONLY HOOK (UNDERSCORE = NOT PART OF THE PUBLIC API): CLOSE THE CACHED CONNECTION AND FORGET IT SO A
+// TEST CAN DELETE + REOPEN THE DATABASE (FRESH STATE PER TEST, OR A v1→v2 MIGRATION SIMULATION).
+export function _closeForTests(): void {
+	if (dbPromise) dbPromise.then((db) => db?.close()).catch(() => {});
+	dbPromise = null;
+}
+
 // -- HELPERS -- //
 
 function openDb(): Promise<IDBDatabase | null> {
@@ -145,7 +152,8 @@ async function getRow<T>(store: string, key: string): Promise<T | null> {
 	const db = await openDb();
 	if (!db) return null;
 	try {
-		return (await tx(db, store, 'readonly', (s) => s.get(key))) as T | null;
+		// NORMALIZE undefined → null (A MISSING KEY MUST BE null PER THE PUBLIC TYPE — A TEST PINNED THIS).
+		return ((await tx(db, store, 'readonly', (s) => s.get(key))) ?? null) as T | null;
 	} catch {
 		return null;
 	}

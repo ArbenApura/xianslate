@@ -145,7 +145,8 @@ async function bookOwner(bookId: string): Promise<string | null> {
 }
 
 // SPLIT THE WHOLE CHAPTER INTO PARAGRAPH-ALIGNED CHUNKS SO EVERY PART IS SCANNED FOR TERMS.
-function chunkForExtraction(content: string): string[] {
+// EXPORTED FOR UNIT TESTS (tests/server/glossary.test.ts) — THE CHUNK SPLITTER BEHIND THE COST CAP.
+export function chunkForExtraction(content: string): string[] {
 	const paras = content.split(/\n{2,}/).filter((p) => p.trim().length > 0);
 	if (paras.length === 0) return content.trim() ? [content] : [];
 	const chunks: string[] = [];
