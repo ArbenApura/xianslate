@@ -1,13 +1,4 @@
-@import '@fontsource/inter/400.css';
-@import '@fontsource/inter/600.css';
-@import '@fontsource/literata/400.css';
-@import '@fontsource/literata/600.css';
-@import '@fontsource/lora/400.css';
-@import '@fontsource/lora/600.css';
-@import '@fontsource/opendyslexic/400.css';
-@import '@fontsource/noto-serif-tc/400.css';
-@import '@fontsource/noto-sans-tc/400.css';
-@import '@fontsource/lxgw-wenkai-tc/400.css';
+@import './lib/fonts.css';
 
 @tailwind base;
 @tailwind components;
