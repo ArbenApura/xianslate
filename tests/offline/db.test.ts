@@ -157,7 +157,8 @@ describe('v1 → v2 outbox migration', () => {
 		_closeForTests();
 		await outboxEnqueue(op({ userId: 'u1', op: 'read' }));
 		const pending = await outboxPending('u1');
-		// THE OLD ROW (PRESERVED WITH ITS EXPLICIT id) + THE NEW OP (AUTO-INCREMENTED) BOTH SURVIVE, IN ORDER.
+		// THE OLD ROW SURVIVES THE MIGRATION (RE-KEYED TO A FRESH AUTO-INCREMENT id) AND THE NEW OP (ALSO
+		// AUTO-INCREMENTED) FOLLOWS IT — FIFO ORDER PRESERVED.
 		expect(pending.map((o) => o.op)).toEqual(['progress', 'read']);
 		expect(await outboxCount('u1')).toBe(2);
 	});

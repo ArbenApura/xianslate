@@ -1,6 +1,6 @@
-// UNIT TESTS FOR THE PURE OFFLINE LOGIC (src/lib/offline/outbox-core.ts) — RUN WITH `node --test`.
-// NO FRAMEWORK, NO IndexedDB, NO NETWORK: THE IO-BOUND HALVES (db.ts/outbox.ts/sync.ts) ARE BROWSER-ONLY
-// AND ARE COVERED BY THE EMULATOR MATRIX; THIS SUITE PINS DOWN THE DECISION LOGIC THAT MUST NOT DRIFT.
+// UNIT TESTS FOR THE PURE OFFLINE LOGIC (src/lib/offline/outbox-core.ts) — RUN UNDER VITEST.
+// NO IndexedDB, NO NETWORK: THE IO-BOUND HALVES ARE db.test.ts (fake-indexeddb) AND outbox.test.ts
+// (flushOutbox with apiFetch mocked); THIS SUITE PINS DOWN THE DECISION LOGIC THAT MUST NOT DRIFT.
 
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
@@ -9,7 +9,7 @@ import {
 	mergeOfflineRows,
 	filterOfflineRows,
 	pageOfflineRows,
-} from '../src/lib/offline/outbox-core.ts';
+} from '$lib/offline/outbox-core';
 
 // -- classifyOutcome -- //
 

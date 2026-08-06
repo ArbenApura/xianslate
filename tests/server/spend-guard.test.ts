@@ -119,4 +119,26 @@ describe('assertWithinQuota', () => {
 		await expect(assertWithinQuota('u1')).resolves.toBeUndefined();
 		vi.useRealTimers();
 	});
+
+	it('an EMPTY budget string means DEFAULT 5, NOT disabled (`Number("")` is 0 — pinned edge)', async () => {
+		await seedUser(db, { id: 'u1' });
+		await seedBook(db, { id: 'b1', userId: 'u1' });
+		const c1 = await seedChapter(db, { bookId: 'b1', seq: 0 });
+		await seedTranslation(db, { chapterId: c1, costUsd: 9.99, createdAt: Date.UTC(2026, 7, 6, 12) });
+		vi.useFakeTimers();
+		vi.setSystemTime(Date.UTC(2026, 7, 6, 12));
+		const { assertWithinQuota } = await loadGuard({ AI_DAILY_BUDGET_USD: '', AI_RPM_LIMIT: '30' });
+		// DEFAULT $5 → THE $9.99 SPEND IS OVER BUDGET → 429 (AN EMPTY STRING MUST NOT BYPASS THE CAP).
+		await expect(assertWithinQuota('u1')).rejects.toMatchObject({ status: 429 });
+		vi.useRealTimers();
+	});
+
+	it('an empty/invalid RPM string falls back to the default 30 (pinned edge)', async () => {
+		await seedUser(db, { id: 'u1' });
+		const { assertWithinQuota } = await loadGuard({ AI_DAILY_BUDGET_USD: '5', AI_RPM_LIMIT: '' });
+		// 3 QUICK CALLS << 30 — THE FALLBACK MUST HAVE APPLIED (0 OR NaN WOULD BLOCK/EXPLODE).
+		await assertWithinQuota('u1');
+		await assertWithinQuota('u1');
+		await assertWithinQuota('u1');
+	});
 });

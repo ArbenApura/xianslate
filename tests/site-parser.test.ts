@@ -12,7 +12,7 @@
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { parse } from 'node-html-parser';
-import { applyAdapter, fallbackNav } from '../src/lib/server/site-parser.ts';
+import { applyAdapter, fallbackNav } from '$lib/server/site-parser';
 
 // A CHAPTER PAGE WHOSE FIRST ANCHOR IS THE "返回" BACK BUTTON — THE EXACT SCENARIO THAT PRODUCED THE BUG.
 const PROSE = '字'.repeat(400);

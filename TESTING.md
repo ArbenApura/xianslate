@@ -1,7 +1,9 @@
 # TESTING — HARNESS, MATRIX, AND COVERAGE
 
 Everything here runs locally with `yarn test` (or `yarn test:coverage` for the coverage gate). CI runs
-`yarn test:coverage`, `yarn run check`, `npx eslint src tests`, and `npx tsc --noEmit` on every push/PR.
+`yarn test:coverage`, `yarn run check`, `npx eslint src tests`, `npx tsc --noEmit` (app), and
+`npx tsc -p tsconfig.test.json --noEmit` (tests — the app tsconfig deliberately excludes `tests/`, so a
+separate tsconfig keeps the suite type-checked) on every push/PR.
 
 ## The harness
 
@@ -34,7 +36,7 @@ import rewrite of the DOM-compiled module breaks the dev-runtime scheduler). Con
 | Feature | Suite | What is pinned |
 |---|---|---|
 | Offline datastore | `tests/offline/db.test.ts` | meta/toc/chapter/glossary/cover round-trips; outbox FIFO + user partitioning + remove; `clearUserData` user-scoping; **v1→v2 outbox migration**; `glossaryKey` format |
-| Outbox replay decisions | `tests/outbox-core.test.ts` | full status matrix (transient 4xx retry vs permanent drop, 5xx retry, no-status retry); `mergeOfflineRows` dedupe/cap; offline search/paging |
+| Outbox replay decisions | `tests/outbox-core.test.ts` + `tests/offline/outbox.test.ts` | classifier status matrix (transient 4xx retry vs permanent drop, 5xx retry, no-status retry); **the `flushOutbox` loop itself** — drop-and-continue, transient stop keeping the queue, offline bail, success removal, reentrancy; `mergeOfflineRows` dedupe/cap; offline search/paging |
 | Offline gate | `tests/offline/gate.test.ts` | `requireOnline` blocks with a feature-named toast; banner mirrors the inverse of the online store |
 | Reading-progress guard (P1 fix) | `tests/reader-progress.test.ts` | `computeSeen` fraction; **no advancement while translating or restoring**; monotonic |
 | Usage stats (account page) | `tests/server/account-usage.test.ts` | totals reconcile body+pipeline+map+fetch; **standalone attribution**; **no map double-count**; user isolation; legacy-unstamped exclusion; per-book breakdown |

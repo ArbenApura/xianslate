@@ -35,11 +35,17 @@ import { error } from '@sveltejs/kit';
 // "WHEN DOES IT RESET?" QUESTION HAS ONE UNMISTAKABLE ANSWER REGARDLESS OF THE USER'S TIMEZONE. TUNED VIA
 // ENV (AI_DAILY_BUDGET_USD); 0 DISABLES THE BUDGET CHECK, INVALID/UNSET FALLS BACK TO THE DEFAULT.
 // NOTE: `Number(x) || DEFAULT` WOULD MAKE 0 FALL BACK TO THE DEFAULT — PARSE EXPLICITLY (A TEST PINNED THIS).
-const _budget = Number(env.AI_DAILY_BUDGET_USD);
+// AN EMPTY/UNSET STRING ALSO MEANS "DEFAULT", NOT "0" (`Number('')` IS 0 — ANOTHER TEST-PINNED EDGE).
+const _budgetRaw = env.AI_DAILY_BUDGET_USD?.trim();
+const _budget = _budgetRaw ? Number(_budgetRaw) : NaN;
 const DAILY_BUDGET_USD = Number.isFinite(_budget) && _budget >= 0 ? _budget : 5;
 
 // HOW MANY BILLED REQUESTS A USER MAY START PER 60s SLIDING WINDOW (IN-MEMORY COUNTER).
-const RPM_LIMIT = Math.max(1, Number(env.AI_RPM_LIMIT ?? '30') || 30);
+// SAME EXPLICIT PARSE AS THE BUDGET: 0/EMPTY/INVALID → DEFAULT 30 (0 AS A LIMIT IS MEANINGLESS — IT
+// WOULD BLOCK EVERYTHING AND THERE IS NO OFF-SWITCH).
+const _rpmRaw = env.AI_RPM_LIMIT?.trim();
+const _rpm = _rpmRaw ? Number(_rpmRaw) : NaN;
+const RPM_LIMIT = Number.isFinite(_rpm) && _rpm >= 1 ? Math.round(_rpm) : 30;
 
 const WINDOW_MS = 60_000;
 

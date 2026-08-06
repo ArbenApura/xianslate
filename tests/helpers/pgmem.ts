@@ -113,18 +113,19 @@ export function createTestDb(): TestDb {
 	const db = drizzle(async (sqlText, params, method) => {
 		// PG-MEM's public.many() DOESN'T BIND $N PARAMETER ARRAYS — INTERPOLATE THEM (TEST DATA ONLY: THE
 		// VALUES COME FROM OUR SEEDS, AND STRINGS ARE QUOTED WITH DOUBLED APOSTROPHES SO NOTHING ESCAPES).
-		const text = (params ?? []).reduce(
-			(s, v, i) =>
-				s.replaceAll(
-					`$${i + 1}`,
-					v === null
-						? 'NULL'
-						: typeof v === 'number' || typeof v === 'boolean'
-							? String(v)
-							: `'${String(v).replace(/'/g, "''")}'`,
-				),
-			sqlText,
-		);
+		// ONE-PASS /\$(\d+)/g (NOT replaceAll('$1', …)) SO A $10 PLACEHOLDER ISN'T CORRUPTED AS $1+0.
+		const text =
+			(params ?? []).length === 0
+				? sqlText
+				: sqlText.replace(/\$(\d+)/g, (m, n) => {
+						const v = params[Number(n) - 1];
+						if (v === undefined) return m; // UNKNOWN PLACEHOLDER — PG-MEM REJECTS IT LOUDLY
+						return v === null
+							? 'NULL'
+							: typeof v === 'number' || typeof v === 'boolean'
+								? String(v)
+								: `'${String(v).replace(/'/g, "''")}'`;
+					});
 		if (method === 'execute') {
 			mem.public.none(text);
 			return { rows: [] as Record<string, unknown>[] };
@@ -136,24 +137,33 @@ export function createTestDb(): TestDb {
 			// DOCUMENTED PG-MEM RECIPE USES rowMode:'array'. PG-MEM ALSO KEYS AGGREGATES BY FUNCTION NAME
 			// ALONE (TWO coalesce(...) COLUMNS WOULD COLLIDE), SO WE REWRITE NON-COLUMN SELECT ITEMS WITH
 			// UNIQUE ALIASES, EXECUTE, AND EMIT POSITIONAL ARRAYS IN ORIGINAL SELECT ORDER.
+			// FAIL LOUDLY ON QUERY SHAPES THE BRIDGE CAN'T HANDLE (CTEs, DISTINCT, SUBQUERIES IN THE SELECT
+			// LIST) — SILENTLY CORRUPTED RESULTS WOULD BE WORSE THAN A TEST FAILURE (A REVIEW FLAGGED THIS).
+			if (!/^\s*select\b/i.test(s.trim())) {
+				throw new Error('pg-mem bridge: unsupported SQL shape (only plain SELECT is bridged)');
+			}
+			if (/^\s*select\s+(distinct|all)\b/i.test(s.trim())) {
+				throw new Error('pg-mem bridge: unsupported SELECT DISTINCT — rewrite the query or extend the bridge');
+			}
 			const m = /^\s*select\s+([\s\S]*?)\s+from\s/i.exec(s);
-			if (!m) return mem.public.many(s, []) as unknown[][];
+			if (!m) return mem.public.many(s) as unknown[][];
 			const plan = splitTopLevel(m[1])
 				.map((x) => x.trim())
-				.map((it, i) => {
+				.map((it, i): { get: (row: Record<string, unknown>) => unknown; alias?: string; orig?: string; plain?: string } => {
 					// PLAIN (POSSIBLY QUOTED, POSSIBLY QUALIFIED) COLUMN — PG-MEM KEYS IT BY THE UNQUALIFIED NAME.
 					if (/^"?[a-zA-Z_][\w]*"?(\."?[a-zA-Z_][\w]*"?)?$/.test(it)) {
-						return { plain: it, name: it.split('.').pop()!.replaceAll('"', '') };
+						const name = it.split('.').pop()!.replaceAll('"', '');
+						return { plain: it, get: (row) => row[name] };
 					}
 					const alias = `x${i}`;
-					return { alias, orig: it };
+					return { alias, orig: it, get: (row) => row[alias] };
 				});
 			const rewritten = plan
 				.map((p, i) => (p.alias ? `${p.orig} as "x${i}"` : p.plain))
 				.join(', ');
 			const sql2 = s.replace(m[1], rewritten);
-			const objRows = mem.public.many(sql2, []) as Record<string, unknown>[];
-			return objRows.map((row) => plan.map((p) => (p.alias ? row[p.alias] : row[p.name])));
+			const objRows = mem.public.many(sql2) as Record<string, unknown>[];
+			return objRows.map((row) => plan.map((p) => p.get(row)));
 		}
 	}) as TestDb;
 	db.__pgmem = mem;
